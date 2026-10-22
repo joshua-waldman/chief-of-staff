@@ -17,14 +17,14 @@ Requirements:
 Clone into a local folder. Keep the SQLite database on one machine; do not run two installations against a shared or synchronized data directory.
 
 ```powershell
-git clone <repository-clone-url> chief-of-staff
+git clone https://github.com/joshua-waldman/chief-of-staff.git chief-of-staff
 Set-Location chief-of-staff
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 python scripts/install_hooks.py
 ```
 
-The clone URL is available from the repository's **Code** button. ZIP downloads do not have Git history or hooks; use a clone for development.
+The repository is [joshua-waldman/chief-of-staff](https://github.com/joshua-waldman/chief-of-staff). You need access to this private repository before cloning. ZIP downloads do not have Git history or hooks; use a clone for development.
 
 ## Configure your installation
 
