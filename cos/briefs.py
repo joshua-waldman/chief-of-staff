@@ -3,6 +3,13 @@ import json
 import re
 from .db import now
 FIELDS={'action_needed','action_reason','requested_action','action_plan','context','status_summary','next_step','email_from','email_subject','email_received','email_excerpt','email_id','response_needed','response_reason','proposed_to','proposed_subject','proposed_body','uncertainties'}
+
+def unresolved_action(store, job):
+    row=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
+    brief=json.loads(row['body']) if row else {}
+    if brief.get('action_needed') in {'yes','unknown'}:
+        return brief.get('requested_action') or brief.get('action_reason') or 'Review the unresolved follow-up.'
+    return ''
 def update_brief(store,job,a):
     current=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
     body=json.loads(current['body']) if current else {}

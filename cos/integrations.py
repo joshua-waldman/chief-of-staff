@@ -34,6 +34,24 @@ def skill_dir(name):
             return p
     raise ValueError('Skill not found: '+name)
 
+
+class CommunicationRejected(ValueError):
+    """The bridge knows the external mutation did not execute."""
+
+
+def communication(action, arguments):
+    """Only the fixed bridge operation set is exposed, never arbitrary endpoints."""
+    result=subprocess.run([sys.executable,'-m','cos.communication_bridge'],
+        input=json.dumps({'action':action,'arguments':arguments}),cwd=ROOT,
+        capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=120)
+    if result.returncode:
+        raise RuntimeError((result.stderr or result.stdout)[-4000:])
+    data=json.loads(result.stdout)
+    if isinstance(data,dict) and data.get('bridge_error'):
+        error=CommunicationRejected if data.get('not_executed') else RuntimeError
+        raise error(data['bridge_error'])
+    return data
+
 def skill_inventory():
     found = {}
     for root in skill_roots():

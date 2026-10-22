@@ -17,6 +17,7 @@ DEFAULTS = {
     'poll_seconds': 60, 'command_prefix': '!cos', 'self_chat_id': '48:notes',
     'self_email': '',
     'projects': {},
+    'engineering_workflows': {},
     'skill_roots': [str(Path.home()/'.claude/skills'), str(Path.home()/'.codex/skills')],
     'mcp_configs': [str(Path(os.environ.get('LOCALAPPDATA', '')) / 'Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude-3p/claude_desktop_config.json')],
     'mcp_enabled': [], 'research_hosts': ['amd.com', 'llm.amd.com'],
@@ -36,6 +37,8 @@ def save_settings(changes):
     if set(changes) - allowed:
         raise ValueError('Unknown setting')
     s = {**settings(), **changes}
+    from .engineering import validate_workflows
+    validate_workflows(s['engineering_workflows'],s['projects'])
     if s['gateway_url'] != DEFAULTS['gateway_url']:
         raise ValueError('Only the verified AMD Unified gateway is enabled')
     s['parallel_agents'] = max(1, min(12, int(s['parallel_agents'])))

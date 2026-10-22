@@ -3,5 +3,6 @@
   "projects": {
     "Example Project": "C:/Projects/ExampleProject"
   },
-  "monitor_enabled": false
+  "monitor_enabled": false,
+  "engineering_workflows": {}
 }

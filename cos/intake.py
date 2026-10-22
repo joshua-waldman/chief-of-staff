@@ -11,6 +11,9 @@ SYSTEM = """Classify email conversations for an early ignore shortcut. You have 
 The owner-approved KB preferences in the supplied JSON are the only source of
 email-handling guidance. Honor their applicability, conditions, exceptions and
 scope. Consider ALL supplied preferences together: conflicting or ambiguous
+guidance must go to normal triage. A rule with a target applies ONLY when its
+target.source is email AND target.thread_id equals the supplied thread_id. Never
+transfer a targeted preference to another conversation. Other ambiguous
 guidance must go to normal triage. Do not require special wording or a particular
 sender, service, project, or category. Ignore only when the current preferences
 explicitly establish that BOTH no reply AND no substantive work are needed for
@@ -30,7 +33,8 @@ Do not propose sends, deletion, tools, delegated work, or other actions."""
 
 
 def preferences(c):
-    return [dict(r) for r in c.execute(RULE_SQL).fetchall()]
+    targets={r['knowledge_id']:{'source':r['source'],'thread_id':r['thread_id']} for r in c.execute('SELECT * FROM knowledge_targets')}
+    return [{**dict(r),'target':targets.get(r['id'],{})} for r in c.execute(RULE_SQL).fetchall()]
 
 
 def revision(rules):
@@ -59,11 +63,12 @@ class EmailIntake:
                 eligible[thread_id] = emails
         if not rules or not eligible:
             return {}
+        stamp = revision(rules)
+        rules=[r for r in rules if not r['target'] or (r['target']['source']=='email' and r['target']['thread_id'] in eligible)]
         rules_json = json.dumps(rules, ensure_ascii=False)
         if len(rules_json) > 60000:
             emit('intake.fallback', {'reason': 'preference_budget', 'conversations': len(eligible)}, store=self.store)
             return {}
-        stamp = revision(rules)
         by_id = {r['id']: r for r in rules}
         decisions = {}
         entries = list(eligible.items())
@@ -96,6 +101,7 @@ class EmailIntake:
                     reason = d.get('reason')
                     if (d.get('ignore') is not True or not isinstance(ids, list) or not ids
                         or any(not isinstance(i, str) or i not in by_id for i in ids)
+                        or any(by_id[i]['target'] and by_id[i]['target']!={'source':'email','thread_id':tid} for i in ids if isinstance(i,str) and i in by_id)
                         or not isinstance(reason, str) or not reason.strip() or len(reason) > 1500):
                         continue
                     decisions[tid] = {'revision': stamp, 'rule_ids': ids,

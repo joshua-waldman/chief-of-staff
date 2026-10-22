@@ -165,7 +165,7 @@ async def answer(id,request:Request):
 async def review_job(id,request:Request):
     from .reviews import submit
     body=await request.json()
-    return submit(engine,id,body.get('message',''),body.get('remember',False),body.get('guidance',''),body.get('applies_to',''),body.get('draft'))
+    return submit(engine,id,body.get('message',''),body.get('remember',False),body.get('guidance',''),body.get('applies_to',''),body.get('draft'),body.get('remember_target','general'))
 
 @app.post('/api/jobs/{id}/cancel')
 def cancel(id):
@@ -255,14 +255,15 @@ def knowledge_list(q:str='',scope:str='',status:str='all'):
     if status not in {'all','active','suggested'}:
         raise ValueError('Invalid knowledge filter.')
     if q:
-        rows=Knowledge(store).search(q,scope,limit=50)
+        rows=Knowledge(store).search(q,scope,limit=50,include_targeted=True)
         if status=='suggested':
             rows=[]
     else:
         rows=store.rows("SELECT * FROM knowledge WHERE status IN ('active','suggested') ORDER BY updated DESC LIMIT 500")
         if scope:
             rows=[r for r in rows if r['scope'] in {'global',scope}]
-    return [r for r in rows if status=='all' or r['status']==status]
+    targets={r['knowledge_id']:{'source':r['source'],'thread_id':r['thread_id']} for r in store.rows('SELECT * FROM knowledge_targets')}
+    return [{**r,'target':targets.get(r['id'],{})} for r in rows if status=='all' or r['status']==status]
 
 @app.post('/api/knowledge')
 async def knowledge_create(request:Request):
