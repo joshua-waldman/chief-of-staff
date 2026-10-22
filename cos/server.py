@@ -98,6 +98,18 @@ def status():
 def jobs():
     return store.rows('SELECT id,parent_id,title,org,project,status,created,updated,result,question FROM jobs ORDER BY created DESC LIMIT 1000')
 
+@app.get('/api/organization-agents')
+def organization_agents():
+    agents=store.rows('''SELECT j.id,j.parent_id,j.title,j.org,j.project,j.status,j.updated,
+        p.title AS parent_title,p.org AS parent_org,b.body AS brief_body
+        FROM jobs j LEFT JOIN jobs p ON p.id=j.parent_id
+        LEFT JOIN job_briefs b ON b.job_id=j.id ORDER BY j.created DESC,j.id''')
+    for agent in agents:
+        brief=json.loads(agent.pop('brief_body') or '{}')
+        agent['status_summary']=brief.get('status_summary','')
+        agent['next_step']=brief.get('next_step','')
+    return agents
+
 @app.get('/api/jobs/{id}')
 def job(id):
     result=store.detail(id)
