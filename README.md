@@ -116,7 +116,15 @@ Send a command in your own Teams saved-messages chat, for example:
 !cos Prepare a short project planning brief
 ```
 
-Only the authenticated owner's messages in the configured self-chat create top-level requests. Approvals remain in the local web app. Meeting processing can read accessible shared transcript files from recent chat history and save source-linked observations; it does not transcribe recording audio or infer content from filenames.
+Only the authenticated owner's messages in the configured self-chat create top-level requests. Approvals remain in the local web app. Meeting processing uses the installed Teams skill and its existing Microsoft sign-in to retrieve accessible transcript files and save source-linked observations; it does not transcribe recording audio or infer content from filenames.
+
+### Meeting transcript access
+
+COS reuses Claude's existing `meeting-recap/scripts/fetch_transcript_graph.py` helper, the installed Teams skill and the shared Microsoft credentials. It reads the transcript attached to a recording through SharePoint Stream, then tries separately shared transcript files. No separate app registration, transcript sign-in or SharePoint MCP server is required.
+
+The helper is resolved from the installed `meeting-recap` skill or the existing local Claude SLAI marketplace checkout. If unavailable, install that existing skill; shared-file retrieval remains available. COS does not copy credentials, use the reference kit's hardcoded session paths, or depend on Copilot recap availability.
+
+`meeting_transcripts {chat_id,date?:YYYY-MM-DD}` reads recording cards in the latest 200 messages. It defaults to the newest recording date and can select a specific occurrence by date. Results are registered as job files for the existing evidence-checked summary workflow. Unknown speakers cannot establish an action assignee. Access failures and absent transcripts remain explicit; an MP4 or recap link is not itself transcript text.
 
 ## Updates, backups, and moving machines
 
