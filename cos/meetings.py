@@ -11,7 +11,7 @@ TRANSCRIPT_SUFFIXES = {'.vtt', '.srt', '.txt', '.docx'}
 MAX_TRANSCRIPT = 10 * 1024 * 1024
 
 
-def collect_transcripts(chat_id, target):
+def collect_transcripts(chat_id, target, options=None):
     # Run in an isolated process, reusing the installed skill's authentication.
     from .integrations import skill_dir
     sys.path.insert(0, str(skill_dir('slai-teams') / 'scripts'))
@@ -19,11 +19,25 @@ def collect_transcripts(chat_id, target):
     import meeting_artifacts as artifacts
     import urllib.request
     graph = GraphClient()
-    messages, continuation = artifacts.SkypeClient().list_messages(chat_id, page_size=200)
+    skype = artifacts.SkypeClient()
+    chat_error = None
+    try:
+        messages, continuation = skype.list_messages(chat_id, page_size=200)
+    except (Exception, SystemExit):
+        messages, continuation = [], ''
+        chat_error = {'stage': 'shared_files', 'status': 'chat_unavailable',
+                      'next_step': 'Check access using the installed Teams skill and existing Microsoft sign-in.'}
+    from .meeting_stream import collect_recording_transcripts
+    rows, diagnostics = collect_recording_transcripts(graph, messages, target, (options or {}).get('date'))
+    if chat_error:
+        diagnostics.append(chat_error)
     urls = list(dict.fromkeys(u for m in messages for u in artifacts.extract_urls_from_message(m)))
-    rows = []
     for url in urls:
-        item = artifacts.resolve(graph, url)
+        try:
+            item = artifacts.resolve(graph, url)
+        except (Exception, SystemExit):
+            rows.append({'source': url, 'status': 'resolution_failed'})
+            continue
         if not item:
             rows.append({'source': url, 'status': 'forbidden_or_missing'})
             continue
@@ -41,8 +55,12 @@ def collect_transcripts(chat_id, target):
             row['status'] = 'download_unavailable'
             continue
         # Never forward a Graph/Teams bearer token to a download URL.
-        with urllib.request.urlopen(download, timeout=90, context=_ssl_context()) as response:
-            content = response.read(MAX_TRANSCRIPT + 1)
+        try:
+            with urllib.request.urlopen(download, timeout=90, context=_ssl_context()) as response:
+                content = response.read(MAX_TRANSCRIPT + 1)
+        except Exception:
+            row['status'] = 'download_failed'
+            continue
         if len(content) > MAX_TRANSCRIPT:
             row['status'] = 'too_large'
             continue
@@ -52,8 +70,8 @@ def collect_transcripts(chat_id, target):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         row.update(status='downloaded', path=str(path))
-    return {'artifacts': rows, 'scan_incomplete': bool(continuation),
-            'limitation': 'Only shared transcript/caption files in the latest 200 meeting messages are readable. Recording audio is not transcribed.'}
+    return {'artifacts': rows, 'scan_incomplete': bool(continuation), 'diagnostics': diagnostics,
+            'limitation': 'Uses the Claude meeting-recap Stream helper and the installed Teams credentials. Defaults to the newest recording date; pass date for another occurrence. Shared-file discovery scans the latest 200 chat messages. Recording audio is not transcribed.'}
 
 
 def save_summary(store, job, args):
@@ -88,4 +106,5 @@ def save_summary(store, job, args):
 
 
 if __name__ == '__main__':
-    print(json.dumps(collect_transcripts(sys.argv[1], sys.argv[2]), ensure_ascii=False))
+    print(json.dumps(collect_transcripts(sys.argv[1], sys.argv[2],
+                                        json.loads(sys.argv[3]) if len(sys.argv) > 3 else None), ensure_ascii=False))

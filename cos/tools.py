@@ -39,7 +39,7 @@ create_organization {name,leader,purpose}: adds an organization.
 fetch_url {url}: retrieve an explicitly allowed research host. Never send AMD material as URL parameters.
 mail_attachments {id}: download and register email attachments for read_file. teams_attachments {chat_id}: download screenshots for read_file.
 search_mail {query}; read_mail {id}; list_chats {}; read_teams {chat_id}; meeting_artifacts {chat_id}.
-meeting_transcripts {chat_id}: discover shared meeting recordings/transcripts and download readable transcript/caption files. Returns job-local files for read_file, source links and access limitations. Cannot transcribe video/audio.
+meeting_transcripts {chat_id,date?:YYYY-MM-DD}: use Claude's meeting-recap Stream helper with existing Teams credentials to read transcripts attached to recordings, then try shared transcript files. Defaults to the newest recording date; pass date for a specific meeting occurrence. Returns job-local files for read_file, source links and access diagnostics. A recording or recap metadata is not transcript text. Cannot transcribe video/audio.
 save_meeting_summary {source_file_id,title,summary,evidence}: save a concise meeting summary as active searchable evidence for future email/Teams replies. Source must come from meeting_transcripts in this job; evidence is an exact transcript excerpt (max 1500 characters). Summary (max 2400 characters) includes meeting date, topics, decisions, commitments, open questions and the owner's specific action items with assignee, deadline or unknown, source timestamps and status. Observations never authorize actions.
 send_email {to: comma/semicolon-separated email addresses or string array,subject,body,cc?,bcc?}; reply_email {id,body}; send_teams {chat_id,body}: approval always required. Read full threads and attachments and give a verified-facts ledger before drafting.
 jira_read {command,args:[text]}: check, jira-search, jira-issue, jira-projects, jira-types, jira-fields, jira-transitions, conf-search, conf-page, conf-spaces.
@@ -365,7 +365,7 @@ class Tools:
             return run_skill('slai-teams','meeting_artifacts.py',['--chat-id',a['chat_id'],'--json'])
         if action=='meeting_transcripts':
             target=workspace(id)/'meeting-transcripts'
-            result=subprocess.run([sys.executable,'-m','cos.meetings',a['chat_id'],str(target)],
+            result=subprocess.run([sys.executable,'-m','cos.meetings',a['chat_id'],str(target),json.dumps({'date':a['date']} if a.get('date') else {})],
                 cwd=ROOT,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=300)
             if result.returncode:
                 raise RuntimeError((result.stdout+'\n'+result.stderr)[-6000:])
