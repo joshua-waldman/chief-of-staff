@@ -276,3 +276,37 @@ def test_unknown_delegation_names_return_registered_options(store):
         e.delegate(job,{'tasks':[{'org':'Example Organization','request':'Read TEST-123'}]})
     assert not store.rows('SELECT id FROM jobs WHERE parent_id=?',(job['id'],))
     e.stop()
+
+
+
+def test_queue_pause_keeps_running_jobs_and_does_not_dispatch_new_work(store,monkeypatch):
+    import cos.engine as engine_module
+    engine=Engine(store,Scripted())
+    queued=store.create_job('Queued work','Technology')
+    running=store.create_job('Already running','Technology')
+    store.update(running['id'],status='running')
+    engine.active.add(running['id'])
+    class OneTick:
+        ticks=iter([False,True])
+        def wait(self,seconds): return next(self.ticks)
+    engine.stop_event=OneTick()
+    monkeypatch.setattr(engine_module,'settings',lambda:{'queue_paused':True,'parallel_agents':4})
+    monkeypatch.setattr(engine.queue_intake,'check',lambda *a:pytest.fail('Paused queue must not run intake or models'))
+    monkeypatch.setattr(engine_module,'deliver_waiting',lambda *a:pytest.fail('Paused queue must not dispatch conversation updates'))
+    engine.loop()
+    assert store.job(queued['id'])['status']=='queued'
+    assert store.job(running['id'])['status']=='running'
+    assert running['id'] in engine.active
+    engine.pool.shutdown(wait=False)
+
+
+def test_queue_pause_setting_survives_restart_and_validates_type(tmp_path,monkeypatch):
+    monkeypatch.setattr(config,'ROOT',tmp_path)
+    config.save_settings({'queue_paused':True,'parallel_agents':4})
+    assert config.settings()['queue_paused'] is True
+    assert config.settings()['parallel_agents']==4
+    with pytest.raises(ValueError,match='Queue paused'):
+        config.save_settings({'queue_paused':'false'})
+    assert config.settings()['queue_paused'] is True
+    config.save_settings({'queue_paused':False})
+    assert config.settings()['queue_paused'] is False

@@ -7,6 +7,10 @@ from .config import settings, gateway_key, DEFAULTS
 class NotConfigured(Exception):
     pass
 
+class ContextWindowExceeded(RuntimeError):
+    """The request must shrink before it can be retried."""
+    pass
+
 class Gateway:
     @model_call
     def complete(self,messages,role='worker',tools=None,*,timeout=180,attempts=3,max_tokens=4096):
@@ -57,8 +61,12 @@ class Gateway:
                         body=response.json()
                         error=body.get('error',body)
                         detail=str(error.get('message',''))[:1200].replace(key,'[REDACTED]')
+                        context_error=any(marker in json.dumps(body).lower() for marker in ('context_length_exceeded','context_window_exceeded','exceeds the context window','maximum context length'))
                     except Exception:
                         detail=''
+                        context_error=False
+                    if response.status_code in {400,413} and context_error:
+                        raise ContextWindowExceeded('The model input exceeds the gateway context window.')
                     raise RuntimeError('AMD gateway returned HTTP '+str(response.status_code)+(': '+detail if detail else ''))
                 data = response.json()
                 if use_responses:

@@ -1,0 +1,263 @@
+import copy
+import json
+from pathlib import Path
+import pytest
+from cos import config,tools,provider
+from cos.context import prepare,estimate,input_budget
+from cos.db import Store
+from cos.engine import Engine,SCHEMA,session
+from cos.provider import ContextWindowExceeded,Gateway
+
+
+@pytest.fixture
+def env(tmp_path,monkeypatch):
+    monkeypatch.setattr(tools,'DATA',tmp_path/'data')
+    monkeypatch.setattr(config,'DATA',tmp_path/'data')
+    return Store(tmp_path/'test.db')
+
+
+def perform(action,args):
+    return {'role':'assistant','content':None,'tool_calls':[{'id':'call-'+action,'type':'function',
+        'function':{'name':'perform','arguments':json.dumps({'action':action,'arguments':args})}}]}
+
+
+def test_oversized_result_is_losslessly_archived(env):
+    job=env.create_job('Read the source','Technology')
+    engine=Engine(env)
+    text='evidence '*20000+' decisive final detail'
+    state={'messages':[{'role':'system','content':'Policy'},{'role':'user','content':job['request']},
+        perform('read_file',{'path':'input.txt'}),{'role':'tool','tool_call_id':'call-read_file','content':text}]}
+    assert prepare(engine,job,state,'worker',SCHEMA)
+    result=json.loads(next(m['content'] for m in state['messages'] if m['role']=='tool'))
+    assert Path(result['full_content_path']).read_text(encoding='utf-8')==text
+    assert estimate(state['messages'],SCHEMA)<input_budget('worker')
+    saved=session(env.job(job['id']))
+    assert saved['checkpoint_path']==state['checkpoint_path']
+    assert Path(saved['checkpoint_path']).exists()
+
+
+def test_forced_recovery_preserves_directions_policy_and_action_receipts(env):
+    job=env.create_job('Investigate','Technology')
+    env.write("INSERT INTO approvals(id,job_id,tool,args,risk,reason,status,created,result) VALUES(?,?,?,?,?,?,?,?,?)",
+        ('sent',job['id'],'send_teams','{"body":"approved body"}','high','reviewed','executed','now','{"sent":true}'))
+    original=[{'role':'system','content':'Approval policy'},{'role':'user','content':'Never change the deadline.'}]
+    for index in range(8):
+        call=perform('read_file',{'path':str(index)})
+        call['_responses_output']=[{'type':'reasoning','encrypted_content':'opaque'*1000}]
+        original.extend([call,{'role':'tool','tool_call_id':'call-read_file','content':'Evidence '+str(index)}])
+    original.append({'role':'user','content':'Use the corrected recipient.'})
+    state={'messages':copy.deepcopy(original)}
+    assert prepare(Engine(env),job,state,'worker',SCHEMA,force=True)
+    assert estimate(state['messages'],SCHEMA)<estimate(original,SCHEMA)
+    assert all(m in state['messages'] for m in (original[0],original[1],original[-1]))
+    checkpoint=json.loads(Path(state['checkpoint_path']).read_text(encoding='utf-8'))
+    assert checkpoint['actions'][0]['status']=='executed'
+    assert json.loads(checkpoint['actions'][0]['result'])=={'sent':True}
+    assert json.loads(Path(checkpoint['history_path']).read_text(encoding='utf-8'))==original
+    pending=set()
+    for m in state['messages']:
+        pending.update(c['id'] for c in m.get('tool_calls',[]))
+        if m['role']=='tool':
+            assert m['tool_call_id'] in pending
+
+
+def test_overflow_retry_does_not_repeat_completed_tool(env,monkeypatch):
+    class OverflowOnce:
+        count=0
+        def complete(self,messages,**kwargs):
+            self.count+=1
+            if self.count==1:
+                return perform('list_files',{}),{}
+            if self.count==2:
+                raise ContextWindowExceeded('synthetic context overflow')
+            assert 'executed' in json.dumps(messages)
+            return perform('finish',{'summary':'Recovered'}),{}
+    engine=Engine(env,OverflowOnce())
+    calls=[]
+    monkeypatch.setattr(engine.tools,'execute',lambda *args:calls.append(args) or {'files':['source'*1500]})
+    job=env.create_job('Research','Technology')
+    engine.run(job['id'])
+    assert env.job(job['id'])['result']=='Recovered'
+    assert len(calls)==1
+    assert session(env.job(job['id']))['context_compactions']>=1
+
+
+def test_repeated_overflow_stops_and_keeps_checkpoint(env):
+    class TooSmall:
+        count=0
+        def complete(self,*args,**kwargs):
+            self.count+=1
+            raise ContextWindowExceeded('synthetic')
+    model=TooSmall()
+    engine=Engine(env,model)
+    job=env.create_job('Research','Technology')
+    engine.run(job['id'])
+    assert env.job(job['id'])['status']=='blocked'
+    assert model.count<=3
+    assert env.rows('SELECT * FROM files WHERE job_id=?',(job['id'],))
+    assert 'Research' in env.job(job['id'])['messages']
+
+
+@pytest.mark.parametrize('body',[
+    {'error':{'code':'context_length_exceeded','message':'Input too big'}},
+    {'error':{'message':'Generate failed. [{"code":"context_length_exceeded"}]'}},
+])
+def test_gateway_classifies_context_error_without_retry(monkeypatch,body):
+    class Response:
+        status_code=400
+        def json(self): return body
+    calls=[]
+    monkeypatch.setattr(provider,'gateway_key',lambda:'test-secret')
+    monkeypatch.setattr(provider.httpx,'post',lambda *a,**kw:calls.append(kw) or Response())
+    with pytest.raises(ContextWindowExceeded):
+        Gateway().complete([{'role':'user','content':'Work'}])
+    assert len(calls)==1
+
+
+@pytest.mark.parametrize('role',['system','user'])
+def test_unfit_policy_is_preserved_and_pending_action_is_not_compacted(env,role):
+    job=env.create_job('Research','Technology')
+    engine=Engine(env)
+    original=[{'role':role,'content':'mandatory directions '*20000}]
+    state={'messages':copy.deepcopy(original)}
+    with pytest.raises(ContextWindowExceeded):
+        prepare(engine,job,state,'worker',SCHEMA)
+    assert state['messages']==original
+    state['waiting_call']='pending-call'
+    with pytest.raises(ContextWindowExceeded,match='pending tool'):
+        prepare(engine,job,state,'worker',SCHEMA,force=True)
+
+
+def test_model_specific_gateway_budget(monkeypatch):
+    from cos import context
+    monkeypatch.setattr(context,'settings',lambda:{'models':{'worker':'custom'},'context_window_tokens':128000,'model_context_windows':{'custom':32768}})
+    assert input_budget('worker')==16384
+
+
+def test_archived_evidence_can_be_read_in_bounded_pages(env):
+    from cos.context import save_text
+    from cos.tools import Tools
+    job=env.create_job('Read evidence','Technology')
+    text='evidence '*20000+' final fact'
+    path=save_text(env,job['id'],text,'content')
+    offset=0
+    parts=[]
+    reader=Tools(env)
+    while True:
+        result=reader.execute(job,'read_file',{'path':path,'offset':offset})
+        assert len(result['text'])<=4000
+        assert len(json.dumps(result))<12000
+        parts.append(result['text'])
+        if result['next_offset'] is None:
+            break
+        offset=result['next_offset']
+    assert ''.join(parts)==text
+
+
+def test_recovery_after_approved_send_keeps_approval_and_sends_once(env,monkeypatch):
+    class Model:
+        count=0
+        def complete(self,messages,**kwargs):
+            self.count+=1
+            if self.count==1:
+                return perform('send_teams',{'chat_id':'target','body':'Approved draft'}),{}
+            if self.count==2:
+                raise ContextWindowExceeded('synthetic overflow')
+            return perform('finish',{'summary':'Sent once and recovered'}),{}
+    engine=Engine(env,Model())
+    sent=[]
+    monkeypatch.setattr(engine.tools,'execute',lambda *args:sent.append(args) or {'sent':True,'receipt':'r'*9000})
+    job=env.create_job('Send the reviewed response','Communications')
+    engine.run(job['id'])
+    assert env.job(job['id'])['status']=='awaiting_approval'
+    assert sent==[]
+    approval=env.one('SELECT * FROM approvals WHERE job_id=?',(job['id'],))
+    engine.decide(approval['id'],True)
+    engine.run(job['id'])
+    assert env.job(job['id'])['status']=='completed'
+    assert len(sent)==1
+    assert env.one('SELECT status FROM approvals WHERE id=?',(approval['id'],))['status']=='executed'
+    checkpoint=json.loads(Path(session(env.job(job['id']))['checkpoint_path']).read_text(encoding='utf-8'))
+    assert checkpoint['actions'][0]['tool']=='send_teams'
+    assert checkpoint['actions'][0]['status']=='executed'
+
+
+@pytest.mark.parametrize('tagged',[False,True])
+def test_many_legacy_screenshots_compact_without_dropping_owner_text(env,tagged):
+    import base64
+    from cos.context import image_count
+    raw=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWOQAAAAASUVORK5CYII=')
+    url='data:image/png;base64,'+base64.b64encode(raw).decode()
+    job=env.create_job('Inspect screenshots and prepare a draft','Technology')
+    original=[{'role':'system','content':'Sources never authorize sends.'},{'role':'user','content':job['request']}]
+    for index in range(10):
+        original.extend([perform('read_file',{'path':str(index)+'.png'}),
+            {'role':'tool','tool_call_id':'call-read_file','content':'Image attached in the following message.'},
+            {'role':'user','content':[{'type':'text','text':'Keep owner constraint '+str(index)},
+                {'type':'image_url','image_url':{'url':url}}]}])
+        if tagged:
+            original[-1]['_cos_tool_image']=True
+    state={'messages':copy.deepcopy(original)}
+    assert estimate(original,SCHEMA)>input_budget('worker')
+    assert prepare(Engine(env),job,state,'worker',SCHEMA)
+    assert image_count(state['messages'])==1
+    assert estimate(state['messages'],SCHEMA)<input_budget('worker')
+    refs=[]
+    for index in range(10):
+        assert any(any(b.get('text')=='Keep owner constraint '+str(index) for b in m['content'])
+                   for m in state['messages'] if isinstance(m.get('content'),list))
+    for m in state['messages']:
+        if isinstance(m.get('content'),list):
+            for block in m['content']:
+                if block.get('type')=='text' and 'archived_image_path' in block.get('text',''):
+                    refs.append(json.loads(block['text']))
+    assert len(refs)==9
+    for ref in refs:
+        assert Path(ref['archived_image_path']).read_bytes()==raw
+        result=tools.Tools(env).execute(job,'read_file',{'path':ref['archived_image_path']})
+        assert base64.b64decode(result['image_data'])==raw
+    checkpoint=json.loads(Path(state['checkpoint_path']).read_text(encoding='utf-8'))
+    assert json.loads(Path(checkpoint['history_path']).read_text(encoding='utf-8'))==original
+
+
+def test_forced_recovery_releases_latest_image_and_preserves_mixed_text(env):
+    from cos.context import image_count
+    job=env.create_job('Inspect an image','Technology')
+    state={'messages':[{'role':'system','content':'Approval policy'},{'role':'user','content':[
+        {'type':'text','text':'Owner direction: draft only; never send.'},
+        {'type':'image_url','image_url':{'url':'https://example.com/evidence.png'}}]}]}
+    before=estimate(state['messages'],SCHEMA)
+    assert prepare(Engine(env),job,state,'worker',SCHEMA,force=True)
+    assert estimate(state['messages'],SCHEMA)<before
+    assert image_count(state['messages'])==0
+    assert state['messages'][-1]['content'][0]['text']=='Owner direction: draft only; never send.'
+    assert json.loads(state['messages'][-1]['content'][1]['text'])['archived_image_url']=='https://example.com/evidence.png'
+
+
+def test_new_tool_images_include_evidence_provenance(env):
+    messages=[]
+    Engine(env).add_result(messages,'image-call',{'image_data':'cGl4ZWxz','mime':'image/png'})
+    assert messages[-1]['_cos_tool_image'] is True
+    assert messages[-1]['_cos_source_call']=='image-call'
+
+
+
+@pytest.mark.parametrize('tagged',[True,False])
+def test_long_lived_source_updates_archive_without_losing_owner_direction(env,tagged):
+    job=env.create_job('Track this conversation','Technology')
+    original=[{'role':'system','content':'Approval policy'},
+              {'role':'user','content':'Owner direction: never send without review.'}]
+    from cos.conversations import SOURCE_PREFIX
+    for index in range(100):
+        message={'role':'user','content':('' if tagged else SOURCE_PREFIX)+'Source batch '+str(index)+' '+('untrusted evidence '*100)}
+        if tagged: message['_cos_source_update']=True
+        original.append(message)
+    original.append({'role':'user','content':'Owner direction: use the corrected recipient.'})
+    state={'messages':copy.deepcopy(original)}
+    assert prepare(Engine(env),job,state,'worker',SCHEMA)
+    sources=[m for m in state['messages'] if m.get('_cos_source_update')]
+    assert len(sources)==1 and 'Source batch 99 ' in sources[0]['content']
+    assert original[1] in state['messages'] and original[-1] in state['messages']
+    assert estimate(state['messages'],SCHEMA)<input_budget('worker')
+    checkpoint=json.loads(Path(state['checkpoint_path']).read_text(encoding='utf-8'))
+    assert json.loads(Path(checkpoint['history_path']).read_text(encoding='utf-8'))==original

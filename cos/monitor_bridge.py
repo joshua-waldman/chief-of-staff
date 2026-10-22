@@ -6,7 +6,7 @@ import json
 import re
 import sys
 from datetime import datetime,timezone
-from urllib.parse import urlparse,quote
+from urllib.parse import urlparse,quote,unquote
 from .integrations import skill_dir
 
 def stable_mail_client(client_type):
@@ -54,8 +54,13 @@ def message_page(skype,cid,sync,http):
     if sync and urlparse(sync).scheme:
         parsed=urlparse(sync)
         expected=urlparse(skype._msg_base+'/users/ME/conversations/'+quote(cid,safe='')+'/messages')
+        # Teams may return literal ':' and '@' in the conversation ID.
+        # Decode each segment separately so encoded separators cannot change
+        # which endpoint or conversation the continuation targets.
+        path=[unquote(part) for part in parsed.path.split('/')]
+        expected_path=[unquote(part) for part in expected.path.split('/')]
         if (parsed.scheme!='https' or parsed.netloc!=expected.netloc or
-                parsed.path!=expected.path or parsed.username or parsed.password or parsed.fragment):
+                path!=expected_path or parsed.params or parsed.username or parsed.password or parsed.fragment):
             raise ValueError('Untrusted Teams message continuation URL')
         code,data,_=http('GET',sync,skype._hdr())
         if code!=200:

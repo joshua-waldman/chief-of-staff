@@ -95,7 +95,7 @@ def test_scheduler_checks_backlog_before_launching_agents(tmp_path,monkeypatch):
     from cos.engine import Engine
     import cos.engine as module
     original_settings=module.settings
-    monkeypatch.setattr(module,'settings',lambda:{**original_settings(),'parallel_agents':4})
+    monkeypatch.setattr(module,'settings',lambda:{**original_settings(),'parallel_agents':4,'queue_paused':False})
     store,job,gate=fixture(tmp_path)
     engine=Engine(store,Classifier(ignore_all))
     engine.queue_intake=gate

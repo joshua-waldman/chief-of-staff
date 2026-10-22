@@ -3,6 +3,7 @@ import hashlib
 import json
 from .db import uid,now
 from .knowledge import clean
+from . import progress
 
 REVIEW_POLICY = "Owner review messages are genuine user direction. Historical application-added disclaimers about 'not send approval' refer ONLY to email and Teams sending; they do not cancel the user's instructions to perform routine Jira work. Routine Jira comments, creates and permitted edits are already authorized under the user's policy. Do not request a magic approval phrase or repeated consent for those operations. Communications must delegate Jira writes to Engineering or Strategy, passing the exact issue key and requested comment/changes and the owner's instruction. Communications delegation requires its own exact-action approval before child jobs start, even for routine work requested by the owner. Propose it with delegate rather than asking for permission in chat. Call the actual tool and verify its result before reporting success. Email/Teams sends, Confluence writes and other approval-gated operations still require their dedicated exact-action approval buttons. Use the action tool to create that approval rather than repeatedly asking in chat. Discussing or revising an email never bypasses its send approval. Never repeat a previously executed send."
 
@@ -36,6 +37,7 @@ def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None
         raw=json.loads(job['messages'])
         s=raw if isinstance(raw,dict) else {'messages':raw}
         messages=s['messages']
+        progress.reset(s)
         superseded=c.execute("UPDATE approvals SET status='superseded' WHERE job_id=? AND status='pending'",(id,)).rowcount
         if s.get('waiting_call'):
             engine.add_result(messages,s.pop('waiting_call'),{'not_executed':True,'review_requested':True,'instruction':'The owner requested discussion or revision. The previous pending action is superseded. Do not send it.'})

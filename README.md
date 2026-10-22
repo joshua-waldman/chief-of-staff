@@ -17,14 +17,14 @@ Requirements:
 Clone into a local folder. Keep the SQLite database on one machine; do not run two installations against a shared or synchronized data directory.
 
 ```powershell
-git clone <repository-clone-url> chief-of-staff
+git clone https://github.com/joshua-waldman/chief-of-staff.git chief-of-staff
 Set-Location chief-of-staff
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 python scripts/install_hooks.py
 ```
 
-The clone URL is available from the repository's **Code** button. ZIP downloads do not have Git history or hooks; use a clone for development.
+The repository is [joshua-waldman/chief-of-staff](https://github.com/joshua-waldman/chief-of-staff). You need access to this private repository before cloning. ZIP downloads do not have Git history or hooks; use a clone for development.
 
 ## Configure your installation
 
@@ -102,6 +102,10 @@ External sends, Confluence writes, application patch application, host commands,
 
 ## Monitoring and remote requests
 
+Conversation replies settle for 15 seconds before reassessment, with a 60-second maximum coalescing wait for continuously busy chats. Prior findings and source details survive updates; obsolete drafts and approvals are retired immediately. `max_steps` controls automatic worker handoffs rather than stopping a long-lived job for owner input. Progress is saved and the job returns behind other ready work. Repeated unchanged evidence or errors trigger a warning and then a separate progress safeguard (`max_stalled_steps`, default 12); new source activity or owner direction resets that safeguard. Existing jobs stopped solely by the former step-budget question resume automatically on startup, while real questions and unresolved actions remain waiting.
+
+Set `queue_paused` to `true` in local settings to stop new job dispatch while active jobs finish. The pause persists across restarts; set it to `false` to resume. Monitoring may continue collecting queued requests while dispatch is paused.
+
 After Microsoft sign-in, enable monitoring in **Connections**. Initial collection starts with current messages rather than importing your entire mailbox. Messages are deduplicated into persistent email conversations and Teams chat jobs. New activity updates the existing job; changed drafts need new approval. Collection failures and access limitations appear in the app, and unsuccessful sources retry from their saved checkpoints.
 
 Send a command in your own Teams saved-messages chat, for example:
@@ -166,6 +170,9 @@ Clear ignore matches close with explicit no-response/no-action decisions and an 
 
 ## Troubleshooting
 
+- **Job exceeds the context window:** the runner archives oversized tool results and older tool turns under the job workspace's `context/` folder, checkpoints the current brief, action receipts, child results and artifact paths, and retries inference with less history. Full archived evidence remains available through `read_file`; completed tools are not replayed by recovery. Recovery makes at most two reduced-context retries, then blocks visibly if mandatory policy and directions still cannot fit. Resume an existing failed job with direction after restarting on this version; progress and action reviews are retained. Keep briefs current and save findings while reading large sources in batches.
+- **Gateway context limit differs by model:** set `context_window_tokens` (default conservative fallback: 128000) or `model_context_windows` (a map from exact model ID to token limit) in `config.local.json` using limits verified with the gateway administrator. Input budgeting reserves 25% plus 8192 output tokens and estimates text conservatively by UTF-8 bytes; it is not an exact tokenizer. The runner uses local checkpoints and does not assume AMD supports the native OpenAI compaction endpoint. Model reasoning history is released during compaction. Restart after editing configuration.
+- **Jobs with many screenshots:** older images, including legacy tool images stored as user messages, are saved as reloadable image files during compaction. Normal compaction keeps the newest image visible; forced overflow recovery may release it as well. Text directions in mixed image/text messages are preserved exactly. Archived images remain untrusted evidence and can be inspected again with `read_file`.
 - **Gateway request fails:** test the key in Connections and check model permissions. Gateway access is separate from a ChatGPT subscription.
 - **Microsoft or Atlassian connection unavailable:** verify the required skills are installed and authenticate on this machine. Tenant restrictions may prevent access to some chats or files.
 - **Port already in use:** stop the existing instance, or use another port with a separate data directory. Do not run concurrent servers against the same database.

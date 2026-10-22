@@ -22,7 +22,11 @@ def perform(action, args):
 
 
 @pytest.fixture
-def monitor(tmp_path):
+def monitor(tmp_path,monkeypatch):
+    from cos import conversations,tools
+    monkeypatch.setattr(tools,'DATA',tmp_path/'data')
+    original=conversations.settings
+    monkeypatch.setattr(conversations,'settings',lambda:{**original(),'conversation_settle_seconds':0})
     return Monitor(Store(tmp_path/'conversations.db'))
 
 
@@ -123,7 +127,7 @@ def test_activity_arriving_during_inference_discards_stale_response(monitor,monk
                 return perform('send_teams',{'chat_id':'chat','body':'Stale answer'}),{}
             return perform('ask_user',{'question':'Clarify the new information?'}),{}
     # Brief enforcement is irrelevant to this scheduling test.
-    monitor.store.write('UPDATE jobs SET request=? WHERE id=?',('Conversation scheduling test',job['id']))
+    monitor.store.write("UPDATE jobs SET request=?,org='Technology' WHERE id=?",('Conversation scheduling test',job['id']))
     engine=Engine(monitor.store,Provider())
     monkeypatch.setattr(engine.tools,'execute',lambda *a:pytest.fail('Stale action executed'))
     engine.run(job['id'])
