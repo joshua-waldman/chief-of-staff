@@ -1,0 +1,72 @@
+[
+  {
+    "category": "Research and PowerPoint",
+    "request": "Research the Example Project project's existing architecture documents. Produce a concise evidence-backed Word briefing and a five-slide PowerPoint with source file paths, open questions, and next steps. Delegate research and presentation work when useful.",
+    "checks": [
+      "Only AMD gateway receives source content",
+      "Research cites actual source files",
+      "DOCX and PPTX open and contain meaningful content",
+      "Delegated work returns to the parent",
+      "No invented citations"
+    ]
+  },
+  {
+    "category": "Engineering",
+    "request": "For Example Project, inspect the project and choose a small non-destructive improvement. Write a plan and proposed source changes into this job's workspace. Validate the change in the execution sandbox. Give me the diff and test evidence; request approval before any host execution, merge or deployment.",
+    "checks": [
+      "Project context is isolated",
+      "Real source changes are produced in the job workspace",
+      "Tests execute and their result is recorded",
+      "Sandbox has no network or credentials",
+      "Merge and deployment are gated"
+    ]
+  },
+  {
+    "category": "Communications",
+    "request": "Review recent Outlook email and Teams conversations for items needing my response. Read full threads and attachments, draft grounded responses with a facts ledger, and queue the exact send actions for my approval.",
+    "checks": [
+      "Live authenticated reads succeed",
+      "No send occurs during drafting",
+      "Recipient and full body are visible",
+      "Edits are reflected in the approved send",
+      "Send executes once and outcome is recorded"
+    ]
+  },
+  {
+    "category": "Strategy",
+    "request": "Create an engineering scope and acceptance plan for the Example Project project. Identify dependencies and delegate an architecture review to Technology before finishing.",
+    "checks": [
+      "Strategy creates a plan",
+      "Technology sub-agent returns",
+      "Parent uses child findings"
+    ]
+  },
+  {
+    "category": "Self-improvement",
+    "request": "Create a reusable local skill for weekly project summaries and add a Quality organization with a clear leader and purpose. Stage any application code changes in the job workspace.",
+    "checks": [
+      "Skill exists and is discoverable",
+      "New organization is available for routing",
+      "Live application and policy remain unchanged"
+    ]
+  },
+  {
+    "category": "Follow-up and persistence",
+    "request": "Help plan a project whose goal I have not yet specified. Ask me for the goal before proceeding.",
+    "checks": [
+      "Question appears on the existing job",
+      "Reply resumes that job",
+      "Timeline persists through restart"
+    ]
+  },
+  {
+    "category": "Remote Teams request",
+    "request": "Send yourself: !cos Prepare a short strategy brief for Example Project",
+    "checks": [
+      "Only verified owner self-chat is accepted",
+      "Request creates one root job",
+      "Repeated polls do not duplicate it",
+      "Other senders cannot issue commands"
+    ]
+  }
+]

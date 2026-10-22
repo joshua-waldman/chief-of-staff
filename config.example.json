@@ -1,0 +1,7 @@
+{
+  "self_email": "owner@example.com",
+  "projects": {
+    "Example Project": "C:/Projects/ExampleProject"
+  },
+  "monitor_enabled": false
+}

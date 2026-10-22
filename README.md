@@ -1,0 +1,177 @@
+# Chief of Staff
+
+A local Windows application that coordinates research, engineering, communications, and planning through a persistent agent workflow. Submit requests in your browser, follow delegated work, review drafts and proposed actions, and keep reusable guidance in a local knowledge base.
+
+This repository is private and intended for the owner's use while development continues. It does not include account credentials, personal settings, messages, task history, or generated artifacts. Model calls currently require access to the AMD Unified gateway; a ChatGPT subscription does not provide that access.
+
+## Download and install
+
+Requirements:
+
+- Windows 10 or 11 with Python 3.11 on PATH. Python 3.11 is the tested interpreter.
+- Git to clone and update the app, and access to this private repository. You can also download its ZIP from GitHub and extract it.
+- An AMD gateway API key and permission to use the configured models.
+- Microsoft Edge for optional browser tasks.
+- Node.js 22 for development checks only, and Docker Desktop for optional isolated code execution.
+
+Clone into a local folder. Keep the SQLite database on one machine; do not run two installations against a shared or synchronized data directory.
+
+```powershell
+git clone <repository-clone-url> chief-of-staff
+Set-Location chief-of-staff
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+python scripts/install_hooks.py
+```
+
+The clone URL is available from the repository's **Code** button. ZIP downloads do not have Git history or hooks; use a clone for development.
+
+## Configure your installation
+
+Copy the sanitized example before the first launch:
+
+```powershell
+Copy-Item config.example.json config.local.json
+```
+
+Edit `config.local.json` with your own email and local project paths. Remove the example project if you do not need engineering work. Project names become routing choices in the app. For example:
+
+```json
+{
+  "self_email": "owner@example.com",
+  "projects": {
+    "Example Project": "C:/Projects/ExampleProject"
+  },
+  "monitor_enabled": false
+}
+```
+
+This file is excluded from Git. Never place tokens in it. Other defaults, including model names, skill discovery paths, polling, and browser research hosts, are defined in `cos/config.py`. After launch, use **Connections** to adjust model assignments and existing project paths. Restart the app after editing the file directly. Choose model IDs your gateway account actually supports.
+
+Data defaults to `data/` beside the source. To use another local folder, set `COS_DATA_DIR` in the server's environment before launching. Keep that folder private and outside any source repository. Generated local skills currently remain under the application's `data/skills/` even when the runtime data directory is overridden.
+
+## Start and deploy locally
+
+Double-click **Start-ChiefOfStaff.cmd**, or run:
+
+```powershell
+.\Start-ChiefOfStaff.ps1
+```
+
+The launcher creates `.venv` and installs dependencies if that environment does not exist. Then open [http://127.0.0.1:8765](http://127.0.0.1:8765). Leave the launcher running; Ctrl+C stops it. If PowerShell blocks the script, use your organization's approved script execution policy or start the installed interpreter directly:
+
+```powershell
+.\.venv\Scripts\python.exe run.py
+```
+
+To choose another port, use `run.py --port 8766` or `Start-ChiefOfStaff.ps1 -Port 8766`, then open that port in your browser.
+
+Deployment means running this app on your own Windows machine. The server binds to `127.0.0.1`; it is a single-user local application. For an always-on desktop, create a Windows Task Scheduler task under your own Windows account, with the application folder as **Start in** and `.venv\Scripts\python.exe run.py` as the program and argument. That account must have access to its own credentials and integration scripts. Only run one server per data directory.
+
+## Connect services
+
+1. Open **Connections**, save your AMD gateway key, and test the connection. The key is stored in Windows Credential Manager as `AMD-ChiefOfStaff / gateway`. Alternatively set `LLM_GATEWAY_KEY` in the server environment. The app does not load `.env` files. Inference uses `https://llm-api.amd.com/Unified/v1`; no public-provider fallback is configured.
+2. For Outlook and Teams, install the compatible `slai-email` and `slai-teams` skills in your own `.codex/skills` or `.claude/skills` folder, or configure `skill_roots` in your local settings. Their scripts and tenant authorization are separate prerequisites and are not bundled in this repository. Use **Start Microsoft sign-in** and follow the device-code instructions. Credentials remain in the integration's user-profile store.
+3. For Jira and Confluence, install the compatible `slai-atlassian` skill, then choose **Jira & Confluence → Open local credential setup**. Enter your token only in the local PowerShell window and test the connection. Configuration stays in your user profile outside the app.
+4. Optionally review discovered Claude Desktop/plugin MCP servers in **Connections**. Enable only the definitions you intend to run. Inventory alone does not start a server; tool calls require approval. MCP credentials and executables must already work on this machine.
+
+Discovery does not transfer credentials from a Codex or Claude conversation. Missing skills or tenant permissions limit the corresponding features. The basic UI and configuration work before these connections are complete, but real model-backed requests require gateway access.
+
+For Docker tasks, install and start Docker Desktop and prepare the supported images:
+
+```powershell
+docker pull python:3.11-slim
+docker pull node:22-slim
+```
+
+Docker tasks run without network access, with resource limits and only their job workspace mounted. Browser tasks use Edge and a separate local profile; allow exact research hostnames in **Connections**, and sign in separately when required.
+
+## Use the tool
+
+1. Enter a request in **Overview**, optionally attach files, and select a registered project or let the app route it.
+2. Follow progress in **Job tracker**. The initial organizations are Communications, Technology, Engineering, Strategy, and Self-Improvement. Directors can delegate work and resume with child results.
+3. Answer questions and inspect proposed actions in **Needs attention**. Review recipients, bodies, arguments, and diffs before approving. Rejection or new direction lets the agent revise its work.
+4. Download artifacts from job details. Use **Download diagnostics & provenance** for a redacted troubleshooting bundle; inspect any export before sharing it.
+5. Use **Knowledge base** to manage preferences and reusable context. Forgotten entries stop appearing in future retrieval; original jobs and backups remain.
+
+Try: “Prepare a short project planning brief with open questions and next steps.” For engineering, register a project first and request a proposed patch with test evidence.
+
+Email and Teams job details support a conversation with the Chief of Staff. **Send direction to COS** can revise a draft or change a handling decision. Sending direction does not send a message. Revised actions require fresh approval. **Remember guidance for similar emails** saves explicit reusable guidance when checked.
+
+External sends, Confluence writes, application patch application, host commands, browser interactions, imported MCP calls, merges, deployments, publishing, and deletion require review. Routine Jira operations and job-local artifact work follow the server's policy. See `cos/policy.py` for action classification. Approved host commands and MCP processes run with your Windows account's permissions.
+
+## Monitoring and remote requests
+
+After Microsoft sign-in, enable monitoring in **Connections**. Initial collection starts with current messages rather than importing your entire mailbox. Messages are deduplicated into persistent email conversations and Teams chat jobs. New activity updates the existing job; changed drafts need new approval. Collection failures and access limitations appear in the app, and unsuccessful sources retry from their saved checkpoints.
+
+Send a command in your own Teams saved-messages chat, for example:
+
+```text
+!cos Prepare a short project planning brief
+```
+
+Only the authenticated owner's messages in the configured self-chat create top-level requests. Approvals remain in the local web app. Meeting processing can read accessible shared transcript files from recent chat history and save source-linked observations; it does not transcribe recording audio or infer content from filenames.
+
+## Updates, backups, and moving machines
+
+Stop the server before updates or migration. Keep a private backup of `config.local.json`, the full runtime data directory, and `data/skills/` if used. These contain personal information and must never be added to Git.
+
+```powershell
+.\.venv\Scripts\python.exe manage.py backup
+git pull --ff-only
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+`manage.py backup` makes a consistent SQLite backup under the data directory's `backups/` folder. It does not copy attachments or settings; copy the complete data directory separately with the server stopped. Back up before pulling so it matches the version being replaced.
+
+On another machine, install the source and dependencies, privately copy your configuration and data, update project paths, and re-enter credentials/sign in under that machine's account. For file references after moving the application root, run with the server stopped:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py relocate --old-root "C:/Old/ChiefOfStaff" --new-root "C:/Apps/ChiefOfStaff"
+```
+
+This helper updates recorded file references and job-message paths rooted at the old application location. Custom data directory moves and other absolute references need separate verification. Test existing attachments and integrations before enabling monitoring.
+
+## Development and privacy checks
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+node --check web/app.js
+node --test tests/test_refresh.cjs
+python scripts/check_repository.py
+```
+
+`manage.py doctor` reports local gateway/integration availability and project paths. Run it privately; its output is machine specific. Automated tests use synthetic fixtures and connector doubles. Live acceptance definitions in `acceptance.json` are optional: register the sample project or adapt the requests, then run them from **Acceptance tests**. Live tests may use model quota, read connected services, and create artifacts; review proposed external actions.
+
+Git uses a default-deny allowlist. Only reviewed source, synthetic tests, the sanitized example, documentation, hooks, and CI definitions are eligible. Local configuration, databases, attachments, logs, screenshots, exports, backups, credential files, and environments are excluded. Existing private development evidence in `docs/` stays local.
+
+Run `python scripts/install_hooks.py` after each clone. Commit and push hooks check Git blobs for disallowed files and common credential or personal-data patterns. CI repeats the source check and tests on pushes and pull requests. Before committing, review exactly what is staged:
+
+```powershell
+git add README.md cos tests web
+python scripts/check_repository.py --staged
+git diff --cached --stat
+git diff --cached
+```
+
+Add new source paths deliberately to both `.gitignore` and the checker's allowlist. Never force-add private files or bypass the hooks. Pattern checks cannot recognize every kind of personal information; human diff review remains necessary. Git commit author metadata is also retained in history; use an appropriate repository identity if personal metadata should be excluded.
+
+## Troubleshooting
+
+- **Gateway request fails:** test the key in Connections and check model permissions. Gateway access is separate from a ChatGPT subscription.
+- **Microsoft or Atlassian connection unavailable:** verify the required skills are installed and authenticate on this machine. Tenant restrictions may prevent access to some chats or files.
+- **Port already in use:** stop the existing instance, or use another port with a separate data directory. Do not run concurrent servers against the same database.
+- **UI says the server restarted:** refresh the browser to renew the local session.
+- **Dependency import fails:** rerun the requirements installation using `.venv\Scripts\python.exe`.
+- **Git rejects a commit:** review the reported paths and remove local data or replace personal values with synthetic examples. The checker does not print matched secrets.
+
+## Source map
+
+- `cos/server.py`: local API, sessions, attachments, and connections.
+- `cos/engine.py`: durable orchestration, delegation, and approvals.
+- `cos/provider.py`: gateway requests and model routing.
+- `cos/policy.py` and `cos/tools.py`: action policy and execution.
+- `cos/integrations.py`: installed skills and MCP definitions.
+- `cos/monitor.py` and `cos/monitor_bridge.py`: collection and remote requests.
+- `cos/knowledge.py`, `cos/meetings.py`, and `cos/reviews.py`: reusable context and review.
+- `web/`: browser interface. `tests/`: automated regressions.
