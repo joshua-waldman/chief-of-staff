@@ -9,6 +9,11 @@ DEFAULTS = {
     'gateway_url': 'https://llm-api.amd.com/Unified/v1',
     'models': {'chief': 'gpt-6-luna', 'director': 'gpt-6.1-sol', 'worker': 'gpt-6-sol', 'triage': 'gpt-6-luna'},
     'parallel_agents': 4, 'max_steps': 30, 'monitor_enabled': False,
+    'queue_paused': False,
+    'conversation_settle_seconds': 15, 'conversation_max_wait_seconds': 60,
+    'max_stalled_steps': 12,
+    # Conservative fallback, not a claim about the gateway's model capacity.
+    'context_window_tokens': 128000, 'model_context_windows': {},
     'poll_seconds': 60, 'command_prefix': '!cos', 'self_chat_id': '48:notes',
     'self_email': '',
     'projects': {},
@@ -34,8 +39,17 @@ def save_settings(changes):
     if s['gateway_url'] != DEFAULTS['gateway_url']:
         raise ValueError('Only the verified AMD Unified gateway is enabled')
     s['parallel_agents'] = max(1, min(12, int(s['parallel_agents'])))
+    if type(s['queue_paused']) is not bool:
+        raise ValueError('Queue paused must be true or false.')
     s['poll_seconds'] = max(30, int(s['poll_seconds']))
     s['max_steps'] = max(5, min(100, int(s['max_steps'])))
+    s['conversation_settle_seconds']=max(0,min(120,int(s['conversation_settle_seconds'])))
+    s['conversation_max_wait_seconds']=max(s['conversation_settle_seconds'],min(300,int(s['conversation_max_wait_seconds'])))
+    s['max_stalled_steps']=max(4,min(100,int(s['max_stalled_steps'])))
+    if type(s['context_window_tokens']) is not int or s['context_window_tokens'] < 16384:
+        raise ValueError('Context window must be an integer of at least 16384 tokens.')
+    if not isinstance(s['model_context_windows'],dict) or any(not isinstance(k,str) or type(v) is not int or v<16384 for k,v in s['model_context_windows'].items()):
+        raise ValueError('Model context windows must map model IDs to integer token limits of at least 16384.')
     if not s['command_prefix'].strip():
         raise ValueError('Teams command prefix cannot be empty')
     p = ROOT / 'config.local.json'

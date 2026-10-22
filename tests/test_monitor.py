@@ -23,10 +23,11 @@ class Skype:
         return {'X-Skypetoken':'test-only'}
 
 
-def test_continuation_url_is_followed_directly():
+@pytest.mark.parametrize('cid',['19:a_b@unq.gbl.spaces','19:meeting_example@thread.v2'])
+@pytest.mark.parametrize('safe',['',':@',':','@'])
+def test_continuation_url_is_followed_directly(cid,safe):
     skype=Skype()
-    cid='19:a_b@unq.gbl.spaces'
-    url=BASE+'/users/ME/conversations/'+quote(cid,safe='')+'/messages?startTime=1&syncState=token&pageSize=100'
+    url=BASE+'/users/ME/conversations/'+quote(cid,safe=safe)+'/messages?startTime=1&syncState=token&pageSize=100'
     calls=[]
     def http(method,target,headers):
         calls.append(target)
@@ -41,10 +42,21 @@ def test_continuation_url_is_followed_directly():
     BASE+'/users/ME/conversations/chat/messages/extra',
     BASE.replace('https:','http:')+'/users/ME/conversations/chat/messages',
     BASE+'/users/ME/conversations/chat/messages#fragment',
+    BASE+'/users/ME/conversations/chat/messages;extra',
+    BASE+'/users/ME/conversations%2Fchat/messages',
+    BASE+'/users/ME/conversations/chat%2Fmessages',
+    BASE.replace('https://','https://user:password@')+'/users/ME/conversations/chat/messages',
 ])
 def test_untrusted_continuation_never_receives_credentials(url):
     with pytest.raises(ValueError,match='Untrusted'):
         message_page(Skype(),'chat',url,lambda *args:pytest.fail('Must not send credentials'))
+
+
+@pytest.mark.parametrize('conversation',['19:meeting_other@thread.v2','19%253Ameeting_example%2540thread.v2'])
+def test_continuation_rejects_different_or_double_encoded_conversation(conversation):
+    url=BASE+'/users/ME/conversations/'+conversation+'/messages?syncState=x'
+    with pytest.raises(ValueError,match='Untrusted'):
+        message_page(Skype(),'19:meeting_example@thread.v2',url,lambda *args:pytest.fail('Must not send credentials'))
 
 
 def test_partial_teams_failure_keeps_other_chats_and_first_page():

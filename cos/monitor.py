@@ -108,6 +108,7 @@ class Monitor:
                 title=(subject.group(1) if subject else 'Teams conversation: '+thread_id)[:100]
                 c.execute('INSERT INTO jobs(id,title,request,org,project,status,created,updated) VALUES(?,?,?,?,?,?,?,?)',(id,title,request+'\n\n'+context,'Communications','','queued',stamp,stamp))
                 c.execute('INSERT OR REPLACE INTO communication_threads VALUES(?,?,?)',(source,thread_id,id))
+                c.execute('INSERT OR REPLACE INTO conversation_activity VALUES(?,?,?)',(id,stamp,stamp))
                 c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',(id,'created','Received conversation from '+source,stamp))
                 if shortcut:
                     reason=shortcut['reason']
@@ -122,6 +123,7 @@ class Monitor:
                     c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',(id,'intake_ignored',reason,stamp))
                 return 1
             c.execute('INSERT INTO communication_inbox(job_id,body,created) VALUES(?,?,?)',(row['id'],'\n\n'.join(body for body,_ in fresh),stamp))
+            c.execute("INSERT INTO conversation_activity VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET first_seen=CASE WHEN first_seen='' THEN excluded.first_seen ELSE first_seen END,last_seen=excluded.last_seen",(row['id'],stamp,stamp))
             # Claiming approval and ingesting source updates serialize on the
             # same write transaction. Never leave an obsolete send approvable.
             c.execute("UPDATE approvals SET status='superseded' WHERE job_id=? AND status='pending'",(row['id'],))

@@ -26,7 +26,7 @@ update_brief {action_needed?:yes|no|unknown,action_reason?,requested_action?,act
 
 apply_changes {changes:[{source,target,expected_sha256}]}: apply staged files to registered projects or app source after approval. Supply SHA256 of current target, or empty for a new file. Exact diffs are shown for review.
 list_files {path?: absolute approved project path or workspace-relative path}
-read_file {path,offset?:0}: text, PDF, DOCX, PPTX and images. Text returns up to 80000 characters and next_offset when truncated; continue with that offset to read the entire transcript. Read screenshots before discussing them.
+read_file {path,offset?:0,limit?:80000}: text, PDF, DOCX, PPTX and images. Text returns next_offset when truncated; continue with that offset to read the entire transcript. Use limit:4000 for large sources. Context archives default to 4000 characters so they can be read without overflowing again. Read screenshots before discussing them.
 write_file {path,content}: relative path in this job's workspace; never changes the live app.
 create_document {name,title,sections:[{heading,body}]}: creates or replaces a DOCX; backs up prior version.
 create_presentation {name,title,slides:[{title,bullets:[text],notes?:text}]}: exactly one PPTX slide per supplied slide; no implicit cover. Maximum five bullets per slide, 220 characters per bullet; put detailed citations in notes.
@@ -187,7 +187,10 @@ class Tools:
             offset=a.get('offset',0)
             if type(offset) is not int or offset<0 or offset>len(text):
                 raise ValueError('Text offset must be an integer within the document.')
-            end=offset+80000
+            limit=a.get('limit',4000 if workspace(id)/'context' in p.parents else 80000)
+            if type(limit) is not int or not 1<=limit<=80000:
+                raise ValueError('Text limit must be an integer from 1 to 80000.')
+            end=offset+limit
             return {'text':text[offset:end],'truncated':len(text)>end,
                 'next_offset':end if len(text)>end else None,
                 'source':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}

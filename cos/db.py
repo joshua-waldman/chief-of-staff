@@ -34,6 +34,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS communication_threads(source TEXT,thread_id TEXT,job_id TEXT,PRIMARY KEY(source,thread_id));
             CREATE TABLE IF NOT EXISTS communication_inbox(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,body TEXT,created TEXT);
             CREATE INDEX IF NOT EXISTS communication_pending ON communication_inbox(job_id,id);
+            CREATE TABLE IF NOT EXISTS conversation_activity(job_id TEXT PRIMARY KEY,first_seen TEXT,last_seen TEXT);
             CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT);
             CREATE TABLE IF NOT EXISTS organizations(name TEXT PRIMARY KEY,leader TEXT,purpose TEXT,created TEXT);
             ''')
