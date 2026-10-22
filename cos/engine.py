@@ -39,6 +39,8 @@ class Engine:
         self.provider=provider or Gateway()
         self.tools=Tools(store)
         self.knowledge=Knowledge(store)
+        from .queue_intake import QueueIntake
+        self.queue_intake=QueueIntake(store,self.provider)
         self.stop_event=threading.Event()
         self.pool=ThreadPoolExecutor(max_workers=12,thread_name_prefix='cos-agent')
         self.active=set()
@@ -89,6 +91,13 @@ class Engine:
             try:
                 deliver_waiting(self.store)
                 self.release_parents()
+                with self.lock:
+                    available=settings()['parallel_agents']-len(self.active)
+                if available<=0:
+                    continue
+                # Apply the same KB gate to old queued mail, outside the worker
+                # lock and before any model/tool orchestration starts.
+                self.queue_intake.check(self.store.rows("SELECT * FROM jobs WHERE status='queued' ORDER BY created LIMIT 25"))
                 with self.lock:
                     available=settings()['parallel_agents']-len(self.active)
                     if available<=0:
