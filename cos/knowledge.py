@@ -29,6 +29,13 @@ class Knowledge:
         if not title or not content or kind not in KINDS:
             raise ValueError('Provide a title, content, and valid knowledge type.')
         old=self.store.one('SELECT * FROM knowledge WHERE id=?',(id,)) if id else None
+        target=a.get('target')
+        if target is None and old:
+            saved=self.store.one('SELECT source,thread_id FROM knowledge_targets WHERE knowledge_id=?',(id,))
+            target=saved or {}
+        target=target or {}
+        if not isinstance(target,dict) or set(target)-{'source','thread_id'} or (target and (target.get('source') not in {'email','teams'} or not isinstance(target.get('thread_id'),str) or not target['thread_id'].strip() or len(target['thread_id'])>4096)):
+            raise ValueError('Choose email or teams and an exact conversation ID, or an empty target for general guidance.')
         if id and not old:
             raise ValueError('Knowledge entry not found.')
         if not user and not job:
@@ -39,13 +46,16 @@ class Knowledge:
         id=id or uid()
         # Fingerprint deduplicates a source's identical suggestions.
         import hashlib
-        fingerprint=hashlib.sha256((source_job+kind+scope+title+content).encode()).hexdigest()
+        fingerprint=hashlib.sha256((source_job+kind+scope+title+content+(json.dumps(target,sort_keys=True) if target else '')).encode()).hexdigest()
         with self.store.lock,self.store.connect() as c:
             duplicate=c.execute('SELECT id FROM knowledge WHERE fingerprint=? AND id<>?',(fingerprint,id)).fetchone()
             if duplicate:
                 return dict(c.execute('SELECT * FROM knowledge WHERE id=?',(duplicate['id'],)).fetchone())
             c.execute('INSERT OR REPLACE INTO knowledge VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (id,kind,title,content,scope,status,source,source_job,old['created'] if old else now(),now(),0,0,fingerprint))
+            c.execute('DELETE FROM knowledge_targets WHERE knowledge_id=?',(id,))
+            if target:
+                c.execute('INSERT INTO knowledge_targets VALUES(?,?,?)',(id,target['source'],target['thread_id']))
         return self.store.one('SELECT * FROM knowledge WHERE id=?',(id,))
 
     def accept(self,id):
@@ -70,13 +80,16 @@ class Knowledge:
         self.store.write('INSERT OR IGNORE INTO knowledge VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (id,'task',title,content,job['project'] or job['org'],'active','task-outcome',job['id'],now(),now(),0,0,id))
 
-    def search(self,query='',scope='',limit=12,track=False):
+    def search(self,query='',scope='',limit=12,track=False,job=None,include_targeted=False):
         query=clean(query,4000)
         # Empty scope and '*' explicitly search every organization and project.
         if scope=='*':
             scope=''
         terms=Counter(words(query))
         rows=self.store.rows("SELECT * FROM knowledge WHERE status='active' ORDER BY updated DESC")
+        targets={r['knowledge_id']:{'source':r['source'],'thread_id':r['thread_id']} for r in self.store.rows('SELECT * FROM knowledge_targets')}
+        conversations={(r['source'],r['thread_id']) for r in self.store.rows('SELECT source,thread_id FROM communication_threads WHERE job_id=?',(job['id'],))} if job else set()
+        rows=[{**r,'target':targets.get(r['id'],{})} for r in rows if include_targeted or r['id'] not in targets or (targets[r['id']]['source'],targets[r['id']]['thread_id']) in conversations]
         corpus=[Counter(words(r['title']+' '+r['content'])) for r in rows]
         df=Counter(t for c in corpus for t in c)
         ranked=[]
@@ -99,11 +112,11 @@ class Knowledge:
         return result
 
     def context(self,job):
-        rows=self.search(job['request'][:3000],job['project'] or job['org'],limit=8,track=True)
+        rows=self.search(job['request'][:3000],job['project'] or job['org'],limit=8,track=True,job=job)
         # Saved owner guidance can apply across organization boundaries. Only
         # matching preferences are added; unrelated scoped rules stay local.
         terms=set(words(job['request'][:3000]))
-        guidance=[r for r in self.search(job['request'][:3000],scope='*',limit=50)
+        guidance=[r for r in self.search(job['request'][:3000],scope='*',limit=50,job=job)
                   if r['kind']=='preference' and r['source'] in {'user','user-reviewed'}
                   and terms.intersection(words(r['title']+' '+r['content']))]
         existing={r['id'] for r in rows}
@@ -112,12 +125,12 @@ class Knowledge:
                 self.store.write('UPDATE knowledge SET uses=uses+1 WHERE id=?',(r['id'],))
         rows=list({r['id']:r for r in guidance+rows}.values())[:12]
         if job['project'] and job['org']=='Communications':
-            rules=self.search(job['request'][:3000],'Communications',limit=8,track=True)
+            rules=self.search(job['request'][:3000],'Communications',limit=8,track=True,job=job)
             rows=list({r['id']:r for r in rules+rows}.values())[:12]
         from .trace import emit
         emit('knowledge.retrieved',{'entries':[{k:r[k] for k in ('id','source','source_job','updated')} for r in rows]},store=self.store,job_id=job['id'])
         # Bounded context; never promote retrieved content to instructions.
-        items=[{k:r[k] for k in ('id','kind','title','content','scope','source','source_job','updated')} for r in rows]
+        items=[{k:r[k] for k in ('id','kind','title','content','scope','source','source_job','updated','target')} for r in rows]
         for item in items:
             item['content']=item['content'][:1400]
         while len(json.dumps(items,ensure_ascii=False))>14000:

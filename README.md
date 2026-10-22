@@ -182,6 +182,69 @@ Clear ignore matches close with explicit no-response/no-action decisions and an 
 - **Dependency import fails:** rerun the requirements installation using `.venv\Scripts\python.exe`.
 - **Git rejects a commit:** review the reported paths and remove local data or replace personal values with synthetic examples. The checker does not print matched secrets.
 
+## Configurable communication and engineering workflows
+
+Email attachment downloads use source attachment IDs as directories, retaining the
+original filename and metadata. Same-named attachments remain separate when passed
+to delegated jobs. Reference/item attachments are reported as coverage gaps rather
+than claimed as downloaded.
+
+Reply approvals show actual recipients and the complete prepared plain-text body,
+including accessible conversation history and sender/date/recipient/subject headers.
+The server retrieves conversation messages, including earlier messages omitted from
+the latest quoted body, before preparing approval. Editing a reply cannot remove its
+reviewed history; use the review conversation to request a new preview. HTML styling
+and embedded images are not reproduced in the outgoing plain-text quote. Existing
+pending reply approvals without prepared history need a fresh proposal after upgrade.
+
+Communications can read calendar events and propose accept, tentative, or decline
+responses with an explicit organizer-notification choice. Mail deletion (to Deleted
+Items), mail marking as read, and Teams chat marking as read also require exact-action
+approval and record execution receipts. These use installed Microsoft skill
+authentication; tenant permissions may restrict calendar or Teams write operations.
+Rejected operations surface for owner attention; uncertain outcomes are never retried
+automatically. No KB rule itself authorizes these external actions.
+
+Incoming-conversation jobs with `action_needed` set to `yes` or `unknown` remain in
+Needs attention when the agent tries to finish. Resolve the work or explicitly dismiss
+it through owner direction before closure. Previously completed history is retained.
+
+Knowledge entries can bind to an exact email or Teams conversation ID using the
+Knowledge base form. Job review also offers **Only this conversation**, which takes
+the ID from the job's recorded source. Bound guidance is excluded from other jobs
+and intake decisions. Existing prose-only entries retain their existing scope; edit
+them to add a binding when appropriate. Agent suggestions still require review.
+
+In **Connections → Engineering workflow**, configure optional rules keyed by any
+registered project name, or `*` for shared defaults. No project, sender, parent key,
+or organization-specific keyword is supplied by this feature. For example:
+
+```json
+{
+  "*": {
+    "branch_prefix": "feature/",
+    "require_ticket": true,
+    "require_feature_branch": true
+  },
+  "Example Project": {
+    "jira_parent": "EXAMPLE-100",
+    "jira_issue_type": "Task"
+  }
+}
+```
+
+`create_feature_branch` proposes `prefix + ticket + descriptive name` in the job's
+registered repository. It never resets or overwrites an existing branch. Configured
+branch requirements are checked for each target project before patch approval and
+again before application. Jira creation accepts an explicit parent or uses the
+configured default, checking live create metadata, hierarchy levels and same-project
+subtask restrictions. Unverifiable hierarchy blocks creation rather than guessing.
+An empty workflow configuration imposes no new project requirements.
+
+Restart the server after updating source to load these capabilities and the additive
+conversation-binding table. Refresh the browser afterward. Installing this version
+does not accept KB suggestions, change personal workflow settings, or execute actions.
+
 ## Source map
 
 - `cos/server.py`: local API, sessions, attachments, and connections.

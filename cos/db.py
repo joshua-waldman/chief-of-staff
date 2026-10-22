@@ -23,6 +23,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS artifact_provenance(file_id TEXT PRIMARY KEY,sha256 TEXT,size INTEGER,created TEXT);
             CREATE TABLE IF NOT EXISTS knowledge(id TEXT PRIMARY KEY,kind TEXT,title TEXT,content TEXT,scope TEXT,status TEXT,source TEXT,source_job TEXT,created TEXT,updated TEXT,uses INTEGER,helpful INTEGER,fingerprint TEXT);
             CREATE UNIQUE INDEX IF NOT EXISTS knowledge_fingerprint ON knowledge(fingerprint);
+            CREATE TABLE IF NOT EXISTS knowledge_targets(knowledge_id TEXT PRIMARY KEY,source TEXT NOT NULL,thread_id TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS review_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,role TEXT,body TEXT,created TEXT);
             CREATE INDEX IF NOT EXISTS review_job ON review_messages(job_id,id);
             CREATE TABLE IF NOT EXISTS job_briefs(job_id TEXT PRIMARY KEY,body TEXT,updated TEXT);
