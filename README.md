@@ -145,7 +145,7 @@ python scripts/check_repository.py
 
 Git uses a default-deny allowlist. Only reviewed source, synthetic tests, the sanitized example, documentation, hooks, and CI definitions are eligible. Local configuration, databases, attachments, logs, screenshots, exports, backups, credential files, and environments are excluded. Existing private development evidence in `docs/` stays local.
 
-Run `python scripts/install_hooks.py` after each clone. Commit and push hooks check Git blobs for disallowed files and common credential or personal-data patterns. CI repeats the source check and tests on pushes and pull requests. Before committing, review exactly what is staged:
+Run `python scripts/install_hooks.py` after each clone. Commit hooks check staged Git blobs; push hooks check every reachable commit, including deleted files, for disallowed files and common credential or personal-data patterns. CI repeats the source check and tests on pushes and pull requests. Before committing, review exactly what is staged:
 
 ```powershell
 git add README.md cos tests web

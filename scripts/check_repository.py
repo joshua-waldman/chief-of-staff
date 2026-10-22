@@ -3,6 +3,7 @@
 This is a guardrail, not a guarantee: review every diff before committing.
 """
 import argparse
+import io
 import re
 import subprocess
 from pathlib import PurePosixPath
@@ -39,23 +40,44 @@ def allowed(name):
 
 
 def check(staged=False):
-    names = git('ls-files', '-z').decode('utf-8').split('\0') if staged else git('ls-tree', '-r', '--name-only', '-z', 'HEAD').decode('utf-8').split('\0')
+    # Scan every reachable version before pushing, including removed private files.
+    refs = [None] if staged else git('rev-list', 'HEAD').decode().splitlines()
+    entries = {}
     errors = []
-    for name in filter(None, names):
-        if not allowed(name):
-            errors.append(f'{name}: outside the reviewed source allowlist')
-            continue
-        blob = git('show', ':' + name) if staged else git('show', 'HEAD:' + name)
-        try:
-            content = blob.decode('utf-8')
-        except UnicodeDecodeError:
-            errors.append(f'{name}: binary files are not allowed')
-            continue
-        for label, pattern in PATTERNS.items():
-            if pattern.search(content):
-                errors.append(f'{name}: possible {label}')
+    for ref in refs:
+        rows = git('ls-files', '--stage', '-z') if staged else git('ls-tree', '-r', '-z', ref)
+        for row in filter(None, rows.split(b'\0')):
+            metadata, raw_name = row.split(b'\t', 1)
+            name = raw_name.decode('utf-8')
+            mode, middle, last = metadata.split()
+            oid = middle if staged else last
+            if not allowed(name) or mode not in {b'100644', b'100755'}:
+                errors.append(f'{name}: outside the reviewed source allowlist')
+                continue
+            entries[(name, oid)] = None
+    # One Git process reads all blobs; never open runtime files or print contents.
+    keys = list(entries)
+    if keys:
+        result = subprocess.run(['git', 'cat-file', '--batch'],
+            input=b'\n'.join(oid for _, oid in keys) + b'\n',
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        stream = io.BytesIO(result.stdout)
+        for name, oid in keys:
+            header = stream.readline().split()
+            if len(header) != 3 or header[1] != b'blob':
+                raise SystemExit('Unable to inspect a repository blob.')
+            blob = stream.read(int(header[2]))
+            stream.read(1)
+            try:
+                content = blob.decode('utf-8')
+            except UnicodeDecodeError:
+                errors.append(f'{name}: binary files are not allowed')
+                continue
+            for label, pattern in PATTERNS.items():
+                if pattern.search(content):
+                    errors.append(f'{name}: possible {label}')
     if errors:
-        print('\n'.join(errors))
+        print('\n'.join(sorted(set(errors))))
         raise SystemExit('Repository privacy check failed; matched values were not printed.')
     print('Repository privacy check passed.')
 

@@ -43,3 +43,19 @@ def test_staged_check_reads_index_and_rejects_force_added_data(tmp_path, monkeyp
     git('add', 'README.md', 'config.local.json')
     with pytest.raises(SystemExit):
         checker.check(staged=True)
+
+
+def test_history_check_rejects_deleted_private_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    def git(*args):
+        subprocess.run(['git', *args], check=True, capture_output=True)
+    git('init')
+    (tmp_path / 'config.local.json').write_text('{}')
+    git('add', 'config.local.json')
+    git('-c', 'user.name=Example', '-c', 'user.email=owner@example.com', 'commit', '-m', 'Private file')
+    git('rm', 'config.local.json')
+    (tmp_path / 'README.md').write_text('Safe source')
+    git('add', 'README.md')
+    git('-c', 'user.name=Example', '-c', 'user.email=owner@example.com', 'commit', '-m', 'Remove private file')
+    with pytest.raises(SystemExit):
+        checker.check()
