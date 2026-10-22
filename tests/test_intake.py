@@ -162,6 +162,6 @@ def test_existing_active_thread_is_not_sent_to_intake_classifier(tmp_path):
 
 def test_batch_size_bounds_calls(tmp_path):
     store, m, _, provider = setup(tmp_path)
-    process(m, [mail(str(i), thread=str(i)) for i in range(26)])
+    process(m, [mail(str(i), thread=str(i)) for i in range(13)])
     assert len(provider.calls) == 2
-    assert len(store.rows("SELECT * FROM jobs WHERE status='completed'")) == 26
+    assert len(store.rows("SELECT * FROM jobs WHERE status='completed'")) == 13

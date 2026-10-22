@@ -156,6 +156,14 @@ git diff --cached
 
 Add new source paths deliberately to both `.gitignore` and the checker's allowlist. Never force-add private files or bypass the hooks. Pattern checks cannot recognize every kind of personal information; human diff review remains necessary. Git commit author metadata is also retained in history; use an appropriate repository identity if personal metadata should be excluded.
 
+## KB-driven email intake
+
+Before scheduling agents, intake batches up to 12 new email conversations for one tool-free call to the configured triage model. It checks all active owner-authored or owner-reviewed KB preferences, preserving their scope, conditions and exceptions. Senders, projects and rule wording are not hardcoded. KB edits and forgotten rules apply on the next intake pass without a restart. Suggested knowledge and task outcomes cannot justify dismissal.
+
+The scheduler also checks untouched queued email jobs, including the backlog from earlier versions, before launching an agent. It evaluates all recoverable source envelopes together and revalidates KB and job state before recording a no-action closure. Ambiguous legacy envelopes, existing agent work, owner feedback, approvals, attachments already staged as job files, and delegated tasks continue through their existing workflow. Completed history is retained. Unchanged queue checks are cached in memory; KB or source changes invalidate that cache.
+
+Clear ignore matches close with explicit no-response/no-action decisions and an audit reason containing the supporting KB IDs and revision. Ambiguous or conflicting guidance, insufficient preview evidence, invalid model output and classifier failures use normal triage. The classifier uses one request attempt with an eight-second network timeout and cannot send or delete mail. The ingestion transaction rechecks the KB revision to reject stale decisions. Already-seen mail is not classified again; owner feedback and existing work take precedence. Polling still controls detection time; the shortcut avoids the multi-step agent queue while retaining one lightweight classification pass.
+
 ## Troubleshooting
 
 - **Gateway request fails:** test the key in Connections and check model permissions. Gateway access is separate from a ChatGPT subscription.

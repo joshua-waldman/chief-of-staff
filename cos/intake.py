@@ -6,7 +6,7 @@ from .provider import Gateway
 from .trace import emit
 
 RULE_SQL = "SELECT id,title,content,scope,source,updated FROM knowledge WHERE status='active' AND kind='preference' AND source IN ('user','user-reviewed') ORDER BY id"
-BATCH_SIZE = 25
+BATCH_SIZE = 12
 SYSTEM = """Classify email conversations for an early ignore shortcut. You have no tools.
 The owner-approved KB preferences in the supplied JSON are the only source of
 email-handling guidance. Honor their applicability, conditions, exceptions and
@@ -24,7 +24,7 @@ or a condition cannot be verified, leave the conversation for normal triage.
 Never infer no action from a truncated preview. A blanket sender/category ignore
 preference may be applied from metadata when that fully establishes its scope.
 Return JSON only: {"decisions":[{"thread_id":"exact supplied ID",
-"ignore":true,"rule_ids":["applicable KB ID"],"reason":"brief explanation"}]}.
+"ignore":true,"rule_ids":["applicable KB ID"],"reason":"explanation under 160 characters"}]}.
 Omit uncertain or non-ignorable conversations. Cite only supplied preference IDs.
 Do not propose sends, deletion, tools, delegated work, or other actions."""
 
@@ -42,17 +42,17 @@ class EmailIntake:
         self.store = store
         self.provider = provider or Gateway()
 
-    def classify(self, threads):
+    def classify(self, threads, *, queued=False):
         # Never hold the ingestion write transaction across model inference.
         with self.store.connect() as c:
             rules = preferences(c)
             eligible = {}
             for thread_id, emails in threads.items():
-                if not any(not c.execute('SELECT 1 FROM seen WHERE source=? AND item_id IN (?,?)',
+                if not queued and not any(not c.execute('SELECT 1 FROM seen WHERE source=? AND item_id IN (?,?)',
                     ('email', m['id'], m.get('legacy_id', m['id']))).fetchone() for m in emails):
                     continue
                 row = c.execute('SELECT j.status,j.messages FROM communication_threads t JOIN jobs j ON j.id=t.job_id WHERE t.source=? AND t.thread_id=?', ('email', thread_id)).fetchone()
-                if row and (row['status'] != 'completed' or row['messages'] != '[]'):
+                if not queued and row and (row['status'] != 'completed' or row['messages'] != '[]'):
                     continue
                 if any(not (m.get('from') or {}).get('emailAddress', {}).get('address') or not m.get('subject') for m in emails):
                     continue
@@ -99,10 +99,12 @@ class EmailIntake:
                         or not isinstance(reason, str) or not reason.strip() or len(reason) > 1500):
                         continue
                     decisions[tid] = {'revision': stamp, 'rule_ids': ids,
-                        'reason': 'Ignored by current owner KB preferences (' + ', '.join(ids) + '): ' + reason.strip()}
+                        'reason': 'Ignored by current owner KB preferences (' + ', '.join(ids) + '; revision ' + stamp + '): ' + reason.strip()}
             except Exception:
                 # An unavailable classifier must never block collection or drop mail.
                 emit('intake.fallback', {'reason': 'classification_unavailable', 'conversations': len(batch)}, store=self.store)
+        emit('intake.classified', {'conversations': len(eligible), 'ignored': len(decisions),
+            'kb_revision': stamp, 'preference_ids': list(by_id)}, store=self.store)
         return decisions
 
 
