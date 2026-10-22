@@ -17,6 +17,86 @@ def ingest(monitor, *messages, emails=()):
     return monitor.process({'messages':list(messages), 'emails':list(emails)})
 
 
+def test_original_text_survives_summary_and_context_replacement(monitor):
+    from cos.conversations import cache_source_read
+    ingest(monitor,message('01',text='First line\nFull original text <script>'))
+    job=monitor.store.one('SELECT * FROM jobs')
+    body='Original email\n'+'Long source content. '*2000+'THE END'
+    cache_source_read(monitor.store,job['id'],'read_mail',{'id':'mail-1'},
+                      {'id':'mail-1','from':'sender@example.com','subject':'Example','date':'2026-01-01','body':body})
+    monitor.store.update(job['id'],messages='[]',result='Brief summary')
+    detail=Store(monitor.store.path).detail(job['id'])
+    assert next(m for m in detail['source_messages'] if m['source']=='email')['body']==body
+    assert next(m for m in detail['source_messages'] if m['source']=='teams')['body']=='First line\nFull original text <script>'
+
+
+def test_later_messages_and_owner_replies_are_retained(monitor):
+    ingest(monitor,message('01',text='Initial message'))
+    ingest(monitor,message('02',owner=True,text='Owner reply'))
+    job=monitor.store.one('SELECT * FROM jobs')
+    assert [m['body'] for m in monitor.store.detail(job['id'])['source_messages']]==['Initial message','Owner reply']
+
+
+def test_load_legacy_email_once_and_do_not_replace_full_text_with_preview(monitor,monkeypatch):
+    from cos.conversations import load_sources,save_source
+    from cos import integrations
+    job=monitor.store.create_job('Triage this incoming email conversation.\nEmail ID: legacy-mail','Communications')
+    calls=[]
+    def read(*args):
+        calls.append(args)
+        return {'body':'Full email\nLast paragraph','from':'sender@example.com','date':'2026-01-01'}
+    monkeypatch.setattr(integrations,'run_skill',read)
+    assert load_sources(monitor.store,job)=={'errors':[]}
+    with monitor.store.connect() as c:
+        save_source(c,job['id'],'email','legacy-mail','sender@example.com','','2026-01-01','Short preview',False)
+    assert load_sources(monitor.store,job)=={'errors':[]}
+    assert len(calls)==1
+    assert monitor.store.detail(job['id'])['source_messages'][0]['body']=='Full email\nLast paragraph'
+
+
+def test_source_read_failure_preserves_cached_text_and_supports_retry(monitor,monkeypatch):
+    from cos.conversations import load_sources,save_source
+    from cos import integrations
+    job=monitor.store.create_job('Email ID: unavailable','Communications')
+    with monitor.store.connect() as c:
+        save_source(c,job['id'],'email','unavailable','','','','Available preview',False)
+    def fail(*args):
+        raise RuntimeError('Private connector diagnostics')
+    monkeypatch.setattr(integrations,'run_skill',fail)
+    assert load_sources(monitor.store,job)['errors']
+    assert monitor.store.detail(job['id'])['source_messages'][0]['body']=='Available preview'
+    monkeypatch.setattr(integrations,'run_skill',lambda *args:{'body':'Recovered full text'})
+    assert not load_sources(monitor.store,job)['errors']
+    assert monitor.store.detail(job['id'])['source_messages'][0]['body']=='Recovered full text'
+
+
+def test_teams_reader_retains_full_text_and_timestamp(monitor):
+    from cos.conversations import cache_source_read
+    job=monitor.store.create_job('Teams conversation','Communications')
+    cache_source_read(monitor.store,job['id'],'read_teams',{'chat_id':'chat'},
+                      [{'id':'01','from':'Participant','time':'2026-01-01T12:00:00Z','content':'Full text\nSecond line'}])
+    row=monitor.store.detail(job['id'])['source_messages'][0]
+    assert row['received']=='2026-01-01T12:00:00Z'
+    assert row['body']=='Full text\nSecond line'
+
+
+def test_source_loading_limits_email_and_teams_reads_to_latest_five(monitor,monkeypatch):
+    from cos.conversations import load_sources,save_source
+    from cos import integrations
+    job=monitor.store.create_job('Chat ID: example-chat','Communications')
+    with monitor.store.connect() as c:
+        for i in range(10):
+            save_source(c,job['id'],'email','mail-'+str(i),'sender@example.com','',f'2026-01-{i+1:02}',str(i),False)
+    calls=[]
+    def read(skill,script,args):
+        calls.append((script,args))
+        return [] if script=='list_messages.py' else {'body':'Full email'}
+    monkeypatch.setattr(integrations,'run_skill',read)
+    assert not load_sources(monitor.store,job)['errors']
+    assert calls[0][1]==['--chat-id','example-chat','--limit','5','--json']
+    assert [args[1] for script,args in calls[1:]]==['mail-9','mail-8','mail-7','mail-6','mail-5']
+
+
 def perform(action, args):
     return {'role':'assistant', 'content':None, 'tool_calls':[{'id':'call-'+action, 'type':'function', 'function':{'name':'perform', 'arguments':json.dumps({'action':action, 'arguments':args})}}]}
 

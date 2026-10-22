@@ -111,6 +111,16 @@ def diagnostics(id):
         raise HTTPException(404,'Job not found')
     return JSONResponse(bundle(store,id),headers={'Content-Disposition':'attachment; filename="cos-diagnostics-'+id+'.json"'})
 
+@app.post('/api/jobs/{id}/source')
+def communication_source(id):
+    job=store.job(id)
+    if not job:
+        raise HTTPException(404,'Job not found')
+    if job['org']!='Communications':
+        raise ValueError('Source text is available for Communications jobs.')
+    from .conversations import load_sources
+    return load_sources(store,job)
+
 @app.post('/api/jobs')
 async def create_job(request:Request):
     body=await request.json()

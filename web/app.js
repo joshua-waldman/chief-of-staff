@@ -67,10 +67,31 @@ function bind(){
  if($('#settings-form'))$('#settings-form').onsubmit=handle(async e=>{e.preventDefault();const models=Object.fromEntries(Object.keys(state.settings.models).map(r=>[r,$('#model-'+r).value.trim()]));const projects=Object.fromEntries(Object.keys(state.settings.projects).map((n,i)=>[n,$('#project-'+i).value]));await api('settings',{models,projects,parallel_agents:+$('#parallel').value,max_steps:+$('#steps').value,monitor_enabled:$('#monitor').checked,poll_seconds:+$('#interval').value,command_prefix:$('#prefix').value.trim(),mcp_enabled:[...document.querySelectorAll('.mcp-toggle:checked')].map(x=>x.value),research_hosts:$('#hosts').value.split('\n').map(x=>x.trim()).filter(Boolean)});toast('Configuration saved');con=await api('connections');await refresh(true)});
 }
 async function submit(e){e.preventDefault();$('#submit').disabled=true;try{const files=await Promise.all([...$('#attachments').files].map(f=>new Promise((resolve,reject)=>{if(f.size>25*1024*1024)return reject(Error('Each attachment must be under 25 MB'));const r=new FileReader();r.onload=()=>resolve({name:f.name,data:r.result.split(',')[1]});r.onerror=reject;r.readAsDataURL(f)})));const j=await api('jobs',{request:$('#request').value,project:$('#project').value,files});$('#request').value='';$('#attachments').value='';toast('Request received by your Chief of Staff');await refresh(true);await openJob(j.id)}finally{if($('#submit'))$('#submit').disabled=false}}
+const sourceLoads=new Set(),sourceErrors=new Map();
+async function loadSource(id){
+ if(sourceLoads.has(id))return;
+ sourceLoads.add(id);sourceErrors.delete(id);
+ if(selected===id&&$('#load-source')){$('#load-source').disabled=true;$('#load-source').textContent='Loading full text…'}
+ try{const result=await api('jobs/'+id+'/source',{});sourceErrors.set(id,result.errors||[])}
+ catch(e){sourceErrors.set(id,['Full text could not be loaded. Check the connection and retry.'])}
+ finally{sourceLoads.delete(id);if(selected===id&&$('#job-dialog').open)await openJob(id)}
+}
+function sourceView(j){
+ const messages=[...(j.source_messages||[])].sort((a,b)=>(Date.parse(b.received)||0)-(Date.parse(a.received)||0)||String(b.message_id||'').localeCompare(String(a.message_id||''),undefined,{numeric:true})).slice(0,5),errors=sourceErrors.get(j.id)||[];
+ const collapse=btn('Collapse conversation','data-collapse-source aria-controls="source-conversation"','secondary');
+ return '<section class="panel"><details id="source-conversation" open><summary class="source-summary">Original messages <span class="small">('+messages.length+' · newest first)</span></summary>'+collapse+'<p class="small">Showing the latest five messages or emails.</p>'+messages.map((m,i)=>'<article class="source-message">'+readable('From',m.sender)+ (m.subject?readable('Subject',m.subject):'')+readable('Received',m.received)+'<div class="brief-label">'+(m.complete?'Full message':'Preview — full text not loaded')+'</div><div id="source-message-'+i+'" class="readable source-text">'+esc(m.body||'(Empty message)')+'</div></article>').join('')+(!messages.length?'<p class="small">Original message text has not been loaded yet.</p>':'')+errors.map(e=>'<p class="warning" role="alert">'+esc(e)+'</p>').join('')+'<div class="row">'+btn(sourceLoads.has(j.id)?'Loading full text…':'Load original messages','id="load-source" '+(sourceLoads.has(j.id)?'disabled':''),'secondary')+collapse+'</div></details></section>';
+}
+function collapseSourceConversation(){
+ const conversation=$('#source-conversation');
+ conversation.open=false;
+ const summary=conversation.querySelector('summary');
+ summary.focus({preventScroll:true});
+ summary.scrollIntoView({block:'nearest'});
+}
 async function openJob(id){
- const same=selected===id,snapshot=same?captureView($('#job-dialog')):null;
+ const same=selected===id,snapshot=same?captureView($('#job-dialog')):null,opening=!same||!$('#job-dialog').open;
  const j=await api('jobs/'+id);selected=id;const b=j.brief||{};$('#detail').innerHTML='<div class="eyebrow">'+esc(j.org)+'</div><h2 class="detail-title">'+esc(b.email_subject||j.title)+'</h2><div class="detail-meta">'+badge(j.status)+'<span class="small">'+esc(j.project||'Workspace')+' · '+date(j.created)+'</span></div><details><summary class="small">Original request</summary><div class="code">'+esc(j.request)+'</div></details>'+
- '<section class="panel job-brief"><h3>At a glance</h3>'+readable('Context',b.context)+readable('Current status',b.status_summary)+readable('Next step',b.next_step)+'</section>'+
+ '<section class="panel job-brief"><h3>At a glance</h3>'+readable('Context',b.context)+readable('Current status',b.status_summary)+readable('Next step',b.next_step)+'</section>'+(j.org==='Communications'?sourceView(j):'')+
  (j.org==='Communications'?'<section class="panel"><h3>Source email / conversation</h3><div class="form-grid">'+readable('From',b.email_from)+readable('Subject',b.email_subject)+readable('Received',b.email_received)+'</div>'+readable('Email summary',b.email_excerpt)+'<div class="form-grid">'+readable('Response needed',({yes:'Yes',no:'No',unknown:'Not yet determined'})[b.response_needed]||'Not yet determined')+readable('Why',b.response_reason)+'</div><div class="form-grid">'+readable('Action needed',({yes:'Yes',no:'No',unknown:'Not yet determined'})[b.action_needed]||'Not yet determined')+readable('Action rationale',b.action_reason)+'</div>'+readable('Requested work',b.requested_action)+readable('Action plan',b.action_plan)+(b.uncertainties?readable('Still unverified',b.uncertainties):'')+'</section>':'')+
  (b.proposed_body?'<section class="panel"><h3>'+(j.status==='completed'?'Response text':'Proposed response')+'</h3>'+readable('To',b.proposed_to)+readable('Subject',b.proposed_subject)+readable(j.status==='completed'?'Message text':'Draft reply',b.proposed_body,'proposed-reply')+'<p class="small">'+(j.status==='completed'?'See the result below for the execution outcome and receipt.':'A draft is not a sent message. Sending requires approval of the exact action below.')+'</p></section>':'')+
  (j.question?'<section class="warning"><h3>Decision or information needed</h3>'+(j.question.length>650?'<p>'+esc(b.next_step||'Review the details and reply below.')+'</p><details><summary>Full agent question and supporting context</summary><div class="readable">'+esc(j.question)+'</div></details>':'<div class="readable">'+esc(j.question)+'</div>')+'</section>':'')+
@@ -89,6 +110,9 @@ async function openJob(id){
  document.querySelectorAll('[data-approve],[data-reject]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{const aid=b.dataset.approve||b.dataset.reject,body=$('#body-'+aid);await api('approvals/'+aid,{approved:!!b.dataset.approve,...(body?{edited:{body:body.value}}:{})});await openJob(id);await refresh()}finally{b.disabled=false}}));
  document.querySelectorAll('[data-resolve]').forEach(b=>b.onclick=handle(async()=>{await api('approvals/'+b.dataset.resolve+'/resolve',{outcome:b.dataset.outcome});await openJob(id);await refresh()}));
  bindReview(id);
+ if($('#load-source'))$('#load-source').onclick=()=>loadSource(id);
+ document.querySelectorAll('[data-collapse-source]').forEach(button=>button.onclick=collapseSourceConversation);
+ if(opening&&j.org==='Communications'&&(!(j.source_messages||[]).length||(j.source_messages||[]).some(m=>!m.complete)))loadSource(id);
  if($('#cancel-job'))$('#cancel-job').onclick=handle(async()=>{await api('jobs/'+id+'/cancel',{});await openJob(id);await refresh()});
 }
 async function navigate(next){view=next;if(view==='connections'){con=await api('connections');atlassian=await api('atlassian');}if(view==='acceptance')tests=await api('acceptance');if(view==='knowledge')memories=await api('knowledge');render()}

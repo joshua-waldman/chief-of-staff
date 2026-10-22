@@ -26,3 +26,21 @@ def test_reject_empty_request_and_missing_job():
     client.get('/')
     assert client.post('/api/jobs',json={'request':''},headers={'x-cos-token':TOKEN}).status_code==400
     assert client.get('/api/jobs/not-a-job').status_code==404
+
+
+def test_communication_source_endpoint_loads_text_without_changing_job(tmp_path,monkeypatch):
+    from cos import server,integrations
+    from cos.db import Store
+    store=Store(tmp_path/'source.db')
+    monkeypatch.setattr(server,'store',store)
+    job=store.create_job('Email ID: example-message','Communications')
+    monkeypatch.setattr(integrations,'run_skill',lambda *args:{'body':'Full source\nFinal line','from':'sender@example.com'})
+    client=TestClient(app)
+    client.get('/')
+    assert client.post('/api/jobs/'+job['id']+'/source',json={}).status_code==403
+    response=client.post('/api/jobs/'+job['id']+'/source',json={},headers={'x-cos-token':TOKEN})
+    assert response.json()=={'errors':[]}
+    detail=client.get('/api/jobs/'+job['id']).json()
+    assert detail['source_messages'][0]['body']=='Full source\nFinal line'
+    assert detail['status']=='queued'
+    assert not detail['approvals']

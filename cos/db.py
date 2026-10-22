@@ -33,6 +33,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS seen(source TEXT,item_id TEXT,created TEXT,PRIMARY KEY(source,item_id));
             CREATE TABLE IF NOT EXISTS communication_threads(source TEXT,thread_id TEXT,job_id TEXT,PRIMARY KEY(source,thread_id));
             CREATE TABLE IF NOT EXISTS communication_inbox(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,body TEXT,created TEXT);
+            CREATE TABLE IF NOT EXISTS communication_sources(job_id TEXT,source TEXT,message_id TEXT,sender TEXT,subject TEXT,received TEXT,body TEXT,complete INTEGER,PRIMARY KEY(job_id,source,message_id));
             CREATE INDEX IF NOT EXISTS communication_pending ON communication_inbox(job_id,id);
             CREATE TABLE IF NOT EXISTS conversation_activity(job_id TEXT PRIMARY KEY,first_seen TEXT,last_seen TEXT);
             CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT);
@@ -91,6 +92,7 @@ class Store:
         from .briefs import detail_brief
         j['brief']=detail_brief(self,j)
         j['review_messages']=self.rows('SELECT * FROM review_messages WHERE job_id=? ORDER BY id',(id,))
+        j['source_messages']=self.rows('SELECT * FROM communication_sources WHERE job_id=? ORDER BY received,message_id',(id,))
         j.pop('messages',None)
         return j
 
