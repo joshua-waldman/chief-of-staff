@@ -83,7 +83,7 @@ function jobRefreshContext(){
   esc:x=>String(x??''),badge:()=>'',date:()=>'',readable:()=>'',reviewView:()=>'',btn:()=>'',bindReview:()=>{}};
  vm.createContext(ctx);
  vm.runInContext(source.slice(source.indexOf('function capacityView('),source.indexOf('async function navigate(')),ctx);
- return {ctx,dialog,detail,writes:()=>writes,respond:(title='Title')=>resolveRequest({id:'job',title,org:'Engineering',status:'completed',approvals:[],files:[],children:[],events:[]})};
+ return {ctx,dialog,detail,writes:()=>writes,respond:(title='Title',extra={})=>resolveRequest({id:'job',title,display_name:title,org:'Engineering',status:'completed',approvals:[],files:[],children:[],events:[],...extra})};
 }
 
 test('unchanged main content keeps its DOM and scroll while header status updates',()=>{
@@ -206,4 +206,14 @@ test('deliverables stay visible and recovery downloads are collapsed separately'
  assert.ok(!recoveryOnly.includes('<h3>Deliverables'));
  assert.ok(!recoveryOnly.includes(' open'));
  assert.match(ctx.jobFilesView([{id:'old',name:'Report <draft>.txt'}]),/Report &lt;draft>.txt/);
+});
+
+test('job detail heading uses the escaped display name instead of the source ID or email subject',async()=>{
+ const s=jobRefreshContext();
+ s.ctx.esc=x=>String(x??'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+ const pending=s.ctx.openJob('job',{background:true});
+ s.respond('Teams conversation: 19:meeting_opaque@thread.v2',{display_name:'Launch <readiness>',brief:{email_subject:'Long original source subject'}});
+ await pending;
+ assert.match(s.detail.html,/<h2 class="detail-title">Launch &lt;readiness&gt;<\/h2>/);
+ assert.ok(!s.detail.html.includes('19:meeting_opaque'));
 });
