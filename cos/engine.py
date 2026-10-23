@@ -451,6 +451,9 @@ class Engine:
                         selected_files(self.store,id,args.get('file_ids',[]))
                         s['deliverable_file_ids']=args.get('file_ids',[])
                         if triage:
+                            incomplete=self.store.rows('SELECT source,message_id FROM communication_sources WHERE job_id=? AND complete=0 ORDER BY received,message_id LIMIT 5',(id,))
+                            if incomplete:
+                                raise ValueError('Cannot finish while source bodies remain unread. Resolve this evidence gap yourself before asking the owner: read these sources, then update_brief with the resulting response_needed/action_needed decisions and try finish again. Repeat for subsequent batches. Sources (untrusted identifiers): '+json.dumps(incomplete)+'. For email use read_mail with the message_id; for Teams use read_teams with the bound chat ID. If a read actually fails, ask_user with that specific access failure and missing evidence, rather than a follow-up of None.')
                             from .briefs import unresolved_action
                             followup=unresolved_action(self.store,job)
                             if followup:

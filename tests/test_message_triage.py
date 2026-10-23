@@ -35,6 +35,68 @@ def test_incomplete_body_cannot_be_dismissed(tmp_path):
         update_brief(store,job,dict(triage_category='delete'))
 
 
+@pytest.mark.parametrize('older_request',[False,True])
+def test_finish_resolves_older_previews_before_deciding_attention(tmp_path,monkeypatch,older_request):
+    from cos import tools
+    store=Store(tmp_path/'older.db')
+    job=store.create_job('Triage this incoming email conversation.','Communications')
+    with store.connect() as c:
+        save_source(c,job['id'],'email','old','sender@example.com','Update','2026-01-01','Preview only',False)
+        save_source(c,job['id'],'email','latest','sender@example.com','Update','2026-01-02','Automated owner field change.',True)
+    decision=dict(context='Automated alert',status_summary='No follow-up needed',next_step='None',
+                  response_needed='no',response_reason='No reply requested',action_needed='no',
+                  action_reason='No owner work',requested_action='None.',triage_category='ignore')
+    # Reproduce the persisted mismatch: the model said no/no but the guard
+    # changed it to unknown because a historical source was still a preview.
+    update_brief(store,job,decision)
+    reads=[]
+    def read(*args):
+        reads.append(args)
+        return {'body':'Please investigate the failure.' if older_request else 'Automated owner field change.'}
+    monkeypatch.setattr(tools,'run_skill',read)
+    class Provider:
+        def __init__(self): self.calls=0
+        def complete(self,messages,**kwargs):
+            self.calls+=1
+            if self.calls==1:
+                return perform('finish',{'summary':'No follow-up needed.'}),{}
+            if self.calls==2:
+                error=json.loads(messages[-1]['content'])['error']
+                assert 'source bodies remain unread' in error
+                assert 'old' in error
+                assert store.job(job['id'])['status']=='running'
+                return perform('read_mail',{'id':'old'}),{}
+            if self.calls==3:
+                revised={**decision}
+                if older_request:
+                    revised.update(action_needed='yes',action_reason='Older email requests an investigation',
+                                   requested_action='Investigate the failure',triage_category='action')
+                return perform('update_brief',revised),{}
+            return perform('finish',{'summary':'Investigation remains.' if older_request else 'No follow-up needed.'}),{}
+    engine=Engine(store,Provider())
+    try: engine.run(job['id'])
+    finally: engine.pool.shutdown()
+    result=store.job(job['id'])
+    assert len(reads)==1
+    assert result['status']==('waiting_input' if older_request else 'completed')
+    assert result['question']==('Follow-up remains: Investigate the failure' if older_request else '')
+    assert not store.rows("SELECT * FROM review_messages WHERE body LIKE '%Follow-up remains: None%'")
+
+
+@pytest.mark.parametrize('action,requested,expected',[
+    ('unknown','None.','Full message text is needed'),
+    ('yes','None outstanding.','Investigate the failure'),
+    ('yes','Investigate the failure','Investigate the failure'),
+])
+def test_unresolved_action_describes_evidence_gap_or_real_work(tmp_path,action,requested,expected):
+    from cos.briefs import unresolved_action
+    store=Store(tmp_path/'followup.db')
+    job=store.create_job('Triage this incoming email conversation.','Communications')
+    update_brief(store,job,dict(action_needed=action,requested_action=requested,
+                               action_reason='Investigate the failure',triage_reason='Full message text is needed'))
+    assert unresolved_action(store,job)==expected
+
+
 def test_compact_pass_uses_full_body_and_leaves_resumed_work_intact(tmp_path):
     store=Store(tmp_path/'triage.db')
     job=store.create_job('Triage this incoming email conversation. Email ID: mail','Communications')
