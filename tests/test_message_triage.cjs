@@ -16,3 +16,13 @@ test('queue decisions and summaries are escaped and searchable with independent 
  assert.equal(ctx.queueMatches(job,'release','completed','action'),false);
  assert.equal(ctx.queueMatches(job,'release','queued','reading'),false);
 });
+
+test('queue uses a short name, keeps original text searchable and collapses summaries',()=>{
+ const job={id:'job',title:'Original detailed request',display_name:'Launch readiness',org:'Technology',project:'',status:'queued',triage_summary:'Full summary',updated:'today'};
+ const html=ctx.table([job]);
+ assert.match(html,/class="job-title">Launch readiness/);
+ assert.ok(!html.includes('Original detailed request'));
+ assert.match(html,/<details class="small"><summary>View summary<\/summary>Full summary<\/details>/);
+ assert.equal(ctx.queueMatches(job,'launch','',''),true);
+ assert.equal(ctx.queueMatches(job,'detailed','',''),true);
+});

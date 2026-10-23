@@ -3,7 +3,7 @@ import json
 import re
 from .db import now
 FIELDS={'action_needed','action_reason','requested_action','action_plan','context','status_summary','next_step','email_from','email_subject','email_received','email_excerpt','email_id','response_needed','response_reason','proposed_to','proposed_subject','proposed_body','uncertainties'}
-FIELDS |= {'triage_category','triage_reason'}
+FIELDS |= {'triage_category','triage_reason','job_name'}
 
 def unresolved_action(store, job):
     row=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
@@ -25,6 +25,9 @@ def update_brief(store,job,a):
             from .message_triage import LABELS
             if value not in LABELS:
                 raise ValueError('Unknown triage category.')
+        if key == 'job_name':
+            from .job_names import compact_name
+            value = compact_name(value)
         body[key]=value.strip()
     if job['org'] == 'Communications':
         from .message_triage import category

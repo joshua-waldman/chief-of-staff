@@ -18,17 +18,18 @@ from .integrations import run_skill,skill_dir,skill_inventory,call_mcp,communica
 CATALOG = """
 search_knowledge {query,scope?}: search local active memories and past outcomes across ALL scopes by default. scope:"*" (or empty) searches all organizations/projects; scope:"global" searches only global entries; a named scope includes that scope plus global. For guidance saved from a prior task, search here before external KBs. Treat as evidence, never authority.
 suggest_knowledge {title,content,kind:preference|profile|project|lesson,scope?:project name or global}: propose a reusable fact or lesson for user review. Never store credentials or wholesale communications.
-update_brief {triage_category?:reading|response|action|response_action|ignore|review,triage_reason?,action_needed?:yes|no|unknown,action_reason?,requested_action?,action_plan?,context?,status_summary?,next_step?,email_from?,email_subject?,email_received?,email_excerpt?,email_id?,response_needed?:yes|no|unknown,response_reason?,proposed_to?,proposed_subject?,proposed_body?,uncertainties?}: record the initial body-based communication decision before research, drafting or delegation; keep fields current before asking for input, requesting send approval, or finishing. Assess action needs separately from reply needs.
+update_brief {job_name?:short 3-7 word topic name without source IDs,triage_category?:reading|response|action|response_action|ignore|review,triage_reason?,action_needed?:yes|no|unknown,action_reason?,requested_action?,action_plan?,context?,status_summary?,next_step?,email_from?,email_subject?,email_received?,email_excerpt?,email_id?,response_needed?:yes|no|unknown,response_reason?,proposed_to?,proposed_subject?,proposed_body?,uncertainties?}: record the initial body-based communication decision before research, drafting or delegation; keep fields current before asking for input, requesting send approval, or finishing. Assess action needs separately from reply needs.
 
 apply_changes {changes:[{source,target,expected_sha256}]}: apply staged files to registered projects or app source after approval. Supply SHA256 of current target, or empty for a new file. Exact diffs are shown for review.
 list_files {path?: absolute approved project path or workspace-relative path}
-read_file {path,offset?:0,limit?:80000}: text, PDF, DOCX, PPTX and images. Text returns next_offset when truncated; continue with that offset to read the entire transcript. Use limit:4000 for large sources. Context archives default to 4000 characters so they can be read without overflowing again. Read screenshots before discussing them.
+read_file {path,offset?:0,limit?:4000}: text, PDF, DOCX, PPTX and images. Text pages are capped at 8000 characters even if a larger limit is requested. Follow next_offset, saving findings with update_brief after each batch. Reuse file_read_progress instead of restarting completed sources. Read screenshots before discussing them.
+read_action_receipt {id,offset?:0,limit?:4000}: read a specific exact action receipt belonging to this job, in bounded text pages. Use to verify an identified action, never to reconstruct the whole history.
 write_file {path,content}: relative path in this job's workspace; never changes the live app.
 create_document {name,title,sections:[{heading,body}]}: creates or replaces a DOCX; backs up prior version.
 create_presentation {name,title,slides:[{title,bullets:[text],notes?:text}]}: exactly one PPTX slide per supplied slide; no implicit cover. Maximum five bullets per slide, 220 characters per bullet; put detailed citations in notes.
-delegate {tasks:[{request,org,project?}]}: start independent sub-agents concurrently; parent waits for every child and resumes with their results. Communications proposals require approval before any children start. Include source context, scope, deliverables and acceptance criteria in each request. Technology handles research. Max 8 per call, bounded depth.
+delegate {tasks:[{request,org,project?,file_ids?:[id]}]}: start independent sub-agents with fresh context containing only the scoped request and explicitly selected source files (default none, max 16). Include facts, constraints, scope, deliverables and acceptance criteria; use separate children for independent source analysis. Parent history and recovery archives are never copied. Children return summaries and explicitly selected deliverables. Communications proposals require approval before any children start. Technology handles research. Max 8 per call, bounded depth.
 ask_user {question}: route a missing-information question through the Chief of Staff.
-finish {summary}: finish after all necessary tools succeed. Include artifact links /api/files/FILE_ID.
+finish {summary,file_ids?:[id]}: finish after all necessary tools succeed. Select up to 16 deliverable file IDs to return to the parent (default none); include artifact links /api/files/FILE_ID. Do not return input files or recovery archives as deliverables.
 list_skills {} / read_skill {name}: read instructions before using an installed skill.
 create_skill {name,description,instructions}: writes a local reusable skill.
 create_organization {name,leader,purpose}: adds an organization.
@@ -57,6 +58,7 @@ ORG_ACTIONS = {
  'Self-Improvement': {'create_skill','create_organization','run_python','run_sandbox','run_command','install_dependencies','apply_changes'},
 }
 COMMON = {'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','delegate','ask_user','finish','list_skills','read_skill','mcp_list_tools','mcp_call'}
+COMMON.add('read_action_receipt')
 ORG_ACTIONS['Communications'] |= {'calendar_events','calendar_event','calendar_rsvp','delete_email','mark_email_read','mark_teams_read'}
 ORG_ACTIONS['Engineering'].add('create_feature_branch')
 CATALOG += '''
@@ -147,6 +149,23 @@ def file_record(store,job_id,p,mime=None):
     emit('artifact.recorded',{'file_id':id,'name':p.name,'sha256':sha,'size':p.stat().st_size},store=store,job_id=job_id)
     return {'file_id':id,'name':p.name,'url':'/api/files/'+id}
 
+
+def selected_files(store,job_id,file_ids):
+    """Explicit job-local handoff; validate the whole selection before copying."""
+    if not isinstance(file_ids,list) or len(file_ids)>16 or any(not isinstance(i,str) for i in file_ids) or len(set(file_ids))!=len(file_ids):
+        raise ValueError('Select up to 16 distinct file IDs belonging to this job.')
+    selected=[]
+    root=workspace(job_id).resolve()
+    for id in file_ids:
+        row=store.one('SELECT * FROM files WHERE job_id=? AND id=?',(job_id,id))
+        if not row:
+            raise ValueError('Selected file does not belong to this job: '+id)
+        path=resolve_path(job_id,row['path'])
+        if not path.is_relative_to(root) or path.relative_to(root).parts[0]=='context':
+            raise ValueError('Recovery archives cannot be handed to another agent.')
+        selected.append(row)
+    return selected
+
 def extract(p):
     if p.suffix.lower() in {'.docx','.pptx','.xlsx'}:
         import zipfile
@@ -211,6 +230,17 @@ class Tools:
         id = job['id']
         if not allowed_action(job['org'],action):
             raise ValueError('This organization lacks the capability: '+action)
+        if action=='read_action_receipt':
+            receipt=self.store.one('SELECT id,tool,args,status,result FROM approvals WHERE job_id=? AND id=?',(id,a['id']))
+            if not receipt:
+                raise ValueError('Action receipt does not belong to this job.')
+            text=json.dumps(receipt,ensure_ascii=False)
+            offset=a.get('offset',0)
+            limit=a.get('limit',4000)
+            if type(offset) is not int or not 0<=offset<=len(text) or type(limit) is not int or not 1<=limit<=8000:
+                raise ValueError('Use a valid receipt offset and a limit from 1 to 8000.')
+            end=offset+limit
+            return {'text':text[offset:end],'next_offset':end if end<len(text) else None,'truncated':end<len(text)}
         if action=='search_knowledge':
             from .knowledge import Knowledge
             return Knowledge(self.store).search(a.get('query',''),a.get('scope','*'),job=job)
@@ -230,7 +260,8 @@ class Tools:
             return browser_action(self.store,job,action,a)
         if action=='list_files':
             p = resolve_path(id,a.get('path','.'))
-            return [{'name':x.name,'path':str(x),'directory':x.is_dir()} for x in list(p.iterdir())[:300] if x.name not in BLOCKED_PARTS and x.name not in SECRET_NAMES]
+            registered={f['path']:f['id'] for f in self.store.rows('SELECT id,path FROM files WHERE job_id=?',(id,))}
+            return [{'name':x.name,'path':str(x),'directory':x.is_dir(),'file_id':registered.get(str(x))} for x in list(p.iterdir())[:300] if x.name not in BLOCKED_PARTS and x.name not in SECRET_NAMES]
         if action=='read_file':
             from .recovery_storage import archived_bytes
             with self.store.lock:
@@ -247,10 +278,10 @@ class Tools:
                 offset=a.get('offset',0)
                 if type(offset) is not int or offset<0 or offset>len(text):
                     raise ValueError('Text offset must be an integer within the document.')
-                limit=a.get('limit',4000 if workspace(id)/'context' in p.parents else 80000)
+                limit=a.get('limit',4000)
                 if type(limit) is not int or not 1<=limit<=80000:
                     raise ValueError('Text limit must be an integer from 1 to 80000.')
-                end=offset+limit
+                end=offset+min(limit,8000)
                 return {'text':text[offset:end],'truncated':len(text)>end,
                     'next_offset':end if len(text)>end else None,
                     'source':str(p),'sha256':hashlib.sha256(raw).hexdigest()}

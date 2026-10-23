@@ -117,9 +117,15 @@ def test_long_transcripts_can_be_read_to_the_final_assignment(tmp_path, monkeypa
     path.write_text('x' * 80000 + 'Alex: Prepare the report.', encoding='utf-8')
     runner = tools.Tools(store)
     first = runner.execute(job, 'read_file', {'path': str(path)})
-    assert first['truncated'] and first['next_offset'] == 80000
-    last = runner.execute(job, 'read_file', {'path': str(path), 'offset': first['next_offset']})
+    assert first['truncated'] and first['next_offset'] == len(first['text'])
+    parts=[first['text']]
+    last=first
+    while last['next_offset'] is not None:
+        last = runner.execute(job, 'read_file', {'path': str(path), 'offset': last['next_offset']})
+        assert len(last['text'])<=8000
+        parts.append(last['text'])
     assert not last['truncated'] and last['next_offset'] is None
     assert last['text'] == 'Alex: Prepare the report.'
+    assert ''.join(parts)==path.read_text(encoding='utf-8')
     with pytest.raises(ValueError, match='offset'):
         runner.execute(job, 'read_file', {'path': str(path), 'offset': -1})

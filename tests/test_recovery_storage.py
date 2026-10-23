@@ -62,6 +62,10 @@ def test_pruning_is_lossless_and_old_paths_still_support_text_and_images(env):
     assert response['next_offset']==120
     assert response['source']==content
     assert response['sha256']==hashlib.sha256(originals[content]).hexdigest()
+    bounded=tools.Tools(env).execute(job,'read_file',{'path':content,'limit':80000})
+    assert len(bounded['text'])==8000 and bounded['next_offset']==8000
+    default=tools.Tools(env).execute(job,'read_file',{'path':content})
+    assert len(default['text'])==4000 and default['next_offset']==4000
     image=next(path for path in originals if Path(path).suffix=='.png')
     import base64
     assert base64.b64decode(tools.Tools(env).execute(job,'read_file',{'path':image})['image_data'])==originals[image]

@@ -12,6 +12,7 @@ ALWAYS = {'send_email','reply_email','send_teams','confluence_write','merge_code
 ALWAYS |= {'calendar_rsvp','delete_email','mark_email_read','mark_teams_read','create_feature_branch'}
 LOW = {'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','create_skill','create_organization','delegate','ask_user','finish','fetch_url','search_mail','read_mail','list_chats','read_teams','meeting_artifacts','meeting_transcripts','save_meeting_summary','jira_read','jira_write','list_skills','read_skill','mcp_list_tools','run_sandbox','run_python','mail_attachments','teams_attachments','browser_read'}
 LOW |= {'calendar_events','calendar_event'}
+LOW.add('read_action_receipt')
 
 TRUSTED_PACKAGES={'fastapi','uvicorn','httpx','pytest','python-docx','python-pptx','pypdf','mcp','requests','pandas','numpy','openpyxl','rich','pydantic','keyring','playwright'}
 
