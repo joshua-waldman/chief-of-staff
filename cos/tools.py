@@ -25,6 +25,7 @@ list_files {path?: absolute approved project path or workspace-relative path}
 read_file {path,offset?:0,limit?:4000}: text, PDF, DOCX, PPTX and images. Text pages are capped at 8000 characters even if a larger limit is requested. Follow next_offset, saving findings with update_brief after each batch. Reuse file_read_progress instead of restarting completed sources. Read screenshots before discussing them.
 read_action_receipt {id,offset?:0,limit?:4000}: read a specific exact action receipt belonging to this job, in bounded text pages. Use to verify an identified action, never to reconstruct the whole history.
 write_file {path,content}: relative path in this job's workspace; never changes the live app.
+edit_file {path,expected_sha256,old_text,new_text}: replace exactly one nonempty text fragment in an existing UTF-8 workspace file. Use the sha256 returned by read_file or the previous edit. Preserves a backup and returns the new hash. Use small edits for staged code instead of rewriting or rereading whole files. Cannot edit live projects or application source.
 create_document {name,title,sections:[{heading,body}]}: creates or replaces a DOCX; backs up prior version.
 create_presentation {name,title,slides:[{title,bullets:[text],notes?:text}]}: exactly one PPTX slide per supplied slide; no implicit cover. Maximum five bullets per slide, 220 characters per bullet; put detailed citations in notes.
 delegate {tasks:[{request,org,project?,file_ids?:[id]}]}: start independent sub-agents with fresh context containing only the scoped request and explicitly selected source files (default none, max 16). Include facts, constraints, scope, deliverables and acceptance criteria; use separate children for independent source analysis. Parent history and recovery archives are never copied. Children return summaries and explicitly selected deliverables. Communications proposals require approval before any children start. Technology handles research. Max 8 per call, bounded depth.
@@ -58,7 +59,7 @@ ORG_ACTIONS = {
  'Self-Improvement': {'create_skill','create_organization','run_python','run_sandbox','run_command','install_dependencies','apply_changes'},
 }
 COMMON = {'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','delegate','ask_user','finish','list_skills','read_skill','mcp_list_tools','mcp_call'}
-COMMON.add('read_action_receipt')
+COMMON |= {'read_action_receipt','edit_file'}
 ORG_ACTIONS['Communications'] |= {'calendar_events','calendar_event','calendar_rsvp','delete_email','mark_email_read','mark_teams_read'}
 ORG_ACTIONS['Engineering'].add('create_feature_branch')
 CATALOG += '''
@@ -299,6 +300,41 @@ class Tools:
                 target.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copy2(src,target)
             return {'applied':[x['target'] for x in review]}
+        if action=='edit_file':
+            p=resolve_path(id,a['path'],True)
+            old,new=a.get('old_text'),a.get('new_text')
+            if not isinstance(old,str) or not old or not isinstance(new,str) or old==new:
+                raise ValueError('Supply a nonempty old_text and a different new_text.')
+            if len(old)>16000 or len(new)>16000:
+                raise ValueError('Keep each edit fragment within 16,000 characters.')
+            with self.store.lock:
+                raw=p.read_bytes()
+                if len(raw)>1024*1024:
+                    raise ValueError('Editable text files must be at most 1 MB.')
+                before=hashlib.sha256(raw).hexdigest()
+                if a.get('expected_sha256')!=before:
+                    raise ValueError('File changed or hash missing. Verify the target fragment and current sha256 before editing.')
+                text=raw.decode('utf-8').replace('\r\n','\n')
+                old,new=old.replace('\r\n','\n'),new.replace('\r\n','\n')
+                if old==new or text.count(old)!=1:
+                    raise ValueError('old_text must match exactly one fragment; include more surrounding context.')
+                edited=text.replace(old,new,1)
+                if b'\r\n' in raw:
+                    edited=edited.replace('\n','\r\n')
+                data=edited.encode('utf-8')
+                if len(data)>1024*1024:
+                    raise ValueError('Edited file exceeds 1 MB.')
+                backup=p.with_name(p.name+'.'+uid()[:8]+'.bak')
+                shutil.copy2(p,backup)
+                temp=p.with_name(p.name+'.'+uid()+'.tmp')
+                try:
+                    temp.write_bytes(data)
+                    temp.replace(p)
+                finally:
+                    temp.unlink(missing_ok=True)
+                return {**file_record(self.store,id,p),'source':str(p),
+                    'before_sha256':before,'sha256':hashlib.sha256(data).hexdigest(),
+                    'backup':str(backup),'replacements':1}
         if action=='write_file':
             p = resolve_path(id,a['path'],True)
             p.parent.mkdir(parents=True,exist_ok=True)

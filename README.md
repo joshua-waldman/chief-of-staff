@@ -92,6 +92,8 @@ Agent context is scoped to the current task. Delegation starts fresh child conte
 
 Context checkpoints carry a bounded recent action index, current findings and source read ranges instead of embedding every historical tool result. Full receipts remain available through the job-scoped `read_action_receipt` tool. Text reads default to 4,000 characters and are capped at 8,000 per page. After twelve fresh source pages the agent must save findings with `update_brief` before reading more. Repeated covered ranges and recovery-archive reads do not count as new evidence, even when filenames or requested page sizes change. Existing blocked jobs remain stopped; resuming restores read coverage from saved receipts without replaying tools. Existing archives are retained for diagnosis and are not automatically deleted.
 
+For staged implementation, `edit_file` replaces one exact fragment in a job workspace file using its current SHA256. It preserves a backup and rejects stale hashes or ambiguous matches. This lets agents make small changes without rewriting large files in a model response. Live project edits, application changes and host validation retain their existing approval requirements.
+
 ## Use the tool
 
 Communication triage evaluates your personal obligations before proposing replies or work. FYIs, updates, optional suggestions and tasks assigned to others finish with a useful summary and no follow-up. Completed informational summaries offer optional source-specific mark-as-read controls through exact-action approval (Teams marks the entire chat). Approving or rejecting that read action leaves the summary completed without another planning pass.

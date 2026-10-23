@@ -101,5 +101,7 @@ def warning(state):
     return ('Progress check: repeated calls are returning unchanged evidence or errors. '
         'Use the saved brief and verified findings. Do not reread unchanged screenshots, '
         'attachments, or conversations. Resolve the specific missing fact with a different '
-        'approach, ask a concrete question if genuinely blocked, or update the brief and '
+        'approach. For staged implementation, use edit_file with the current sha256 and '
+        'one exact replacement rather than rereading whole files. Save concrete findings, '
+        'ask a concrete question if genuinely blocked, or update the brief and '
         'finish when no reply or unresolved work remains. Never bypass action approvals.')
