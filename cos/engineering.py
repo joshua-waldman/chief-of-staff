@@ -2,7 +2,7 @@
 import re
 import subprocess
 from pathlib import Path
-from .config import settings
+from .config import settings,ROOT
 
 
 def validate_workflows(value, projects):
@@ -26,6 +26,8 @@ def workflow(job):
 
 
 def project_root(job):
+    if job.get('org')=='Self-Improvement':
+        return ROOT.resolve()
     root=settings()['projects'].get(job.get('project'))
     if not root: raise ValueError('Choose a registered project before changing branches.')
     return Path(root).resolve()
@@ -55,6 +57,8 @@ def create_branch(job,a):
 
 def verify_branch(job):
     rule=workflow(job)
+    if job.get('org')=='Self-Improvement':
+        rule={**rule,'require_feature_branch':True}
     if not rule.get('require_feature_branch') and not rule.get('require_ticket'): return
     name=git(project_root(job),'branch','--show-current')
     prefix=rule.get('branch_prefix','codex/')
