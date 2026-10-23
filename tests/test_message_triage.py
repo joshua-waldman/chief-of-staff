@@ -42,6 +42,7 @@ def test_compact_pass_uses_full_body_and_leaves_resumed_work_intact(tmp_path):
         save_source(c,job['id'],'email','mail','sender@example.com','Subject','','Full body: final paragraph',True)
     prompt=first_pass(store,job,{'messages':[]})
     evidence=json.loads(prompt[1]['content'])
+    assert evidence['owner_email']=='owner@example.com'
     assert evidence['sources'][0]['body']=='Full body: final paragraph'
     assert evidence['sources'][0]['complete']==1
     assert first_pass(store,job,{'source_revision':1}) is None
@@ -133,3 +134,114 @@ def test_email_preview_is_read_before_body_decision(tmp_path,monkeypatch):
     assert len(reads)==1
     assert store.detail(job['id'])['brief']['triage_category']=='reading'
     assert store.job(job['id'])['status']=='completed'
+
+
+def informational(store):
+    job=store.create_job('Triage this incoming email conversation.', 'Communications')
+    with store.connect() as c:
+        save_source(c,job['id'],'email','mail','sender@example.com','FYI','','Alex owns the next step. You are copied for awareness.',True)
+    update_brief(store,job,dict(context='FYI',status_summary='Summary ready',next_step='No action',email_excerpt='Alex owns the next step.',response_needed='no',response_reason='FYI; no owner reply requested',action_needed='no',action_reason='Alex is assigned the work',triage_category='reading'))
+    store.update(job['id'],status='completed',result='Alex owns the next step.')
+    return store.job(job['id'])
+
+
+@pytest.mark.parametrize('approved',[True,False])
+def test_optional_read_finishes_without_another_model_pass(tmp_path,approved):
+    from cos.message_triage import read_targets,request_read
+    store=Store(tmp_path/'read.db')
+    job=informational(store)
+    targets=read_targets(store,job)
+    assert len(targets)==1
+    assert targets[0]['args']['id']=='mail'
+    engine=Engine(store)
+    executed=[]
+    engine.tools.execute=lambda job,tool,args: executed.append((tool,args)) or {'ok':True}
+    try:
+        result=request_read(store,job['id'],'mark_email_read','mail')
+        assert store.job(job['id'])['status']=='awaiting_approval'
+        assert not executed
+        engine.decide(result['approval_id'],approved)
+        assert store.job(job['id'])['status']=='completed'
+        assert len(executed)==int(approved)
+        assert store.job(job['id'])['result']=='Alex owns the next step.'
+        assert not store.detail(job['id'])['children']
+        assert bool(read_targets(store,store.job(job['id']))) is not approved
+    finally:
+        engine.pool.shutdown()
+
+
+def test_summary_read_rejects_other_sources_and_new_activity(tmp_path):
+    from cos.message_triage import request_read
+    store=Store(tmp_path/'read.db')
+    job=informational(store)
+    with pytest.raises(ValueError):
+        request_read(store,job['id'],'mark_email_read','another-mail')
+    store.write('INSERT INTO communication_inbox(job_id,body,created) VALUES(?,?,?)',(job['id'],'New request','now'))
+    with pytest.raises(ValueError):
+        request_read(store,job['id'],'mark_email_read','mail')
+    assert not store.detail(job['id'])['approvals']
+
+
+def test_no_personal_obligation_clears_old_proposals(tmp_path):
+    store=Store(tmp_path/'read.db')
+    job=informational(store)
+    brief=update_brief(store,job,dict(requested_action='Investigate',action_plan='Delegate',proposed_body='Thanks!',next_step='Ask the owner what to do'))
+    assert not any(brief.get(k) for k in ('requested_action','action_plan','proposed_body'))
+    assert brief['next_step'].startswith('No further action required.')
+
+
+@pytest.mark.parametrize('action,args',[
+    ('delegate',{'tasks':[{'org':'Technology','request':'Investigate Alexs work'}]}),
+    ('reply_email',{'id':'mail','body':'Thanks!'}),
+])
+def test_informational_triage_blocks_unnecessary_work_and_replies(tmp_path,action,args):
+    store=Store(tmp_path/'guard.db')
+    job=informational(store)
+    store.update(job['id'],status='queued')
+    class Provider:
+        def __init__(self): self.calls=0
+        def complete(self,messages,**kwargs):
+            self.calls+=1
+            if self.calls==1: return perform(action,args),{}
+            return perform('finish',{'summary':'Alex owns the next step.'}),{}
+    engine=Engine(store,Provider())
+    try: engine.run(job['id'])
+    finally: engine.pool.shutdown()
+    detail=store.detail(job['id'])
+    assert detail['status']=='completed'
+    assert not detail['approvals']
+    assert not detail['children']
+    assert any(e['kind']=='tool_error' for e in detail['events'])
+
+
+def test_teams_summary_read_targets_the_entire_bound_chat(tmp_path):
+    from cos.message_triage import read_targets
+    store=Store(tmp_path/'teams.db')
+    job=informational(store)
+    store.write('DELETE FROM communication_sources WHERE job_id=?',(job['id'],))
+    with store.connect() as c:
+        save_source(c,job['id'],'teams','message','Participant','','','FYI',True)
+        c.execute('INSERT INTO communication_threads VALUES(?,?,?)',('teams','chat',job['id']))
+    targets=read_targets(store,job)
+    assert targets==[{'tool':'mark_teams_read','args':{'chat_id':'chat'},'label':'Mark entire Teams chat as read'}]
+
+
+def test_summary_read_http_requires_explicit_source_approval(tmp_path,monkeypatch):
+    from fastapi.testclient import TestClient
+    from cos import server
+    store=Store(tmp_path/'http.db')
+    job=informational(store)
+    monkeypatch.setattr(server,'store',store)
+    client=TestClient(server.app)
+    client.cookies.set('cos_session',server.TOKEN)
+    url='/api/jobs/'+job['id']+'/mark-read'
+    body={'tool':'mark_email_read','target_id':'mail'}
+    assert client.post(url,json=body).status_code==403
+    response=client.get('/api/jobs/'+job['id']).json()
+    assert response['read_targets'][0]['args']['id']=='mail'
+    response=client.post(url,json=body,headers={'x-cos-token':server.TOKEN})
+    assert response.status_code==200
+    approval=store.one('SELECT * FROM approvals WHERE id=?',(response.json()['approval_id'],))
+    assert approval['status']=='pending'
+    assert approval['tool']=='mark_email_read'
+    assert client.post(url,json=body,headers={'x-cos-token':server.TOKEN}).status_code==400
