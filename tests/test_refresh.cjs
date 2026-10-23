@@ -71,6 +71,61 @@ test('refresh preserves nested scroll, dialog scroll, expansion, draft and size'
  assert.equal(context.window.scrollY,40);
 });
 
+function jobRefreshContext(){
+ let resolveRequest,writes=0;
+ const dialog={open:true,scrollTop:100};
+ const detail={set innerHTML(value){writes++;this.html=value;dialog.scrollTop=0}};
+ const refreshButton={};
+ const ctx={selected:'job',document:{activeElement:null,querySelector:()=>null,querySelectorAll:()=>[]},
+  $:s=>({'#job-dialog':dialog,'#detail':detail,'#refresh-job':refreshButton}[s]||null),
+  api:()=>new Promise(resolve=>resolveRequest=resolve),
+  captureView:root=>({y:root.scrollTop}),restoreView:(root,saved)=>root.scrollTop=saved.y,
+  esc:x=>String(x??''),badge:()=>'',date:()=>'',readable:()=>'',reviewView:()=>'',btn:()=>'',bindReview:()=>{}};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function capacityView('),source.indexOf('async function navigate(')),ctx);
+ return {ctx,dialog,detail,writes:()=>writes,respond:(title='Title')=>resolveRequest({id:'job',title,org:'Engineering',status:'completed',approvals:[],files:[],children:[],events:[]})};
+}
+
+test('unchanged main content keeps its DOM and scroll while header status updates',()=>{
+ let writes=0;
+ const main={dataset:{view:'acceptance'},scrollTop:0,set innerHTML(value){writes++;this.scrollTop=0}};
+ const pill={},ctx={view:'acceptance',tests:[],names:{acceptance:'Acceptance tests'},
+  state:{settings:{},monitor:{state:'paused'}},document:{querySelectorAll:()=>[]},
+  $:s=>s==='#main'?main:s==='#search'?null:pill,
+  renderQueueControl:()=>{},intro:()=>'',bind:()=>{},
+  captureView:root=>({y:root.scrollTop}),restoreView:(root,saved)=>root.scrollTop=saved.y};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function render(){'),source.indexOf('function input(')),ctx);
+ ctx.render();main.scrollTop=600;
+ ctx.state.monitor.state='watching';ctx.render();
+ assert.equal(writes,1);
+ assert.equal(main.scrollTop,600);
+ assert.equal(pill.textContent,'● Monitoring active');
+});
+
+test('job refresh preserves scrolling performed while its request is in flight',async()=>{
+ const s=jobRefreshContext(),pending=s.ctx.openJob('job',{background:true});
+ s.dialog.scrollTop=640;s.respond();await pending;
+ assert.equal(s.dialog.scrollTop,640);
+ assert.equal(s.writes(),1);
+ const unchanged=s.ctx.openJob('job',{background:true});
+ s.dialog.scrollTop=810;s.respond();await unchanged;
+ assert.equal(s.writes(),1,'unchanged content must keep the existing DOM');
+ assert.equal(s.dialog.scrollTop,810);
+ const changed=s.ctx.openJob('job',{background:true});
+ s.dialog.scrollTop=920;s.respond('Updated title');await changed;
+ assert.equal(s.writes(),2);
+ assert.equal(s.dialog.scrollTop,920);
+});
+
+test('pending background job refresh respects closing, switching jobs and starting a draft',async()=>{
+ for(const change of [s=>{s.dialog.open=false;s.ctx.selected=null},s=>s.ctx.selected='another-job',s=>s.ctx.document.activeElement={tagName:'TEXTAREA'}]){
+  const s=jobRefreshContext(),pending=s.ctx.openJob('job',{background:true});
+  change(s);s.respond();await pending;
+  assert.equal(s.writes(),0);
+ }
+});
+
 test('monitor failure is visible, escaped, and clears on recovery',()=>{
  const alertContext={state:{monitor_attention:true,monitor:{error:'HTTP 400 <script>',sources:{email:{state:'watching'}}}},labels:{watching:'Watching'},esc:x=>String(x??'').replace(/</g,'&lt;'),date:x=>x,btn:()=>'<button>Settings</button>'};
  vm.createContext(alertContext);
