@@ -83,7 +83,8 @@ function render(){
  }else if(view==='knowledge')html=knowledgeView();
  else if(view==='connections')html=connectionView();
  else html=intro('Evidence before confidence.','Create live acceptance requests after connecting services. Automated smoke tests run separately.')+'<div class="warning">Live requests consume AMD gateway usage. Communications sends still require approval.</div><div class="two-col">'+tests.map((t,i)=>'<article class="panel test-card"><div class="eyebrow">LIVE ACCEPTANCE</div><h2>'+esc(t.category)+'</h2><p>'+esc(t.request)+'</p><ol>'+t.checks.map(c=>'<li>'+esc(c)+'</li>').join('')+'</ol>'+btn('Create acceptance request ↗','data-test="'+i+'"')+'</article>').join('')+'</div>';
- $('#main').innerHTML=html;bind();restoreView($('#main'),savedView);if($('#search'))$('#search').oninput();
+ if($('#main')._renderedHTML===html)return;
+ $('#main').innerHTML=html;$('#main')._renderedHTML=html;bind();restoreView($('#main'),savedView);if($('#search'))$('#search').oninput();
 }
 function input(id,label,value,type='text',hint=''){return '<div class="field"><label for="'+id+'">'+esc(label)+'</label><input id="'+id+'" type="'+type+'" value="'+esc(value)+'">'+(hint?'<small>'+esc(hint)+'</small>':'')+'</div>'}
 function connectionView(){if(!con)return intro('Your tools. Connected.','Loading connection inventory…');return intro('Your tools. Connected.','AMD inference, your existing skills, and a workspace that moves with you.')+monitoringAlert()+
@@ -146,9 +147,13 @@ function capacityView(j){
  const seconds=Math.max(0,Math.ceil((c.retry_at*1000-Date.now())/1000));
  return '<section class="warning" role="status"><h3>'+ (paused?'Model capacity recovery paused':'Waiting for model capacity')+'</h3><p>Progress is saved. '+(paused?'Automatic retries reached the recovery window. Review AMD gateway capacity or retry when ready.':'We’ll retry automatically '+(seconds?'in '+seconds+' seconds.':'when a worker is available.'))+'</p>'+btn('Retry now','id="retry-capacity"','secondary')+'<details><summary>Gateway diagnostics</summary><div class="readable">'+esc(c.model)+' · '+esc(c.detail||'Model request concurrency limit reached.')+'</div></details></section>';
 }
-async function openJob(id){
- const same=selected===id,snapshot=same?captureView($('#job-dialog')):null,opening=!same||!$('#job-dialog').open;
- const j=await api('jobs/'+id);selected=id;const b=j.brief||{};$('#detail').innerHTML='<div class="eyebrow">'+esc(j.org)+'</div><h2 class="detail-title">'+esc(b.email_subject||j.title)+'</h2><div class="detail-meta">'+badge(j.status)+'<span class="small">'+esc(j.project||'Workspace')+' · '+date(j.created)+'</span></div><details><summary class="small">Original request</summary><div class="code">'+esc(j.request)+'</div></details>'+
+async function openJob(id,{background=false}={}){
+ const j=await api('jobs/'+id);
+ // Read the live view after the request: the user may have scrolled or closed it while waiting.
+ if(background&&(selected!==id||!$('#job-dialog').open||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)||document.querySelector('#detail button[disabled]')))return;
+ const same=selected===id,opening=!same||!$('#job-dialog').open;
+ const snapshot=opening?null:captureView($('#job-dialog'));
+ const b=j.brief||{},html='<div class="eyebrow">'+esc(j.org)+'</div><h2 class="detail-title">'+esc(b.email_subject||j.title)+'</h2><div class="detail-meta">'+badge(j.status)+'<span class="small">'+esc(j.project||'Workspace')+' · '+date(j.created)+'</span></div><details><summary class="small">Original request</summary><div class="code">'+esc(j.request)+'</div></details>'+
  '<section class="panel job-brief"><h3>At a glance</h3>'+(j.org==='Communications'?readable('Message decision',triageLabel(b.triage_category))+readable('Why this decision',b.triage_reason||b.action_reason||b.response_reason)+readable('Quick summary',b.email_excerpt):'')+readable('Context',b.context)+readable('Current status',b.status_summary)+readable('Next step',b.next_step)+'</section>'+(j.org==='Communications'?sourceView(j):'')+
  (j.org==='Communications'?'<section class="panel"><h3>Source email / conversation</h3><div class="form-grid">'+readable('From',b.email_from)+readable('Subject',b.email_subject)+readable('Received',b.email_received)+'</div>'+readable('Email summary',b.email_excerpt)+'<div class="form-grid">'+readable('Response needed',({yes:'Yes',no:'No',unknown:'Not yet determined'})[b.response_needed]||'Not yet determined')+readable('Why',b.response_reason)+'</div><div class="form-grid">'+readable('Action needed',({yes:'Yes',no:'No',unknown:'Not yet determined'})[b.action_needed]||'Not yet determined')+readable('Action rationale',b.action_reason)+'</div>'+readable('Requested work',b.requested_action)+readable('Action plan',b.action_plan)+(b.uncertainties?readable('Still unverified',b.uncertainties):'')+'</section>':'')+
  (b.proposed_body?'<section class="panel"><h3>'+(j.status==='completed'?'Response text':'Proposed response')+'</h3>'+readable('To',b.proposed_to)+readable('Subject',b.proposed_subject)+readable(j.status==='completed'?'Message text':'Draft reply',b.proposed_body,'proposed-reply')+'<p class="small">'+(j.status==='completed'?'See the result below for the execution outcome and receipt.':'A draft is not a sent message. Sending requires approval of the exact action below.')+'</p></section>':'')+
@@ -164,6 +169,8 @@ async function openJob(id){
  (j.children.length?'<h3>Delegated work</h3>'+j.children.map(c=>'<div class="child" data-child="'+c.id+'">'+badge(c.status)+' '+esc(c.org)+' · '+esc(c.title)+'</div>').join(''):'')+
  '<p><a class="file-link" href="/api/jobs/'+j.id+'/diagnostics" download>Download diagnostics & provenance</a></p><details id="activity-details"><summary>Full activity timeline ('+j.events.filter(e=>e.kind!=="model").length+' events)</summary><div class="section-title"><h3>Activity timeline</h3>'+btn('Refresh','id="refresh-job"','link-btn')+'</div><div class="timeline">'+j.events.filter(e=>e.kind!=='model').map(e=>'<div class="event"><div class="event-head">'+esc(e.kind.toUpperCase())+'<time>'+date(e.created)+'</time></div><div id="event-body-'+e.id+'" class="event-body">'+esc(e.body)+'</div></div>').join('')+'</div></details>'+
  (!['completed','cancelled'].includes(j.status)?btn('Cancel job and sub-agents','id="cancel-job"','danger'):'');
+ if(!opening&&$('#detail')._renderedHTML===html)return;
+ selected=id;$('#detail').innerHTML=html;$('#detail')._renderedHTML=html;
  if(!$('#job-dialog').open)$('#job-dialog').showModal();if(snapshot)restoreView($('#job-dialog'),snapshot);else $('#job-dialog').scrollTop=0;$('#refresh-job').onclick=()=>openJob(id);
  if($('#answer-form'))$('#answer-form').onsubmit=handle(async e=>{e.preventDefault();await api('jobs/'+id+'/answer',{answer:$('#answer').value});await openJob(id);await refresh()});
  document.querySelectorAll('[data-child]').forEach(b=>b.onclick=()=>openJob(b.dataset.child));
@@ -181,7 +188,7 @@ async function navigate(next){view=next;if(view==='connections'){con=await api('
 async function refresh(force=false){const [nextState,nextJobs,nextAgents]=await Promise.all([api('status'),api('jobs'),view==='organizations'?api('organization-agents'):Promise.resolve(null)]);state=nextState;renderQueueControl();jobs=nextJobs;if(nextAgents!==null)organizationAgents=nextAgents;if(view==='knowledge'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))memories=await api('knowledge');if(force||!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))render()}
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=handle(()=>navigate(b.dataset.view)));$('#close-dialog').onclick=()=>{$('#job-dialog').close();selected=null};$('#job-dialog').addEventListener('close',()=>selected=null);
 refresh().catch(e=>toast(e.message,true));
-setInterval(async()=>{if(busy)return;busy=true;try{await refresh();if(view==='connections'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){con=await api('connections');render()}if(selected&&$('#job-dialog').open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)&&!document.querySelector('#detail button[disabled]'))await openJob(selected)}catch(e){}finally{busy=false}},4000);
+setInterval(async()=>{if(busy)return;busy=true;try{await refresh();if(view==='connections'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){con=await api('connections');render()}if(selected&&$('#job-dialog').open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)&&!document.querySelector('#detail button[disabled]'))await openJob(selected,{background:true})}catch(e){}finally{busy=false}},4000);
 
 function captureView(root){
  if(!root)return null;
