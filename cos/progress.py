@@ -1,6 +1,7 @@
 """Separate scheduler time slices from a persisted no-progress safeguard."""
 import hashlib
 import json
+import re
 from pathlib import PureWindowsPath
 
 
@@ -10,12 +11,17 @@ def recovery_path(path):
     return bool(parts) and (parts[0]=='context' or any(parts[i:i+2]==('workspace','context') for i in range(len(parts)-1)))
 
 
+def bookkeeping_read(path):
+    """Saved research is primary evidence even in the legacy context directory."""
+    return recovery_path(path) and not re.fullmatch(r'research-[0-9a-f]{20}\.txt',PureWindowsPath(str(path)).name.casefold())
+
+
 def hydrate_reads(store,job_id,state):
     """Recover legacy read coverage without changing progress or replaying tools."""
     for row in store.rows("SELECT rowid AS cursor,args,result FROM approvals WHERE job_id=? AND tool='read_file' AND status='executed' AND rowid>? ORDER BY rowid",(job_id,state.get('file_read_cursor',0))):
         args=json.loads(row['args'])
         result=json.loads(row['result'])
-        if not recovery_path(args.get('path','')) and isinstance(result,dict) and result.get('sha256') and isinstance(result.get('text'),str):
+        if not bookkeeping_read(args.get('path','')) and isinstance(result,dict) and result.get('sha256') and isinstance(result.get('text'),str):
             saved={k:state[k] for k in ('stalled_steps','reads_since_brief','last_progress_action','progress_warning') if k in state}
             observe(state,'read_file',args,result)
             for key in ('stalled_steps','reads_since_brief','last_progress_action','progress_warning'):
@@ -49,7 +55,8 @@ def observe(state,action,args,result,*,error=False):
         fresh=state.get('decision_fingerprint')!=digest
         state['decision_fingerprint']=digest
     elif (action=='read_action_receipt' or
-          (action in {'read_file','list_files'} and recovery_path(result.get('source',args.get('path','')) if isinstance(result,dict) else args.get('path',''))) or
+          (action=='read_file' and bookkeeping_read(result.get('source',args.get('path','')) if isinstance(result,dict) else args.get('path',''))) or
+          (action=='list_files' and recovery_path(args.get('path',''))) or
           (action=='list_files' and isinstance(result,list) and result and all(isinstance(f,dict) and recovery_path(f.get('path','')) for f in result))):
         # New checkpoint names and changing page sizes are not task progress.
         fresh=False
@@ -101,5 +108,7 @@ def warning(state):
     return ('Progress check: repeated calls are returning unchanged evidence or errors. '
         'Use the saved brief and verified findings. Do not reread unchanged screenshots, '
         'attachments, or conversations. Resolve the specific missing fact with a different '
-        'approach, ask a concrete question if genuinely blocked, or update the brief and '
+        'approach. For staged implementation, use edit_file with the current sha256 and '
+        'one exact replacement rather than rereading whole files. Save concrete findings, '
+        'ask a concrete question if genuinely blocked, or update the brief and '
         'finish when no reply or unresolved work remains. Never bypass action approvals.')

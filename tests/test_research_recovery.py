@@ -14,6 +14,43 @@ from cos.engine import Engine, SCHEMA, session
 URL = 'https://learn.microsoft.com/en-us/graph/api/message-update'
 
 
+def test_saved_research_pages_count_progress_and_repeated_ranges_do_not(env):
+    job=env.create_job('Read saved documentation','Technology')
+    state={}
+    recovery.record(env,job['id'],state,'fetch_url',{'url':URL},{'source':URL,'text':'Evidence '+('x'*18000)})
+    path=next(iter(state['research_sources'].values()))['evidence_path']
+    for offset in (0,8000):
+        result=tools.Tools(env).execute(job,'read_file',{'path':path,'offset':offset,'limit':8000})
+        progress.observe(state,'read_file',{'path':path,'offset':offset},result)
+        assert state['stalled_steps']==0
+    progress.observe(state,'read_file',{'path':path,'offset':8000},result)
+    assert state['stalled_steps']==1
+    assert state['reads_since_brief']==2
+
+
+def test_restart_hydrates_saved_research_coverage_without_resetting_stall(env):
+    job=env.create_job('Resume documentation','Technology')
+    path='context/research-'+'a'*20+'.txt'
+    result={'source':path,'sha256':'digest','text':'Verified source','truncated':False}
+    env.write('INSERT INTO approvals(id,job_id,tool,args,status,created,result) VALUES(?,?,?,?,?,?,?)',
+        ('page',job['id'],'read_file',json.dumps({'path':path}), 'executed','now',json.dumps(result)))
+    state={'stalled_steps':7}
+    progress.hydrate_reads(env,job['id'],state)
+    assert state['stalled_steps']==7
+    assert next(iter(state['file_reads'].values()))['complete']
+    progress.observe(state,'read_file',{'path':path},result)
+    assert state['stalled_steps']==8
+
+
+@pytest.mark.parametrize('name',['checkpoint-'+'a'*20+'.txt','history-'+'b'*20+'.txt','content-'+'c'*20+'.txt','research-fake.txt'])
+def test_recovery_bookkeeping_still_never_counts_as_source_progress(name):
+    state={}
+    path='context/'+name
+    progress.observe(state,'read_file',{'path':path},{'source':path,'sha256':'digest','text':'archive','truncated':False})
+    assert state['stalled_steps']==1
+    assert not state.get('file_reads')
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, 'ROOT', tmp_path)
