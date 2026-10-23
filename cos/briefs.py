@@ -9,7 +9,12 @@ def unresolved_action(store, job):
     row=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
     brief=json.loads(row['body']) if row else {}
     if brief.get('action_needed') in {'yes','unknown'}:
-        return brief.get('requested_action') or brief.get('action_reason') or 'Review the unresolved follow-up.'
+        requested=brief.get('requested_action','').strip()
+        if requested.lower().rstrip('.') in {'none','none outstanding','no follow-up','no further action','n/a'}:
+            requested=''
+        if brief['action_needed']=='unknown':
+            return requested or brief.get('triage_reason') or brief.get('uncertainties') or brief.get('action_reason') or 'Determine whether any owner action remains.'
+        return requested or brief.get('action_reason') or 'Review the unresolved follow-up.'
     return ''
 def update_brief(store,job,a):
     current=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
@@ -38,7 +43,8 @@ def update_brief(store,job,a):
         incomplete = store.one('SELECT 1 FROM communication_sources WHERE job_id=? AND complete=0', (job['id'],))
         if incomplete and body['triage_category'] in {'reading','ignore'}:
             body.update(triage_category='review', response_needed='unknown', action_needed='unknown',
-                        triage_reason='Full message text is needed before dismissing or summarizing this conversation.')
+                        triage_reason='Full message text is needed before dismissing or summarizing this conversation.',
+                        next_step='Read the remaining source bodies, then reassess reply and action needs.')
         if body['triage_category'] in {'reading','ignore'} and body.get('response_needed') == body.get('action_needed') == 'no':
             for field in ('requested_action','action_plan','proposed_to','proposed_subject','proposed_body'):
                 body.pop(field,None)
