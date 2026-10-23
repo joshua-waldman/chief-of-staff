@@ -86,6 +86,8 @@ docker pull node:22-slim
 
 Docker tasks run without network access, with resource limits and only their job workspace mounted. Browser tasks use Edge and a separate local profile; allow exact research hostnames in **Connections**, and sign in separately when required.
 
+Public research follows a bounded number of redirects, validating each destination against the exact host allowlist and public HTTPS requirements. Microsoft Learn Graph documentation may use the `view` and `tabs` display selectors; arbitrary query strings remain blocked. Successful source reads are saved as immutable evidence files and carried through context recovery. A successful retry or browser fallback clears its matching current error, while unrelated failures and the historical activity log remain available. Resuming a job replaces its stale status and question; completion shows the final result.
+
 ## Use the tool
 
 1. Enter a request in **Overview**, optionally attach files, and select a registered project or let the app route it.

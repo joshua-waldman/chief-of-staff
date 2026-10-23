@@ -27,7 +27,8 @@ def observe(state,action,args,result,*,error=False):
         fresh=state.get('decision_fingerprint')!=digest
         state['decision_fingerprint']=digest
     else:
-        digest=hashlib.sha256(json.dumps([action,args,stable(result)],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        evidence={'url':result.get('url',result.get('source')), 'text':result.get('text')} if action in {'fetch_url','browser_read'} and isinstance(result,dict) and not error else stable(result)
+        digest=hashlib.sha256(json.dumps([action,args,evidence],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
         seen=state.setdefault('progress_seen',[])
         fresh=digest not in seen and not error
         if digest not in seen:

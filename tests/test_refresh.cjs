@@ -83,3 +83,21 @@ test('monitor failure is visible, escaped, and clears on recovery',()=>{
  assert.equal(alertContext.monitoringAlert(),'');
  assert.match(source,/view==='attention'\?monitoringAlert\(\)/);
 });
+
+
+test('resolved job questions disappear from current status while error history remains',async()=>{
+ const nodes={'#detail':{innerHTML:''},'#job-dialog':{open:false,showModal(){this.open=true}},'#refresh-job':{}};
+ const job={id:'research',org:'Technology',title:'Research',status:'running',project:'',created:'now',request:'Research',brief:{status_summary:'Continuing'},question:'Old access error',approvals:[],files:[],children:[],events:[{id:1,kind:'tool_error',body:'Old access error',created:'then'}]};
+ const ctx={selected:null,api:async()=>job,$:s=>nodes[s]||null,esc:x=>String(x??''),badge:x=>x,date:x=>x,readable:()=>'',btn:()=>'',reviewView:()=>'',bindReview:()=>{},document:{querySelectorAll:()=>[]}};
+ vm.createContext(ctx);
+ const start=source.indexOf('async function openJob(');
+ const end=source.indexOf('\n}',start)+2;
+ vm.runInContext(source.slice(start,end),ctx);
+ for(const status of ['queued','running','completed','waiting_children','awaiting_approval','waiting_input','blocked','failed']){
+  job.status=status;ctx.selected=null;
+  await ctx.openJob(job.id);
+  const html=nodes['#detail'].innerHTML;
+  assert.ok(html.includes('Old access error'),'historical errors remain available');
+  assert.equal(html.includes('Decision or information needed'),['waiting_input','blocked','failed'].includes(status),status);
+ }
+});

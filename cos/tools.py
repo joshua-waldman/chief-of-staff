@@ -1,18 +1,14 @@
 import base64
 import hashlib
 import difflib
-import ipaddress
 import json
 import mimetypes
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
-import httpx
 from .config import DATA,ROOT,settings
 from .db import uid,now
 from .trace import tool_call,emit
@@ -36,7 +32,7 @@ finish {summary}: finish after all necessary tools succeed. Include artifact lin
 list_skills {} / read_skill {name}: read instructions before using an installed skill.
 create_skill {name,description,instructions}: writes a local reusable skill.
 create_organization {name,leader,purpose}: adds an organization.
-fetch_url {url}: retrieve an explicitly allowed research host. Never send AMD material as URL parameters.
+fetch_url {url}: retrieve an explicitly allowed research host with validated redirects. Microsoft Learn Graph view/tabs selectors are supported; other queries are rejected. Never send AMD material as URL parameters.
 mail_attachments {id}: download and register email attachments for read_file. teams_attachments {chat_id}: download screenshots for read_file.
 search_mail {query}; read_mail {id}; list_chats {}; read_teams {chat_id}; meeting_artifacts {chat_id}.
 meeting_transcripts {chat_id,date?:YYYY-MM-DD}: use Claude's meeting-recap Stream helper with existing Teams credentials to read transcripts attached to recordings, then try shared transcript files. Defaults to the newest recording date; pass date for a specific meeting occurrence. Returns job-local files for read_file, source links and access diagnostics. A recording or recap metadata is not transcript text. Cannot transcribe video/audio.
@@ -326,18 +322,8 @@ class Tools:
             self.store.write('INSERT INTO organizations VALUES(?,?,?,?)',(a['name'],a['leader'],a['purpose'],now()))
             return {'created':a['name']}
         if action=='fetch_url':
-            u = urlparse(a['url'])
-            if u.scheme!='https' or u.username or u.password or u.query or u.fragment:
-                raise ValueError('Research requires HTTPS without credentials, query strings or fragments.')
-            if u.hostname not in settings()['research_hosts']:
-                raise ValueError('Add this exact research host in Connections before retrieval.')
-            for entry in socket.getaddrinfo(u.hostname,443):
-                ip = ipaddress.ip_address(entry[4][0])
-                if not ip.is_global:
-                    raise ValueError('Private network targets are not supported by the research fetcher.')
-            r = httpx.get(a['url'],timeout=30,follow_redirects=False)
-            r.raise_for_status()
-            return {'source':a['url'],'text':re.sub('<[^>]+>',' ',r.text)[:60000]}
+            from .research import fetch_url
+            return fetch_url(a['url'])
         if action in {'mail_attachments','teams_attachments'}:
             target=workspace(id)/'downloaded'/uid()[:8]
             target.mkdir(parents=True,exist_ok=True)
