@@ -43,6 +43,10 @@ def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None
             raise ValueError('Resolve the in-flight or uncertain action before revising this job.')
         raw=json.loads(job['messages'])
         s=raw if isinstance(raw,dict) else {'messages':raw}
+        if job['status']=='awaiting_approval' and s.get('waiting_action'):
+            action=c.execute('SELECT status FROM approvals WHERE id=?',(s['waiting_action'],)).fetchone()
+            if action and action['status']!='pending':
+                raise ValueError('The reviewed action has already been decided. Wait for its job state to finish updating.')
         messages=s['messages']
         progress.reset(s)
         superseded=c.execute("UPDATE approvals SET status='superseded' WHERE job_id=? AND status='pending'",(id,)).rowcount
