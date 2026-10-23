@@ -98,7 +98,14 @@ def status():
 
 @app.get('/api/jobs')
 def jobs():
-    return store.rows('SELECT id,parent_id,title,org,project,status,created,updated,result,question FROM jobs ORDER BY created DESC LIMIT 1000')
+    rows=store.rows('''SELECT j.id,j.parent_id,j.title,j.org,j.project,j.status,j.created,j.updated,j.result,j.question,b.body AS brief_body
+        FROM jobs j LEFT JOIN job_briefs b ON b.job_id=j.id ORDER BY j.created DESC LIMIT 1000''')
+    from .message_triage import category
+    for job in rows:
+        brief=json.loads(job.pop('brief_body') or '{}')
+        job['triage_category']=category(brief) if job['org']=='Communications' else ''
+        job['triage_summary']=brief.get('email_excerpt','') if job['org']=='Communications' else ''
+    return rows
 
 @app.get('/api/organization-agents')
 def organization_agents():

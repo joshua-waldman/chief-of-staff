@@ -263,3 +263,9 @@ does not accept KB suggestions, change personal workflow settings, or execute ac
 - `cos/monitor.py` and `cos/monitor_bridge.py`: collection and remote requests.
 - `cos/knowledge.py`, `cos/meetings.py`, and `cos/reviews.py`: reusable context and review.
 - `web/`: browser interface. `tests/`: automated regressions.
+
+## Quick message decisions
+
+Email and Teams conversations begin with a compact triage pass before research, drafting or delegation. Full email bodies are read when only previews are available. The first brief includes a useful summary and one decision: **Summarized for My Reading**, **Response Needed**, **Action Needed**, **Response and Action Needed**, **Can Be Ignored and Marked Read**, or **Needs Review**. Reply and work requirements remain separate; uncertain evidence stays visible for follow-up. Large or resumed conversations use the normal workflow with the same decision fields.
+
+Decisions and summaries appear in the job queue and at the top of message details. Use **All message decisions** to filter the queue. New conversation activity resets the decision for reassessment. Marking read uses the existing exact-action approval flow; the ignore category describes a recommendation, not a completed read operation. Existing KB-based ignore shortcuts continue to operate before agent admission.

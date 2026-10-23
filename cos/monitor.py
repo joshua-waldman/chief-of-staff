@@ -131,7 +131,7 @@ class Monitor:
                 if shortcut:
                     reason=shortcut['reason']
                     latest=max(emails,key=lambda m:(m.get('receivedDateTime',''),m['id']))
-                    brief={'context':title,'status_summary':'Ignored automatically by saved preference',
+                    brief={'triage_category':'ignore','triage_reason':reason,'context':title,'status_summary':'Ignored automatically by saved preference',
                         'next_step':'No further action required.','response_needed':'no','response_reason':reason,
                         'action_needed':'no','action_reason':reason,'email_subject':latest.get('subject',''),
                         'email_from':(latest.get('from') or {}).get('emailAddress',{}).get('address',''),'email_received':latest.get('receivedDateTime',''),
