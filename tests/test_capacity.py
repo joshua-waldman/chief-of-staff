@@ -182,3 +182,26 @@ def test_retry_endpoint_is_authenticated_and_preserves_receipts(env,monkeypatch)
         assert client.post(path,json={},headers={'x-cos-token':server.TOKEN}).status_code==400
     finally:
         engine.stop()
+
+
+def test_capacity_recovery_preserves_reserved_communications_slot(env,monkeypatch):
+    monkeypatch.setitem(config.DEFAULTS,'parallel_agents',4)
+    engine=Engine(env)
+    communication=env.create_job('Triage this incoming Teams message.','Communications')
+    general=[env.create_job('Research '+str(i),'Technology') for i in range(4)]
+    model=config.settings()['models']['triage']
+    Capacity(env).limited(model,{'retry-after':'30'},'throttled',900)
+    try:
+        first=engine.dispatch_jobs()
+        assert len(first)==3
+        assert all(job['org']=='Technology' for job in first)
+        assert env.job(communication['id'])['status']=='waiting_capacity'
+        for job in first:
+            engine.active.add(job['id'])
+            env.update(job['id'],status='running')
+        assert engine.dispatch_jobs()==[]
+        monkeypatch.setattr(capacity.time,'time',lambda:1031)
+        assert [job['id'] for job in engine.dispatch_jobs()]==[communication['id']]
+        assert len(engine.active)==3
+    finally:
+        engine.stop()

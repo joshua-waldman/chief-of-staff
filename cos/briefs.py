@@ -36,6 +36,10 @@ def update_brief(store,job,a):
         if incomplete and body['triage_category'] in {'reading','ignore'}:
             body.update(triage_category='review', response_needed='unknown', action_needed='unknown',
                         triage_reason='Full message text is needed before dismissing or summarizing this conversation.')
+        if body['triage_category'] in {'reading','ignore'} and body.get('response_needed') == body.get('action_needed') == 'no':
+            for field in ('requested_action','action_plan','proposed_to','proposed_subject','proposed_body'):
+                body.pop(field,None)
+            body['next_step'] = 'No further action required. You can optionally mark the conversation as read.'
     store.write('INSERT OR REPLACE INTO job_briefs VALUES(?,?,?)',(job['id'],json.dumps(body),now()))
     if body.get('email_subject') or body.get('context'):
         store.update(job['id'],title=(body.get('email_subject') or body['context'])[:100])

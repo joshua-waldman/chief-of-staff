@@ -86,7 +86,11 @@ docker pull node:22-slim
 
 Docker tasks run without network access, with resource limits and only their job workspace mounted. Browser tasks use Edge and a separate local profile; allow exact research hostnames in **Connections**, and sign in separately when required.
 
+Public research follows a bounded number of redirects, validating each destination against the exact host allowlist and public HTTPS requirements. Microsoft Learn Graph documentation may use the `view` and `tabs` display selectors; arbitrary query strings remain blocked. Successful source reads are saved as immutable evidence files and carried through context recovery. A successful retry or browser fallback clears its matching current error, while unrelated failures and the historical activity log remain available. Resuming a job replaces its stale status and question; completion shows the final result.
+
 ## Use the tool
+
+Communication triage evaluates your personal obligations before proposing replies or work. FYIs, updates, optional suggestions and tasks assigned to others finish with a useful summary and no follow-up. Completed informational summaries offer optional source-specific mark-as-read controls through exact-action approval (Teams marks the entire chat). Approving or rejecting that read action leaves the summary completed without another planning pass.
 
 1. Enter a request in **Overview**, optionally attach files, and select a registered project or let the app route it.
 2. Follow progress in **Job tracker**. The initial organizations are Communications, Technology, Engineering, Strategy, and Self-Improvement. Directors can delegate work and resume with child results.
@@ -103,6 +107,8 @@ Communications details show **Original messages**, collapsed by default, above t
 External sends, Confluence writes, application patch application, host commands, browser interactions, imported MCP calls, merges, deployments, publishing, and deletion require review. Routine Jira operations and job-local artifact work follow the server's policy. See `cos/policy.py` for action classification. Approved host commands and MCP processes run with your Windows account's permissions.
 
 ## Monitoring and remote requests
+
+With the default four parallel agents, one slot is reserved for Communications and three are shared by research, engineering, planning and other work. Email and Teams jobs share the communications slot, which stays available when their queue is empty. Waiting for approval or settling conversation activity releases the worker so another eligible job can run. With a single configured agent, both queues share that worker in queue order. Model capacity limits still apply across agents.
 
 Conversation replies settle for 15 seconds before reassessment, with a 60-second maximum coalescing wait for continuously busy chats. Prior findings and source details survive updates; obsolete drafts and approvals are retired immediately. `max_steps` controls automatic worker handoffs rather than stopping a long-lived job for owner input. Progress is saved and the job returns behind other ready work. Repeated unchanged evidence or errors trigger a warning and then a separate progress safeguard (`max_stalled_steps`, default 12); new source activity or owner direction resets that safeguard. Existing jobs stopped solely by the former step-budget question resume automatically on startup, while real questions and unresolved actions remain waiting.
 
@@ -272,6 +278,6 @@ Decisions and summaries appear in the job queue and at the top of message detail
 
 ### Model capacity recovery
 
-Model rate limits save the job as **Waiting for model capacity** and release its worker. Jobs sharing a model share a durable cooldown across restarts. The gateway honors `retry-after-ms` and `Retry-After` (seconds or HTTP date); otherwise delays increase from about 5 to 60 seconds with jitter. Interactive work takes priority over background Communications jobs. `model_parallel_requests` limits concurrent calls per model (default 1); Responses calls honor the requested output budget.
+Model rate limits save the job as **Waiting for model capacity** and release its worker. Jobs sharing a model share a durable cooldown across restarts. The gateway honors `retry-after-ms` and `Retry-After` (seconds or HTTP date); otherwise delays increase from about 5 to 60 seconds with jitter. Capacity waits preserve the reserved Communications slot and the shared worker budget for other organizations. `model_parallel_requests` limits concurrent calls per model (default 1); Responses calls honor the requested output budget.
 
 After `capacity_recovery_seconds` (default 900 seconds), automatic recovery pauses with one shared attention notice. Open an affected job for **Retry now**, gateway diagnostics, or cancellation. Retry now resets the shared model cooldown, so other jobs using that model can also resume. Completed tool results and approvals are retained; retries repeat inference only. Jobs that failed with the old gateway 429 error resume on startup when they have no pending or uncertain action. All inference continues through the AMD gateway.

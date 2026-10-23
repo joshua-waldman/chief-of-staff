@@ -110,3 +110,37 @@ def test_review_api_session_csrf_and_scope(setup,monkeypatch):
     assert c.post(path,json={'message':'Shorter'},headers=headers).status_code==200
     other=s.create_job('Code','Engineering')
     assert c.post('/api/jobs/'+other['id']+'/review',json={'message':'Shorter'},headers=headers).status_code==400
+
+
+def test_review_rejects_executed_receipt_before_job_state_is_published(setup,monkeypatch):
+    from cos import recovery
+    store,engine,job,approval=setup
+    committed=threading.Event()
+    release=threading.Event()
+    errors=[]
+    original=recovery.record
+    def hold_publication(*args,**kwargs):
+        committed.set()
+        if not release.wait(10):
+            raise AssertionError('Publication was not released')
+        return original(*args,**kwargs)
+    monkeypatch.setattr(recovery,'record',hold_publication)
+    sent=[]
+    monkeypatch.setattr(engine.tools,'execute',lambda *a:sent.append(True) or {'sent':True})
+    def approve():
+        try:engine.decide(approval['id'],True)
+        except Exception as error:errors.append(error)
+    worker=threading.Thread(target=approve)
+    worker.start()
+    try:
+        assert committed.wait(10)
+        assert store.job(job['id'])['status']=='awaiting_approval'
+        assert store.one('SELECT status FROM approvals WHERE id=?',(approval['id'],))['status']=='executed'
+        with pytest.raises(ValueError,match='already been decided'):
+            submit(engine,job['id'],'Revise the draft')
+    finally:
+        release.set()
+        worker.join(10)
+    assert not worker.is_alive() and not errors
+    assert sent==[True] and store.job(job['id'])['status']=='queued'
+    assert not store.rows("SELECT * FROM review_messages WHERE role='user'")

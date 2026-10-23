@@ -124,7 +124,15 @@ def job(id):
     result=store.detail(id)
     if not result:
         raise HTTPException(404,'Job not found')
+    from .message_triage import read_targets
+    result['read_targets']=read_targets(store,result)
     return result
+
+@app.post('/api/jobs/{id}/mark-read')
+async def mark_summary_read(id,request:Request):
+    from .message_triage import request_read
+    body=await request.json()
+    return request_read(store,id,body.get('tool'),body.get('target_id'))
 
 @app.get('/api/jobs/{id}/diagnostics')
 def diagnostics(id):
