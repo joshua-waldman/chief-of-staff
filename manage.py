@@ -10,6 +10,9 @@ parser=argparse.ArgumentParser()
 sub=parser.add_subparsers(dest='command',required=True)
 sub.add_parser('doctor')
 sub.add_parser('backup')
+prune=sub.add_parser('prune-recovery')
+prune.add_argument('--job-id')
+prune.add_argument('--apply',action='store_true',help='Archive verified recovery files and remove their loose copies; default is preview.')
 move=sub.add_parser('relocate')
 move.add_argument('--old-root',required=True)
 move.add_argument('--new-root',required=True)
@@ -19,6 +22,17 @@ if args.command=='doctor':
     from cos.integrations import auth_status,skill_inventory,mcp_inventory
     import shutil
     print(json.dumps({'gateway_configured':bool(gateway_key()),'microsoft_authenticated':auth_status()['authenticated'],'docker':bool(shutil.which('docker')),'skills':[s['name'] for s in skill_inventory()],'mcp':[m['name'] for m in mcp_inventory()],'projects':{k:Path(v).exists() for k,v in settings()['projects'].items()}},indent=2))
+elif args.command=='prune-recovery':
+    from cos.recovery_storage import prune_recovery
+    store=Store()
+    jobs=[{'id':args.job_id}] if args.job_id else store.rows('SELECT id FROM jobs')
+    results=[]
+    for job in jobs:
+        try:
+            results.append(prune_recovery(store,job['id'],apply=args.apply))
+        except Exception as error:
+            results.append({'job_id':job['id'],'error':type(error).__name__})
+    print(json.dumps({'preview':not args.apply,'jobs':results},indent=2))
 elif args.command=='backup':
     target=DATA/'backups'/datetime.now().strftime('%Y%m%d-%H%M%S')
     target.mkdir(parents=True)

@@ -82,6 +82,12 @@ def workspace(job_id):
     p.mkdir(parents=True,exist_ok=True)
     return p
 
+
+def is_recovery_file(job_id,path):
+    """Classify existing archives by their reserved directory, not filename."""
+    root=DATA/'jobs'/job_id/'workspace'/'context'
+    return Path(path).resolve().is_relative_to(root.resolve())
+
 def safe_name(name):
     return re.sub(r'[^a-zA-Z0-9._ -]','_',name)[:100].strip(' .') or 'artifact'
 
@@ -257,22 +263,28 @@ class Tools:
             registered={f['path']:f['id'] for f in self.store.rows('SELECT id,path FROM files WHERE job_id=?',(id,))}
             return [{'name':x.name,'path':str(x),'directory':x.is_dir(),'file_id':registered.get(str(x))} for x in list(p.iterdir())[:300] if x.name not in BLOCKED_PARTS and x.name not in SECRET_NAMES]
         if action=='read_file':
-            p = resolve_path(id,a['path'])
-            if p.stat().st_size > 25*1024*1024:
-                raise ValueError('File exceeds 25 MB input limit.')
-            if p.suffix.lower() in {'.png','.jpg','.jpeg','.webp'}:
-                return {'image_data':base64.b64encode(p.read_bytes()).decode(),'mime':mimetypes.guess_type(p.name)[0]}
-            text = extract(p)
-            offset=a.get('offset',0)
-            if type(offset) is not int or offset<0 or offset>len(text):
-                raise ValueError('Text offset must be an integer within the document.')
-            limit=a.get('limit',4000)
-            if type(limit) is not int or not 1<=limit<=80000:
-                raise ValueError('Text limit must be an integer from 1 to 80000.')
-            end=offset+min(limit,8000)
-            return {'text':text[offset:end],'truncated':len(text)>end,
-                'next_offset':end if len(text)>end else None,
-                'source':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+            from .recovery_storage import archived_bytes
+            with self.store.lock:
+                p = resolve_path(id,a['path'])
+                raw=archived_bytes(self.store,id,p,max_size=25*1024*1024)
+                if raw is None:
+                    if p.stat().st_size > 25*1024*1024:
+                        raise ValueError('File exceeds 25 MB input limit.')
+                    raw=p.read_bytes()
+                if p.suffix.lower() in {'.png','.jpg','.jpeg','.webp'}:
+                    return {'image_data':base64.b64encode(raw).decode(),'mime':mimetypes.guess_type(p.name)[0]}
+                # Archived recovery text is read directly without recreating loose files.
+                text=raw.decode('utf-8',errors='replace') if workspace(id)/'context' in p.parents and p.suffix=='.txt' else extract(p)
+                offset=a.get('offset',0)
+                if type(offset) is not int or offset<0 or offset>len(text):
+                    raise ValueError('Text offset must be an integer within the document.')
+                limit=a.get('limit',4000)
+                if type(limit) is not int or not 1<=limit<=80000:
+                    raise ValueError('Text limit must be an integer from 1 to 80000.')
+                end=offset+min(limit,8000)
+                return {'text':text[offset:end],'truncated':len(text)>end,
+                    'next_offset':end if len(text)>end else None,
+                    'source':str(p),'sha256':hashlib.sha256(raw).hexdigest()}
         if action=='apply_changes':
             review=prepare_changes(job,a)
             if a.get('_review_diffs') != review:

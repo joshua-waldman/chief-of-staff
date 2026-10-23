@@ -89,6 +89,13 @@ class Store:
         j['events'] = self.rows('SELECT * FROM events WHERE job_id=? ORDER BY id',(id,))
         j['approvals'] = self.rows('SELECT * FROM approvals WHERE job_id=? ORDER BY created',(id,))
         j['files'] = self.rows('SELECT * FROM files WHERE job_id=?',(id,))
+        from .tools import is_recovery_file
+        archived=self.state('recovery_archive:'+id,{}).get('members',{})
+        archived_ids={meta['file_id'] for meta in archived.values()}
+        j['files']=[file for file in j['files'] if file['id'] not in archived_ids]
+        j['archived_recovery_count']=len(archived)
+        for file in j['files']:
+            file['purpose']='recovery' if is_recovery_file(id,file['path']) else 'deliverable'
         j['children'] = self.rows('SELECT * FROM jobs WHERE parent_id=? ORDER BY created',(id,))
         from .briefs import detail_brief
         j['brief']=detail_brief(self,j)

@@ -261,9 +261,11 @@ class Engine:
 
     @job_run
     def run(self,id):
+        claimed=False
         try:
             if not self.store.write("UPDATE jobs SET status='running',updated=? WHERE id=? AND status='queued'",(now(),id)):
                 return
+            claimed=True
             job=self.store.job(id)
             if settings().get('queue_paused',False):
                 self.yield_work(id,session(job))
@@ -509,6 +511,13 @@ class Engine:
             self.store.event(id,'error',str(error)[:6000])
             log.exception('Agent failed')
         finally:
+            if claimed:
+                try:
+                    from .recovery_storage import prune_recovery
+                    prune_recovery(self.store,id,apply=True,min_files=12)
+                except Exception:
+                    # Storage maintenance must never turn completed actions into retries.
+                    log.exception('Recovery archive maintenance deferred')
             with self.lock:
                 self.active.discard(id)
 
