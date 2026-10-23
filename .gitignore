@@ -18,6 +18,7 @@
 !/web/*.js
 !/web/*.css
 !/tests/
+!/tests/conftest.py
 !/tests/test_*.py
 !/tests/test_*.cjs
 !/scripts/

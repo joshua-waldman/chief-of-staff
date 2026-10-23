@@ -141,6 +141,7 @@ def deliver(store, job_id, running=False):
         if prior:
             brief=json.loads(prior['body'])
             brief.update(status_summary='New conversation activity received; reassessing changes.',
+                triage_category='review',triage_reason='',
                 next_step='Review the new messages and changed attachments against prior findings.',
                 response_needed='unknown',action_needed='unknown',proposed_body='',proposed_to='',proposed_subject='')
             c.execute('UPDATE job_briefs SET body=?,updated=? WHERE job_id=?',(json.dumps(brief),stamp,job_id))

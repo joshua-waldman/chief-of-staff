@@ -89,7 +89,7 @@ class QueueIntake:
                 stamp = now()
                 latest = max(emails, key=lambda m: (m['receivedDateTime'], m['id']))
                 reason = decision['reason']
-                brief = {'context': latest['subject'], 'status_summary': 'Ignored by current KB before agent admission',
+                brief = {'triage_category': 'ignore', 'triage_reason': reason, 'context': latest['subject'], 'status_summary': 'Ignored by current KB before agent admission',
                     'next_step': 'No further action required.', 'response_needed': 'no', 'action_needed': 'no',
                     'response_reason': reason, 'action_reason': reason, 'email_subject': latest['subject'],
                     'email_from': latest['from']['emailAddress']['address'], 'email_received': latest['receivedDateTime'],

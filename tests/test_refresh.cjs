@@ -28,7 +28,7 @@ test('conversation shows newest messages first without changing stored order and
  assert.ok(html.indexOf('Newest message')<html.indexOf('Older message'));
  assert.ok(html.indexOf('Older message')<html.indexOf('Undated message'));
  assert.equal(messages[0].body,'Older message');
- assert.match(html,/<details id="source-conversation" open><summary/);
+ assert.match(html,/<details id="source-conversation"><summary/);
  assert.match(html,/Collapse conversation/);
  assert.ok(html.indexOf('Collapse conversation')<html.indexOf('Newest message'));
  assert.equal((html.match(/data-collapse-source/g)||[]).length,2);
@@ -100,4 +100,34 @@ test('resolved job questions disappear from current status while error history r
   assert.ok(html.includes('Old access error'),'historical errors remain available');
   assert.equal(html.includes('Decision or information needed'),['waiting_input','blocked','failed'].includes(status),status);
  }
+});
+
+test('queue control drains, reconnects, prevents duplicate clicks and recovers from failures',async()=>{
+ const status={},button={},calls=[],notices=[];
+ let release;
+ const ctx={state:{settings:{queue_paused:false},queue_active:2},queueChanging:false,$:s=>s==='#queue-status'?status:button,handle:f=>f,toast:t=>notices.push(t),refresh:async()=>{},api:async(path,body)=>{calls.push([path,body]);await new Promise(r=>release=r);return body}};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function renderQueueControl('),source.indexOf('function render(){')),ctx);
+ ctx.renderQueueControl();
+ assert.equal(button.textContent,'Disconnect');
+ assert.match(status.textContent,/Connected/);
+ const disconnect=ctx.toggleQueue();
+ assert.equal(button.disabled,true);
+ await ctx.toggleQueue();
+ assert.equal(calls.length,1);
+ assert.equal(calls[0][1].queue_paused,true);
+ release();await disconnect;
+ assert.equal(button.disabled,false);
+ assert.equal(button.textContent,'Connect');
+ assert.match(status.textContent,/Finishing current agent steps \(2\)/);
+ ctx.state.queue_active=0;ctx.renderQueueControl();
+ assert.match(status.textContent,/Disconnected/);
+ const connect=ctx.toggleQueue();release();await connect;
+ assert.equal(calls[1][1].queue_paused,false);
+ assert.equal(button.textContent,'Disconnect');
+ ctx.api=async()=>{throw Error('Save failed')};
+ await assert.rejects(ctx.toggleQueue(),/Save failed/);
+ assert.equal(button.disabled,false);
+ assert.equal(button.textContent,'Disconnect');
+ assert.equal(ctx.state.settings.queue_paused,false);
 });

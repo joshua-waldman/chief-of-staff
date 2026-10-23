@@ -90,13 +90,22 @@ def index():
 def status():
     jobs=store.rows('SELECT id,parent_id,status,org FROM jobs')
     config=settings()
+    with engine.lock:
+        active=len(engine.active)
     monitoring=store.state('monitor_status',{'state':'paused'})
     monitor_attention=bool(config['monitor_enabled'] and (monitoring.get('attention_required') or monitoring.get('state')=='needs_attention'))
-    return {'gateway_configured':bool(gateway_key()),'jobs':len([j for j in jobs if not j['parent_id']]),'running':sum(j['status']=='running' for j in jobs),'needs_attention':sum(j['status'] in {'waiting_input','awaiting_approval','blocked','failed'} for j in jobs)+int(monitor_attention),'monitor_attention':monitor_attention,'completed':sum(j['status']=='completed' for j in jobs),'monitor':monitoring,'settings':config,'organizations':store.rows('SELECT * FROM organizations ORDER BY created')}
+    return {'gateway_configured':bool(gateway_key()),'jobs':len([j for j in jobs if not j['parent_id']]),'running':sum(j['status']=='running' for j in jobs),'needs_attention':sum(j['status'] in {'waiting_input','awaiting_approval','blocked','failed'} for j in jobs)+int(monitor_attention),'monitor_attention':monitor_attention,'completed':sum(j['status']=='completed' for j in jobs),'monitor':monitoring,'settings':config,'queue_active':active,'organizations':store.rows('SELECT * FROM organizations ORDER BY created')}
 
 @app.get('/api/jobs')
 def jobs():
-    return store.rows('SELECT id,parent_id,title,org,project,status,created,updated,result,question FROM jobs ORDER BY created DESC LIMIT 1000')
+    rows=store.rows('''SELECT j.id,j.parent_id,j.title,j.org,j.project,j.status,j.created,j.updated,j.result,j.question,b.body AS brief_body
+        FROM jobs j LEFT JOIN job_briefs b ON b.job_id=j.id ORDER BY j.created DESC LIMIT 1000''')
+    from .message_triage import category
+    for job in rows:
+        brief=json.loads(job.pop('brief_body') or '{}')
+        job['triage_category']=category(brief) if job['org']=='Communications' else ''
+        job['triage_summary']=brief.get('email_excerpt','') if job['org']=='Communications' else ''
+    return rows
 
 @app.get('/api/organization-agents')
 def organization_agents():
@@ -223,7 +232,11 @@ def connections():
 
 @app.post('/api/settings')
 async def update_settings(request:Request):
-    s=save_settings(await request.json())
+    changes=await request.json()
+    # Serialize the pause with worker submission so nothing new starts after
+    # the disconnect request has been acknowledged.
+    with engine.lock:
+        s=save_settings(changes)
     return s
 
 @app.post('/api/gateway/key')

@@ -100,7 +100,7 @@ Try: “Prepare a short project planning brief with open questions and next step
 
 Email and Teams job details support a conversation with the Chief of Staff. **Send direction to COS** can revise a draft or change a handling decision. Sending direction does not send a message. Revised actions require fresh approval. **Remember guidance for similar emails** saves explicit reusable guidance when checked.
 
-Communications details show **Original messages** above the summary, with full text, sender and date for the latest five messages or emails, newest first. Collapse or expand the conversation using its heading; collapse buttons are also available at the top and bottom of the expanded thread. Older email jobs load their source text when opened; use **Load original messages** to retry a failed read or load the latest five Teams messages. Collected messages and full source reads are retained separately from summaries. A preview stays labeled as a preview until the full email is available.
+Communications details show **Original messages**, collapsed by default, above the summary, with full text, sender and date for the latest five messages or emails, newest first. Collapse or expand the conversation using its heading; collapse buttons are also available at the top and bottom of the expanded thread. Older email jobs load their source text when opened; use **Load original messages** to retry a failed read or load the latest five Teams messages. Collected messages and full source reads are retained separately from summaries. A preview stays labeled as a preview until the full email is available.
 
 External sends, Confluence writes, application patch application, host commands, browser interactions, imported MCP calls, merges, deployments, publishing, and deletion require review. Routine Jira operations and job-local artifact work follow the server's policy. See `cos/policy.py` for action classification. Approved host commands and MCP processes run with your Windows account's permissions.
 
@@ -108,7 +108,7 @@ External sends, Confluence writes, application patch application, host commands,
 
 Conversation replies settle for 15 seconds before reassessment, with a 60-second maximum coalescing wait for continuously busy chats. Prior findings and source details survive updates; obsolete drafts and approvals are retired immediately. `max_steps` controls automatic worker handoffs rather than stopping a long-lived job for owner input. Progress is saved and the job returns behind other ready work. Repeated unchanged evidence or errors trigger a warning and then a separate progress safeguard (`max_stalled_steps`, default 12); new source activity or owner direction resets that safeguard. Existing jobs stopped solely by the former step-budget question resume automatically on startup, while real questions and unresolved actions remain waiting.
 
-Set `queue_paused` to `true` in local settings to stop new job dispatch while active jobs finish. The pause persists across restarts; set it to `false` to resume. Monitoring may continue collecting queued requests while dispatch is paused.
+Use **Disconnect** in the header to pause between agent steps. In-flight model calls and their tool actions finish, then each agent saves its progress before starting another step. The status changes from **Finishing current agent steps** to **Disconnected · Queue paused** when they settle. **Connect** continues from saved results without replaying completed actions. Queued requests, delegated work, and automatic continuations wait until you click **Connect**. The pause persists across restarts. Monitoring continues collecting requests according to its own settings. You can also set `queue_paused` in local settings.
 
 After Microsoft sign-in, enable monitoring in **Connections**. Initial collection starts with current messages rather than importing your entire mailbox. Messages are deduplicated into persistent email conversations and Teams chat jobs. New activity updates the existing job; changed drafts need new approval. Collection failures and access limitations appear in the app, and unsuccessful sources retry from their saved checkpoints.
 
@@ -265,3 +265,9 @@ does not accept KB suggestions, change personal workflow settings, or execute ac
 - `cos/monitor.py` and `cos/monitor_bridge.py`: collection and remote requests.
 - `cos/knowledge.py`, `cos/meetings.py`, and `cos/reviews.py`: reusable context and review.
 - `web/`: browser interface. `tests/`: automated regressions.
+
+## Quick message decisions
+
+Email and Teams conversations begin with a compact triage pass before research, drafting or delegation. Full email bodies are read when only previews are available. The first brief includes a useful summary and one decision: **Summarized for My Reading**, **Response Needed**, **Action Needed**, **Response and Action Needed**, **Can Be Ignored and Marked Read**, or **Needs Review**. Reply and work requirements remain separate; uncertain evidence stays visible for follow-up. Large or resumed conversations use the normal workflow with the same decision fields.
+
+Decisions and summaries appear in the job queue and at the top of message details. Use **All message decisions** to filter the queue. New conversation activity resets the decision for reassessment. Marking read uses the existing exact-action approval flow; the ignore category describes a recommendation, not a completed read operation. Existing KB-based ignore shortcuts continue to operate before agent admission.

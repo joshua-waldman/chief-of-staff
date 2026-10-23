@@ -3,6 +3,7 @@ import json
 import re
 from .db import now
 FIELDS={'action_needed','action_reason','requested_action','action_plan','context','status_summary','next_step','email_from','email_subject','email_received','email_excerpt','email_id','response_needed','response_reason','proposed_to','proposed_subject','proposed_body','uncertainties'}
+FIELDS |= {'triage_category','triage_reason'}
 
 def unresolved_action(store, job):
     row=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
@@ -20,7 +21,21 @@ def update_brief(store,job,a):
             raise ValueError('Invalid summary field length.')
         if key in {'response_needed','action_needed'} and value not in {'yes','no','unknown'}:
             raise ValueError(key+' must be yes, no, or unknown.')
+        if key == 'triage_category':
+            from .message_triage import LABELS
+            if value not in LABELS:
+                raise ValueError('Unknown triage category.')
         body[key]=value.strip()
+    if job['org'] == 'Communications':
+        from .message_triage import category
+        if body.get('triage_category') == 'review' and 'triage_category' not in a and {'response_needed','action_needed'}.intersection(a):
+            body.pop('triage_category',None)
+            body.pop('triage_reason',None)
+        body['triage_category'] = category(body)
+        incomplete = store.one('SELECT 1 FROM communication_sources WHERE job_id=? AND complete=0', (job['id'],))
+        if incomplete and body['triage_category'] in {'reading','ignore'}:
+            body.update(triage_category='review', response_needed='unknown', action_needed='unknown',
+                        triage_reason='Full message text is needed before dismissing or summarizing this conversation.')
     store.write('INSERT OR REPLACE INTO job_briefs VALUES(?,?,?)',(job['id'],json.dumps(body),now()))
     if body.get('email_subject') or body.get('context'):
         store.update(job['id'],title=(body.get('email_subject') or body['context'])[:100])
@@ -43,4 +58,7 @@ def detail_brief(store,job):
             args=json.loads(a['args'])
             b.update(proposed_to=args.get('to',args.get('chat_id','Reply to original thread')),proposed_subject=args.get('subject',b.get('email_subject','')),proposed_body=args.get('body',''),response_needed='yes')
             break
+    if job['org'] == 'Communications':
+        from .message_triage import category
+        b['triage_category'] = category(b)
     return b
