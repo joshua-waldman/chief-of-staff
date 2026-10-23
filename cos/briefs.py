@@ -53,6 +53,9 @@ def detail_brief(store,job):
     b.setdefault('status_summary',{'waiting_input':'Waiting for your answer','awaiting_approval':'Ready for your approval','running':'Agent is working','waiting_children':'Waiting for delegated work','queued':'Queued for an agent','completed':'Work completed','blocked':'Needs information or setup','failed':'Stopped after an error','cancelled':'Cancelled'}.get(job['status'],job['status']))
     default_next={'waiting_input':'Answer the question below to continue.','awaiting_approval':'Review the exact action below, then approve or reject.','running':'The agent will return a result or a decision for you.','waiting_children':'The director will resume when sub-agents return.','queued':'An agent will start when capacity is available.','completed':'Review the result and any deliverables.','blocked':'Provide the missing setup or information below.','failed':'Review the error and provide instructions to retry.','cancelled':'No further steps are scheduled.'}
     b['next_step']=default_next.get(job['status'],'Review the latest activity.') if job['status'] in {'awaiting_approval','waiting_input','blocked','failed','cancelled'} else b.get('next_step',default_next.get(job['status'],''))
+    if job['status'] in {'waiting_capacity','capacity_paused'}:
+        b['status_summary']='Progress saved; waiting for model capacity.'
+        b['next_step']='Review gateway capacity or retry when ready.' if job['status']=='capacity_paused' else 'The job will resume automatically.'
     for a in reversed(job.get('approvals',[])):
         if a['tool'] in {'send_email','reply_email','send_teams'} and a['status']=='pending':
             args=json.loads(a['args'])

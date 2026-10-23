@@ -17,4 +17,4 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: python -m pytest -q
       - run: node --check web/app.js
-      - run: node --test tests/test_refresh.cjs
+      - run: node --test tests/test_refresh.cjs tests/test_message_triage.cjs tests/test_capacity.cjs
