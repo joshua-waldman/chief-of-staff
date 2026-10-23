@@ -151,7 +151,7 @@ function jobFilesView(files){
  const deliverables=files.filter(f=>f.purpose!=='recovery'),recovery=files.filter(f=>f.purpose==='recovery');
  const links=items=>items.map(f=>'<a class="file-link" href="/api/files/'+encodeURIComponent(f.id)+'">↧ '+esc(f.name)+'</a>').join('');
  return (deliverables.length?'<h3>Deliverables</h3>'+links(deliverables):'')+
-  (recovery.length?'<details id="recovery-files"><summary>Internal recovery files ('+recovery.length+')</summary><p class="small">Saved history, checkpoints, and archived content support job recovery. Older files may still be referenced by newer checkpoints.</p>'+links(recovery)+'</details>':'');
+  (recovery.length?'<details id="recovery-files"><summary>Internal recovery files ('+recovery.length+')</summary><p class="small">Saved history, checkpoints, and archived content support job recovery. Older files may still be referenced by newer checkpoints. Older snapshots are kept losslessly in recovery-archive.zip; existing paths and download links continue to work.</p>'+links(recovery)+'</details>':'');
 }
 async function openJob(id,{background=false}={}){
  const j=await api('jobs/'+id);

@@ -11,7 +11,7 @@ import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
-from fastapi.responses import FileResponse,HTMLResponse,JSONResponse
+from fastapi.responses import FileResponse,HTMLResponse,JSONResponse,StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .config import ROOT,DATA,settings,save_settings,gateway_key,store_key
 from .db import Store,uid,now
@@ -235,7 +235,21 @@ async def resolve(id,request:Request):
 @app.get('/api/files/{id}')
 def download(id):
     f=store.one('SELECT * FROM files WHERE id=?',(id,))
-    if not f or not Path(f['path']).is_file():
+    if not f:
+        raise HTTPException(404,'File not found')
+    from .recovery_storage import recovery_download
+    from .tools import is_recovery_file
+    if is_recovery_file(f['job_id'],f['path']):
+        from urllib.parse import quote
+        from starlette.background import BackgroundTask
+        try:
+            chunks,close=recovery_download(store,f['job_id'],f['path'])
+        except FileNotFoundError:
+            raise HTTPException(404,'File not found')
+        return StreamingResponse(chunks,media_type='application/octet-stream',
+                                 headers={'Content-Disposition':"attachment; filename*=utf-8''"+quote(f['name'])},
+                                 background=BackgroundTask(close))
+    if not Path(f['path']).is_file():
         raise HTTPException(404,'File not found')
     return FileResponse(f['path'],filename=f['name'],media_type='application/octet-stream')
 
