@@ -105,8 +105,33 @@ class Engine:
     def ready_jobs(self,limit):
         # A yielded job goes behind other ready work, rather than monopolizing
         # every worker because it was created first.
-        candidates=self.store.rows("SELECT * FROM jobs WHERE status='queued' ORDER BY updated,created,id")
+        candidates=self.store.rows("SELECT * FROM jobs WHERE status='queued' ORDER BY CASE WHEN org='Communications' THEN 0 ELSE 1 END,updated,created,id")
         return [job for job in candidates if conversation_ready(self.store,job['id'])][:limit]
+
+    def dispatch_jobs(self):
+        # Called under self.lock. Keep one slot available for Communications
+        # even when its queue is empty; other organizations share the rest.
+        total=settings()['parallel_agents']
+        available=max(0,total-len(self.active))
+        if not available:
+            return []
+        ready=[job for job in self.ready_jobs(None) if job['id'] not in self.active]
+        if total==1:
+            # A single-worker installation must still make progress on both queues.
+            return sorted(ready,key=lambda job:(job['updated'],job['created'],job['id']))[:available]
+        communications=0
+        for id in self.active:
+            job=self.store.job(id)
+            communications+=bool(job and job['org']=='Communications')
+        general=len(self.active)-communications
+        budgets={True:max(0,1-communications),False:max(0,total-1-general)}
+        selected=[]
+        for job in ready:
+            lane=job['org']=='Communications'
+            if budgets[lane] and len(selected)<available:
+                selected.append(job)
+                budgets[lane]-=1
+        return selected
 
     def loop(self):
         while not self.stop_event.wait(.5):
@@ -129,7 +154,7 @@ class Engine:
                     available=settings()['parallel_agents']-len(self.active)
                     if available<=0:
                         continue
-                    for job in self.ready_jobs(available):
+                    for job in self.dispatch_jobs():
                         if job['id'] in self.active:
                             continue
                         self.active.add(job['id'])
@@ -164,6 +189,11 @@ class Engine:
             if job['org']=='Chief of Staff':
                 self.route(job)
                 job=self.store.job(id)
+                if job['org']=='Communications' and id in self.active:
+                    # Routing used a general slot. Queue communication work for
+                    # its reserved slot before starting the actual task.
+                    self.yield_work(id,session(job))
+                    return
             s=session(job)
             messages=s['messages']
             triage=(job['org']=='Communications' and (job['request'].startswith('Triage this incoming') or self.store.one('SELECT 1 FROM communication_threads WHERE job_id=?',(id,))))

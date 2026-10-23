@@ -43,6 +43,100 @@ def activity(store,job,stamp):
         (job['id'],stamp,stamp))
 
 
+@pytest.mark.parametrize('agents',[2,4,12])
+def test_scheduler_reserves_communications_slot_even_with_no_messages(env,monkeypatch,agents):
+    monkeypatch.setitem(config.DEFAULTS,'parallel_agents',agents)
+    engine=Engine(env,Scripted())
+    for _ in range(agents+2):
+        env.create_job('Research','Technology')
+    try:
+        selected=engine.dispatch_jobs()
+        assert len(selected)==agents-1
+        engine.active.update(job['id'] for job in selected)
+        assert engine.dispatch_jobs()==[]
+        mail=env.create_job('Triage this incoming email','Communications')
+        assert [job['id'] for job in engine.dispatch_jobs()]==[mail['id']]
+    finally:
+        engine.stop()
+
+
+def test_scheduler_keeps_general_work_moving_with_a_message_backlog(env,monkeypatch):
+    monkeypatch.setitem(config.DEFAULTS,'parallel_agents',4)
+    engine=Engine(env,Scripted())
+    for _ in range(30):
+        env.create_job('Triage this incoming Teams message','Communications')
+    for _ in range(5):
+        env.create_job('Research','Technology')
+    try:
+        selected=engine.dispatch_jobs()
+        assert len(selected)==4
+        assert sum(job['org']=='Communications' for job in selected)==1
+        engine.active.update(job['id'] for job in selected)
+        assert engine.dispatch_jobs()==[]
+        mail=next(job for job in selected if job['org']=='Communications')
+        engine.active.remove(mail['id'])
+        env.update(mail['id'],status='awaiting_approval')
+        assert engine.dispatch_jobs()[0]['org']=='Communications'
+        research=next(job for job in selected if job['org']=='Technology')
+        engine.active.remove(research['id'])
+        env.update(research['id'],status='completed')
+        assert [job['org'] for job in engine.dispatch_jobs()]==['Communications','Technology']
+    finally:
+        engine.stop()
+
+
+def test_scheduler_skips_unsettled_messages_without_using_their_slot(env,monkeypatch,clock):
+    monkeypatch.setitem(config.DEFAULTS,'parallel_agents',4)
+    engine=Engine(env,Scripted())
+    seconds,stamp=clock
+    chat=env.create_job('Busy Teams chat','Communications')
+    activity(env,chat,stamp())
+    for _ in range(5):
+        env.create_job('Research','Technology')
+    try:
+        selected=engine.dispatch_jobs()
+        assert len(selected)==3
+        assert all(job['org']=='Technology' for job in selected)
+        engine.active.update(job['id'] for job in selected)
+        seconds[0]=60
+        assert [job['id'] for job in engine.dispatch_jobs()]==[chat['id']]
+    finally:
+        engine.stop()
+
+
+def test_single_agent_scheduler_serves_both_queues(env,monkeypatch):
+    monkeypatch.setitem(config.DEFAULTS,'parallel_agents',1)
+    engine=Engine(env,Scripted())
+    research=env.create_job('Research','Technology')
+    mail=env.create_job('Triage this incoming email','Communications')
+    env.write('UPDATE jobs SET updated=? WHERE id=?',('2026-01-01',research['id']))
+    env.write('UPDATE jobs SET updated=? WHERE id=?',('2026-01-02',mail['id']))
+    try:
+        assert [job['id'] for job in engine.dispatch_jobs()]==[research['id']]
+        env.update(research['id'],status='completed')
+        assert [job['id'] for job in engine.dispatch_jobs()]==[mail['id']]
+    finally:
+        engine.stop()
+
+
+def test_routing_communications_returns_to_its_reserved_slot(env,monkeypatch):
+    engine=Engine(env,Scripted())
+    existing=env.create_job('Email already running','Communications')
+    job=env.create_job('Unrouted request','Chief of Staff')
+    engine.active.update([existing['id'],job['id']])
+    env.update(existing['id'],status='running')
+    monkeypatch.setattr(engine,'route',lambda row:env.update(row['id'],org='Communications'))
+    try:
+        engine.run(job['id'])
+        assert env.job(job['id'])['status']=='queued'
+        assert env.job(job['id'])['org']=='Communications'
+        assert engine.dispatch_jobs()==[]
+        engine.active.remove(existing['id'])
+        assert [row['id'] for row in engine.dispatch_jobs()]==[job['id']]
+    finally:
+        engine.stop()
+
+
 def test_long_progress_continues_across_slices_without_owner_input(env,monkeypatch):
     answers=[perform('read_file',{'path':'evidence.txt','offset':i*4000}) for i in range(9)]
     answers.append(perform('finish',{'summary':'All pages processed'}))
