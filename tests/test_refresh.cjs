@@ -92,8 +92,8 @@ test('resolved job questions disappear from current status while error history r
  vm.createContext(ctx);
  const start=source.indexOf('async function openJob(');
  const end=source.indexOf('\n}',start)+2;
- vm.runInContext(source.slice(start,end),ctx);
- for(const status of ['queued','running','completed','waiting_children','awaiting_approval','waiting_input','blocked','failed']){
+ vm.runInContext(source.slice(source.indexOf('function capacityView('),end),ctx);
+ for(const status of ['queued','running','completed','waiting_children','awaiting_approval','waiting_input','blocked','failed','waiting_capacity','capacity_paused']){
   job.status=status;ctx.selected=null;
   await ctx.openJob(job.id);
   const html=nodes['#detail'].innerHTML;

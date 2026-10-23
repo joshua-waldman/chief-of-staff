@@ -2,7 +2,7 @@
 const $=s=>document.querySelector(s),token=$('meta[name=cos-token]').content;
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names={overview:'Overview',jobs:'Job tracker',attention:'Needs attention',organizations:'Organizations',knowledge:'Knowledge base',connections:'Connections',acceptance:'Acceptance tests'};
-const labels={queued:'Queued',running:'Running',waiting_children:'Delegated',waiting_input:'Your input needed',awaiting_approval:'Approval needed',blocked:'Setup needed',completed:'Completed',failed:'Failed',cancelled:'Cancelled',watching:'Watching',needs_attention:'Needs attention',paused:'Paused'};
+const labels={waiting_capacity:'Waiting for model capacity',capacity_paused:'Model capacity needs attention',queued:'Queued',running:'Running',waiting_children:'Delegated',waiting_input:'Your input needed',awaiting_approval:'Approval needed',blocked:'Setup needed',completed:'Completed',failed:'Failed',cancelled:'Cancelled',watching:'Watching',needs_attention:'Needs attention',paused:'Paused'};
 let queueChanging=false;
 let atlassian=null;
 let organizationAgents=[];
@@ -10,7 +10,7 @@ let memories=[],memoryQuery='',memoryFilter='',editingMemory=null;
 let view='overview',state={},jobs=[],con=null,tests=[],selected=null,busy=false;
 const badge=s=>'<span class="badge '+esc(s)+'">'+esc(labels[s]||s)+'</span>';
 const date=s=>new Date(s).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
-const attention=j=>['waiting_input','awaiting_approval','blocked','failed'].includes(j.status);
+const attention=j=>['waiting_input','awaiting_approval','blocked','failed','capacity_paused'].includes(j.status);
 const btn=(text,attrs='',cls='primary')=>'<button class="'+cls+'" '+attrs+'>'+text+'</button>';
 async function api(path,body){const r=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-COS-Token':token},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(r.status===401?'The server restarted. Refresh this page to reconnect.':d.error||d.detail||'Request failed');return d}
 function toast(s,error=false){$('#toast').textContent=s;$('#toast').style.background=error?'#9d5145':'#244d35';$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',6500)}
@@ -75,9 +75,9 @@ function render(){
  if(view==='overview'){
  html=intro('A little more focus.<br>A lot more forward.','One place to turn your priorities into coordinated work.');
  if(!state.gateway_configured)html+='<div class="warning">Connect your AMD gateway key to activate agents. '+btn('Set up connections','data-go="connections"','link-btn')+'</div>';
- html+=monitoringAlert()+composer()+'<div class="metrics">'+[['Active agents',state.running,'Working across your organizations'],['Open requests',jobs.filter(j=>!j.parent_id&&!['completed','cancelled'].includes(j.status)).length,'Every request, one persistent track'],['Needs attention',state.needs_attention,'Approvals, questions, or setup'],['Completed',state.completed,'Work finished and recorded']].map(([l,n,t])=>'<div class="metric"><div class="metric-label">'+l+'</div><div class="metric-value">'+n+'</div><small>'+t+'</small></div>').join('')+'</div><div class="section-title"><div><h2>Your organizations</h2><p>Specialized teams. One coordinated effort.</p></div>'+btn('View organization structure →','data-go="organizations"','link-btn')+'</div>'+orgCards()+'<div class="section-title"><h2>Recent requests</h2>'+btn('View all requests →','data-go="jobs"','link-btn')+'</div>'+table(jobs.filter(j=>!j.parent_id).slice(0,6));
+ html+=monitoringAlert()+capacityAlert()+composer()+'<div class="metrics">'+[['Active agents',state.running,'Working across your organizations'],['Open requests',jobs.filter(j=>!j.parent_id&&!['completed','cancelled'].includes(j.status)).length,'Every request, one persistent track'],['Needs attention',state.needs_attention,'Approvals, questions, or setup'],['Completed',state.completed,'Work finished and recorded']].map(([l,n,t])=>'<div class="metric"><div class="metric-label">'+l+'</div><div class="metric-value">'+n+'</div><small>'+t+'</small></div>').join('')+'</div><div class="section-title"><div><h2>Your organizations</h2><p>Specialized teams. One coordinated effort.</p></div>'+btn('View organization structure →','data-go="organizations"','link-btn')+'</div>'+orgCards()+'<div class="section-title"><h2>Recent requests</h2>'+btn('View all requests →','data-go="jobs"','link-btn')+'</div>'+table(jobs.filter(j=>!j.parent_id).slice(0,6));
  }else if(view==='jobs'||view==='attention'){
- html=intro(view==='jobs'?'Every request. Every next step.':'The decisions that need you.','Follow progress, answer questions, and review proposed actions.')+(view==='attention'?monitoringAlert():'')+'<div class="toolbar"><input id="search" aria-label="Search requests" placeholder="Search requests, organizations, or projects…"><select id="filter" aria-label="Filter status"><option value="">All statuses</option>'+Object.entries(labels).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('')+'</select><select id="triage-filter" aria-label="Filter message decision"><option value="">All message decisions</option>'+Object.entries(triageLabels).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('')+'</select></div><div id="table">'+table(jobs.filter(j=>view!=='attention'||attention(j)))+'</div>';
+ html=intro(view==='jobs'?'Every request. Every next step.':'The decisions that need you.','Follow progress, answer questions, and review proposed actions.')+(view==='attention'?monitoringAlert()+capacityAlert():'')+'<div class="toolbar"><input id="search" aria-label="Search requests" placeholder="Search requests, organizations, or projects…"><select id="filter" aria-label="Filter status"><option value="">All statuses</option>'+Object.entries(labels).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('')+'</select><select id="triage-filter" aria-label="Filter message decision"><option value="">All message decisions</option>'+Object.entries(triageLabels).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('')+'</select></div><div id="table">'+table(jobs.filter(j=>view!=='attention'||attention(j)))+'</div>';
  }else if(view==='organizations'){
  html=intro('A team built around your work.','Your agent organization chart. Open any task to inspect its work, decisions, and delegated agents. Agents are task-specific; queued and waiting agents remain visible until finished.')+organizationChart()+'<div class="section-title"><h2>Engineering projects</h2></div>'+Object.entries(state.settings.projects).map(([n,p])=>'<div class="panel"><h3>'+esc(n)+'</h3><p class="code">'+esc(p)+'</p></div>').join('');
  }else if(view==='knowledge')html=knowledgeView();
@@ -135,12 +135,24 @@ function collapseSourceConversation(){
  summary.focus({preventScroll:true});
  summary.scrollIntoView({block:'nearest'});
 }
+function capacityAlert(){
+ const count=jobs.filter(j=>j.status==='capacity_paused').length;
+ if(!count)return '';
+ return '<section class="warning" role="alert"><h2>Model capacity needs attention</h2><p>Automatic recovery paused for '+count+' job(s). Progress is saved. Review AMD gateway capacity, then open an affected job to retry.</p></section>';
+}
+function capacityView(j){
+ const c=j.capacity||{},paused=j.status==='capacity_paused'||c.paused;
+ if(!['waiting_capacity','capacity_paused'].includes(j.status))return '';
+ const seconds=Math.max(0,Math.ceil((c.retry_at*1000-Date.now())/1000));
+ return '<section class="warning" role="status"><h3>'+ (paused?'Model capacity recovery paused':'Waiting for model capacity')+'</h3><p>Progress is saved. '+(paused?'Automatic retries reached the recovery window. Review AMD gateway capacity or retry when ready.':'We’ll retry automatically '+(seconds?'in '+seconds+' seconds.':'when a worker is available.'))+'</p>'+btn('Retry now','id="retry-capacity"','secondary')+'<details><summary>Gateway diagnostics</summary><div class="readable">'+esc(c.model)+' · '+esc(c.detail||'Model request concurrency limit reached.')+'</div></details></section>';
+}
 async function openJob(id){
  const same=selected===id,snapshot=same?captureView($('#job-dialog')):null,opening=!same||!$('#job-dialog').open;
  const j=await api('jobs/'+id);selected=id;const b=j.brief||{};$('#detail').innerHTML='<div class="eyebrow">'+esc(j.org)+'</div><h2 class="detail-title">'+esc(b.email_subject||j.title)+'</h2><div class="detail-meta">'+badge(j.status)+'<span class="small">'+esc(j.project||'Workspace')+' · '+date(j.created)+'</span></div><details><summary class="small">Original request</summary><div class="code">'+esc(j.request)+'</div></details>'+
  '<section class="panel job-brief"><h3>At a glance</h3>'+(j.org==='Communications'?readable('Message decision',triageLabel(b.triage_category))+readable('Why this decision',b.triage_reason||b.action_reason||b.response_reason)+readable('Quick summary',b.email_excerpt):'')+readable('Context',b.context)+readable('Current status',b.status_summary)+readable('Next step',b.next_step)+'</section>'+(j.org==='Communications'?sourceView(j):'')+
  (j.org==='Communications'?'<section class="panel"><h3>Source email / conversation</h3><div class="form-grid">'+readable('From',b.email_from)+readable('Subject',b.email_subject)+readable('Received',b.email_received)+'</div>'+readable('Email summary',b.email_excerpt)+'<div class="form-grid">'+readable('Response needed',({yes:'Yes',no:'No',unknown:'Not yet determined'})[b.response_needed]||'Not yet determined')+readable('Why',b.response_reason)+'</div><div class="form-grid">'+readable('Action needed',({yes:'Yes',no:'No',unknown:'Not yet determined'})[b.action_needed]||'Not yet determined')+readable('Action rationale',b.action_reason)+'</div>'+readable('Requested work',b.requested_action)+readable('Action plan',b.action_plan)+(b.uncertainties?readable('Still unverified',b.uncertainties):'')+'</section>':'')+
  (b.proposed_body?'<section class="panel"><h3>'+(j.status==='completed'?'Response text':'Proposed response')+'</h3>'+readable('To',b.proposed_to)+readable('Subject',b.proposed_subject)+readable(j.status==='completed'?'Message text':'Draft reply',b.proposed_body,'proposed-reply')+'<p class="small">'+(j.status==='completed'?'See the result below for the execution outcome and receipt.':'A draft is not a sent message. Sending requires approval of the exact action below.')+'</p></section>':'')+
+ capacityView(j)+
  (j.question&&['waiting_input','blocked','failed'].includes(j.status)?'<section class="warning"><h3>Decision or information needed</h3>'+(j.question.length>650?'<p>'+esc(b.next_step||'Review the details and reply below.')+'</p><details><summary>Full agent question and supporting context</summary><div class="readable">'+esc(j.question)+'</div></details>':'<div class="readable">'+esc(j.question)+'</div>')+'</section>':'')+
  (j.org!=='Communications'&&['waiting_input','blocked','failed'].includes(j.status)?'<form id="answer-form"><div class="field"><label for="answer">Reply to your Chief of Staff</label><textarea id="answer" required placeholder="Provide the missing information or instructions to retry…"></textarea></div>'+btn('Send follow-up & resume','type="submit"')+'</form>':'')+
  (j.read_targets||[]).map(t=>btn(t.label,'data-summary-read="'+esc(t.args.id||t.args.chat_id)+'" data-read-tool="'+esc(t.tool)+'"','secondary')).join('')+
@@ -162,6 +174,7 @@ async function openJob(id){
  if($('#load-source'))$('#load-source').onclick=()=>loadSource(id);
  document.querySelectorAll('[data-collapse-source]').forEach(button=>button.onclick=collapseSourceConversation);
  if(opening&&j.org==='Communications'&&(!(j.source_messages||[]).length||(j.source_messages||[]).some(m=>!m.complete)))loadSource(id);
+ if($('#retry-capacity'))$('#retry-capacity').onclick=handle(async()=>{await api('jobs/'+id+'/retry-capacity',{});await openJob(id);await refresh()});
  if($('#cancel-job'))$('#cancel-job').onclick=handle(async()=>{await api('jobs/'+id+'/cancel',{});await openJob(id);await refresh()});
 }
 async function navigate(next){view=next;if(view==='connections'){con=await api('connections');atlassian=await api('atlassian');}if(view==='acceptance')tests=await api('acceptance');if(view==='knowledge')memories=await api('knowledge');if(view==='organizations')organizationAgents=await api('organization-agents');render()}

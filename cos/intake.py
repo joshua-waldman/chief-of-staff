@@ -44,7 +44,7 @@ def revision(rules):
 class EmailIntake:
     def __init__(self, store, provider=None):
         self.store = store
-        self.provider = provider or Gateway()
+        self.provider = provider or Gateway(store)
 
     def classify(self, threads, *, queued=False):
         # Never hold the ingestion write transaction across model inference.

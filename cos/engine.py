@@ -3,6 +3,7 @@ import json
 import logging
 import shutil
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from .config import settings,DATA,gateway_key
@@ -18,6 +19,7 @@ from .mail import prepare as prepare_email,definitely_not_sent
 from .conversations import deliver,deliver_waiting,reconcile_legacy,pending as conversation_pending,ready as conversation_ready,consumed as conversation_consumed
 from . import progress,recovery
 from .message_triage import PERSONAL_ACTION_POLICY
+from .capacity import Capacity, CapacityDelayed
 
 log=logging.getLogger(__name__)
 SCHEMA = [tool_schema('perform','Execute one action from the tool catalog. Use JSON for arguments.',{'action':string('Action name from catalog'),'arguments':string('JSON object with action parameters')})]
@@ -40,7 +42,8 @@ def session(job):
 class Engine:
     def __init__(self,store,provider=None):
         self.store=store
-        self.provider=provider or Gateway()
+        self.provider=provider or Gateway(store)
+        self.capacity=Capacity(store)
         self.tools=Tools(store)
         self.knowledge=Knowledge(store)
         from .queue_intake import QueueIntake
@@ -96,6 +99,7 @@ class Engine:
             progress.reset(state)
             self.persist(old['id'],state,status='queued',question='')
             self.store.event(old['id'],'continuation','Resumed saved work automatically; the former step limit is now a scheduling time slice.')
+        self.recover_rate_failures()
         deliver_waiting(self.store)
         self.thread=threading.Thread(target=self.loop,daemon=True)
         self.thread.start()
@@ -104,11 +108,85 @@ class Engine:
         self.stop_event.set()
         self.pool.shutdown(wait=False,cancel_futures=True)
 
+    def recover_rate_failures(self):
+        # Older releases surfaced model 429s as failed jobs. Preserve receipts
+        # and approvals, and never recover jobs with an unresolved mutation.
+        for job in self.store.rows("SELECT * FROM jobs WHERE status='failed' AND question LIKE 'AMD gateway returned HTTP 429:%'"):
+            if self.store.one("SELECT 1 FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain')",(job['id'],)):
+                continue
+            saved=session(job)
+            if saved.get('waiting_call'):
+                continue
+            self.persist(job['id'],saved,status='queued',question='')
+            self.store.event(job['id'],'capacity','Resuming saved work after a rate limit reported by an older release.')
+
+
+    def capacity_waiting(self,job):
+        model=settings()['models'][self.model_role(job)]
+        state=self.capacity.get(model)
+        if state.get('paused') or state.get('retry_at',0)>time.time():
+            saved=session(job)
+            saved['capacity']={'model':model,**state}
+            self.store.write("UPDATE jobs SET messages=?,status=?,question='',updated=? WHERE id=? AND status='queued'",(json.dumps(saved),'capacity_paused' if state.get('paused') else 'waiting_capacity',now(),job['id']))
+            return True
+        return False
+
+
+    def model_role(self,job):
+        if job['org']=='Chief of Staff':
+            return 'chief'
+        if job['org']=='Communications' and (job['request'].startswith('Triage this incoming') or self.store.one('SELECT 1 FROM communication_threads WHERE job_id=?',(job['id'],))):
+            return 'triage'
+        return 'worker' if job['parent_id'] else 'director'
+
+
+    def release_capacity(self):
+        with self.lock:
+            for job in self.store.rows("SELECT * FROM jobs WHERE status IN ('waiting_capacity','capacity_paused')"):
+                saved=session(job).get('capacity',{})
+                state=self.capacity.get(saved.get('model',''))
+                if state.get('deadline',float('inf'))<=time.time():
+                    state['paused']=True
+                    self.store.set_state('capacity:'+saved['model'],state)
+                if not state and saved.get('busy'):
+                    state=saved
+                if state.get('paused'):
+                    self.store.write("UPDATE jobs SET status='capacity_paused' WHERE id=? AND status='waiting_capacity'",(job['id'],))
+                    continue
+                if state.get('retry_at',0)<=time.time():
+                    self.store.write("UPDATE jobs SET status='queued',question='',updated=? WHERE id=? AND status IN ('waiting_capacity','capacity_paused')",(now(),job['id']))
+
+
+    def defer_capacity(self,id,error):
+        with self.lock:
+            job=self.store.job(id)
+            if job['status']!='running':
+                return
+            state=session(job)
+            repeated_busy=state.get('capacity',{}).get('busy') and error.state.get('busy')
+            state['capacity']={'model':error.model,**error.state}
+            changed=self.store.write("UPDATE jobs SET messages=?,status=?,question='',updated=? WHERE id=? AND status='running'",(json.dumps(state),'capacity_paused' if error.state.get('paused') else 'waiting_capacity',now(),id))
+            if changed and not repeated_busy:
+                self.store.event(id,'capacity','Model capacity recovery paused; review gateway capacity or retry.' if error.state.get('paused') else 'Progress saved; waiting for model capacity.')
+
+
+    def retry_capacity(self,id):
+        with self.lock:
+            job=self.store.job(id)
+            if not job or job['status'] not in {'waiting_capacity','capacity_paused'}:
+                raise ValueError('This job is not waiting for model capacity.')
+            state=session(job)
+            self.capacity.reset(state.get('capacity',{}).get('model',''))
+            state.pop('capacity',None)
+            self.store.write("UPDATE jobs SET messages=?,status='queued',question='',updated=? WHERE id=? AND status IN ('waiting_capacity','capacity_paused')",(json.dumps(state),now(),id))
+
+
     def ready_jobs(self,limit):
         # A yielded job goes behind other ready work, rather than monopolizing
         # every worker because it was created first.
+        self.release_capacity()
         candidates=self.store.rows("SELECT * FROM jobs WHERE status='queued' ORDER BY CASE WHEN org='Communications' THEN 0 ELSE 1 END,updated,created,id")
-        return [job for job in candidates if conversation_ready(self.store,job['id'])][:limit]
+        return [job for job in candidates if conversation_ready(self.store,job['id']) and not self.capacity_waiting(job)][:limit]
 
     def dispatch_jobs(self):
         # Called under self.lock. Keep one slot available for Communications
@@ -407,6 +485,8 @@ class Engine:
             s['automatic_continuations']=s.get('automatic_continuations',0)+1
             if self.yield_work(id,s):
                 self.store.event(id,'continuation','Progress saved; yielding the worker before automatically continuing the same job.')
+        except CapacityDelayed as error:
+            self.defer_capacity(id,error)
         except ContextWindowExceeded as error:
             emit('job.context_blocked',failure(error))
             self.store.update(id,status='blocked',question='Context recovery needs a smaller request or a verified model limit. Saved progress and action receipts are preserved. '+str(error))

@@ -94,6 +94,11 @@ class Store:
         j['brief']=detail_brief(self,j)
         j['review_messages']=self.rows('SELECT * FROM review_messages WHERE job_id=? ORDER BY id',(id,))
         j['source_messages']=self.rows('SELECT * FROM communication_sources WHERE job_id=? ORDER BY received,message_id',(id,))
+        from .capacity import Capacity
+        raw=json.loads(j['messages'])
+        saved=raw.get('capacity',{}) if isinstance(raw,dict) else {}
+        if saved and j['status'] in {'waiting_capacity','capacity_paused'}:
+            j['capacity']={**saved,**Capacity(self).get(saved['model'])}
         j.pop('messages',None)
         return j
 

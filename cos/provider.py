@@ -1,8 +1,10 @@
 import json
 import time
+import threading
 import httpx
 from .trace import model_call
 from .config import settings, gateway_key, DEFAULTS
+from .capacity import Capacity, CapacityDelayed
 
 class NotConfigured(Exception):
     pass
@@ -12,8 +14,30 @@ class ContextWindowExceeded(RuntimeError):
     pass
 
 class Gateway:
+    _lock = threading.Lock()
+    _gates = {}
+    def __init__(self, store=None):
+        if store is None:
+            from .db import Store
+            store = Store()
+        self.capacity = Capacity(store)
+
     @model_call
     def complete(self,messages,role='worker',tools=None,*,timeout=180,attempts=3,max_tokens=4096):
+        config = settings()
+        model = config['models'][role]
+        self.capacity.check(model)
+        gate_key = (self.capacity.store.path, model, config.get('model_parallel_requests',1))
+        with self._lock:
+            gate = self._gates.setdefault(gate_key,threading.BoundedSemaphore(gate_key[2]))
+        if not gate.acquire(blocking=False):
+            raise CapacityDelayed(model,{'retry_at':time.time()+1,'busy':True})
+        try:
+            return self._complete(messages,role,tools,timeout=timeout,attempts=attempts,max_tokens=max_tokens)
+        finally:
+            gate.release()
+
+    def _complete(self,messages,role='worker',tools=None,*,timeout=180,attempts=3,max_tokens=4096):
         s = settings()
         key = gateway_key()
         if not key:
@@ -21,6 +45,7 @@ class Gateway:
         if s['gateway_url'] != DEFAULTS['gateway_url']:
             raise NotConfigured('Unverified model endpoint blocked.')
         model = s['models'][role]
+        self.capacity.check(model)
         payload = {'model':model,'messages':[{k:v for k,v in m.items() if not k.startswith('_')} for m in messages],'max_completion_tokens':max_tokens}
         if tools:
             payload['tools'] = tools
@@ -45,13 +70,18 @@ class Gateway:
                 for call in message.get('tool_calls',[]):
                     items.append({'type':'function_call','call_id':call['id'],'name':call['function']['name'],'arguments':call['function']['arguments']})
             endpoint='/responses'
-            payload={'model':model,'input':items,'max_output_tokens':8192,'store':False,'include':['reasoning.encrypted_content'],'reasoning':{'effort':'medium'},'tools':[{'type':'function',**tool['function']} for tool in tools],'parallel_tool_calls':False}
+            payload={'model':model,'input':items,'max_output_tokens':max_tokens,'store':False,'include':['reasoning.encrypted_content'],'reasoning':{'effort':'medium'},'tools':[{'type':'function',**tool['function']} for tool in tools],'parallel_tool_calls':False}
         headers = {'Authorization':'Bearer '+key,'Ocp-Apim-Subscription-Key':key}
         for attempt in range(attempts):
             try:
+                self.capacity.check(model)
+                observed_capacity = self.capacity.get(model)
                 # No redirect following: credentials may only reach the verified AMD gateway.
                 response = httpx.post(s['gateway_url']+endpoint,json=payload,headers=headers,timeout=timeout,follow_redirects=False)
-                if response.status_code in {429,502,503,504} and attempt < attempts-1:
+                if response.status_code == 429:
+                    detail = response.text[:3000].replace(key,'[REDACTED]')
+                    raise self.capacity.limited(model, response.headers, detail, s.get('capacity_recovery_seconds',900))
+                if response.status_code in {502,503,504} and attempt < attempts-1:
                     time.sleep(min(8,2**attempt))
                     continue
                 if response.status_code in {401,403}:
@@ -69,6 +99,7 @@ class Gateway:
                         raise ContextWindowExceeded('The model input exceeds the gateway context window.')
                     raise RuntimeError('AMD gateway returned HTTP '+str(response.status_code)+(': '+detail if detail else ''))
                 data = response.json()
+                self.capacity.succeeded(model, observed=observed_capacity)
                 if use_responses:
                     output=data.get('output',[])
                     answer={'role':'assistant','content':'','tool_calls':[],'_responses_output':output,'_responses_model':model}

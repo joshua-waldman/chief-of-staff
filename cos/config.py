@@ -12,6 +12,8 @@ DEFAULTS = {
     'queue_paused': False,
     'conversation_settle_seconds': 15, 'conversation_max_wait_seconds': 60,
     'max_stalled_steps': 12,
+    'capacity_recovery_seconds': 900,
+    'model_parallel_requests': 1,
     # Conservative fallback, not a claim about the gateway's model capacity.
     'context_window_tokens': 128000, 'model_context_windows': {},
     'poll_seconds': 60, 'command_prefix': '!cos', 'self_chat_id': '48:notes',
@@ -46,6 +48,8 @@ def save_settings(changes):
         raise ValueError('Queue paused must be true or false.')
     s['poll_seconds'] = max(30, int(s['poll_seconds']))
     s['max_steps'] = max(5, min(100, int(s['max_steps'])))
+    s['capacity_recovery_seconds'] = max(30,min(86400,int(s['capacity_recovery_seconds'])))
+    s['model_parallel_requests'] = max(1,min(12,int(s['model_parallel_requests'])))
     s['conversation_settle_seconds']=max(0,min(120,int(s['conversation_settle_seconds'])))
     s['conversation_max_wait_seconds']=max(s['conversation_settle_seconds'],min(300,int(s['conversation_max_wait_seconds'])))
     s['max_stalled_steps']=max(4,min(100,int(s['max_stalled_steps'])))
