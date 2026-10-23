@@ -3,6 +3,7 @@ const $=s=>document.querySelector(s),token=$('meta[name=cos-token]').content;
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names={overview:'Overview',jobs:'Job tracker',attention:'Needs attention',organizations:'Organizations',knowledge:'Knowledge base',connections:'Connections',acceptance:'Acceptance tests'};
 const labels={queued:'Queued',running:'Running',waiting_children:'Delegated',waiting_input:'Your input needed',awaiting_approval:'Approval needed',blocked:'Setup needed',completed:'Completed',failed:'Failed',cancelled:'Cancelled',watching:'Watching',needs_attention:'Needs attention',paused:'Paused'};
+let queueChanging=false;
 let atlassian=null;
 let organizationAgents=[];
 let memories=[],memoryQuery='',memoryFilter='',editingMemory=null;
@@ -42,7 +43,28 @@ function monitoringAlert(){
  return '<section class="warning" role="alert"><h2>Message monitoring needs attention</h2><p>Some incoming messages may be waiting for collection. Successful sources continue; failed sources retry from their saved checkpoints.</p><p>Last complete scan: '+esc(m.last_poll?date(m.last_poll):'Not recorded')+'</p>'+Object.entries(sources).map(([name,s])=>'<p><b>'+esc(name==='email'?'Email':'Teams')+':</b> '+esc(labels[s.state]||s.state)+' · Last successful scan: '+esc(s.last_poll?date(s.last_poll):'Not recorded')+'</p>').join('')+'<details><summary>Failure details</summary><pre class="code">'+esc(m.error||'A previous scan failed; recovery is being checked.')+'</pre></details>'+btn('Open monitoring settings','data-go="connections"','secondary')+'</section>';
 }
 function composer(){return '<form class="composer" id="request-form"><div class="composer-top"><span class="spark">✧</span> CHIEF OF STAFF <span class="pill">Ready to help</span></div><textarea id="request" aria-label="Your request" placeholder="What would you like to move forward?" required></textarea><div class="file-chips" id="file-chips"></div><div class="composer-bottom"><div class="composer-left"><label class="attach">＋ Attach files or screenshots<input type="file" id="attachments" multiple></label><select id="project" aria-label="Project"><option value="">Let the Chief of Staff route</option>'+Object.keys(state.settings.projects).map(p=>'<option>'+esc(p)+'</option>').join('')+'</select></div>'+btn('Delegate request ↗','type="submit" id="submit"')+'</div></form><p class="hint">Your Chief of Staff coordinates the right organization, tracks progress, and brings decisions back to you.</p>'}
+function renderQueueControl(){
+ const paused=!!state.settings?.queue_paused,active=state.queue_active??state.running??0;
+ const status=$('#queue-status'),button=$('#queue-toggle');
+ status.textContent=paused?(active?'Finishing current agent steps ('+active+')':'Disconnected · Queue paused'):'Connected · Queue active';
+ button.textContent=paused?'Connect':'Disconnect';
+ button.disabled=queueChanging;
+ button.title=paused?'Resume queued jobs':'Pause between agent steps after in-flight calls finish. Monitoring continues collecting requests.';
+ button.onclick=handle(toggleQueue);
+}
+async function toggleQueue(){
+ if(queueChanging)return;
+ const paused=!state.settings.queue_paused;
+ queueChanging=true;renderQueueControl();
+ try{
+  const saved=await api('settings',{queue_paused:paused});
+  state.settings={...state.settings,queue_paused:saved.queue_paused};
+  toast(paused?'Queue disconnecting. Agents will pause after their current step; progress is saved.':'Queue connected. Queued work will resume.');
+  await refresh();
+ }finally{queueChanging=false;renderQueueControl()}
+}
 function render(){
+ renderQueueControl();
  const savedView=$('#main').dataset.view===view?captureView($('#main')):null;$('#main').dataset.view=view;
  $('#breadcrumb').textContent='Workspace / '+names[view];$('#attention-count').textContent=state.needs_attention||0;$('#monitor-pill').textContent=state.monitor?.state==='watching'?(state.monitor?.limitations?.length?'● Monitoring active · access limits':'● Monitoring active'):state.monitor_attention?'Monitoring needs attention':state.settings?.monitor_enabled?'Monitoring: collecting…':'Monitoring paused';
  document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
@@ -138,7 +160,7 @@ async function openJob(id){
  if($('#cancel-job'))$('#cancel-job').onclick=handle(async()=>{await api('jobs/'+id+'/cancel',{});await openJob(id);await refresh()});
 }
 async function navigate(next){view=next;if(view==='connections'){con=await api('connections');atlassian=await api('atlassian');}if(view==='acceptance')tests=await api('acceptance');if(view==='knowledge')memories=await api('knowledge');if(view==='organizations')organizationAgents=await api('organization-agents');render()}
-async function refresh(force=false){const [nextState,nextJobs,nextAgents]=await Promise.all([api('status'),api('jobs'),view==='organizations'?api('organization-agents'):Promise.resolve(null)]);state=nextState;jobs=nextJobs;if(nextAgents!==null)organizationAgents=nextAgents;if(view==='knowledge'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))memories=await api('knowledge');if(force||!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))render()}
+async function refresh(force=false){const [nextState,nextJobs,nextAgents]=await Promise.all([api('status'),api('jobs'),view==='organizations'?api('organization-agents'):Promise.resolve(null)]);state=nextState;renderQueueControl();jobs=nextJobs;if(nextAgents!==null)organizationAgents=nextAgents;if(view==='knowledge'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))memories=await api('knowledge');if(force||!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))render()}
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=handle(()=>navigate(b.dataset.view)));$('#close-dialog').onclick=()=>{$('#job-dialog').close();selected=null};$('#job-dialog').addEventListener('close',()=>selected=null);
 refresh().catch(e=>toast(e.message,true));
 setInterval(async()=>{if(busy)return;busy=true;try{await refresh();if(view==='connections'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){con=await api('connections');render()}if(selected&&$('#job-dialog').open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)&&!document.querySelector('#detail button[disabled]'))await openJob(selected)}catch(e){}finally{busy=false}},4000);

@@ -248,3 +248,103 @@ def test_handoff_preserves_pending_send_and_requires_approval(env,monkeypatch):
     assert called==['read_file']
     assert env.one('SELECT status FROM approvals WHERE tool=?',('send_teams',))['status']=='pending'
     engine.stop()
+
+
+def test_disconnect_during_intake_blocks_dispatch_until_reconnected(env,monkeypatch):
+    monkeypatch.setitem(config.DEFAULTS,'queue_paused',False)
+    engine=Engine(env,Scripted())
+    job=env.create_job('Pending work','Technology')
+    submitted=[]
+    class Ticks:
+        count=0
+        def wait(self,seconds):
+            self.count+=1
+            return self.count>1
+    engine.stop_event=Ticks()
+    monkeypatch.setattr(engine.queue_intake,'check',lambda jobs:config.DEFAULTS.update(queue_paused=True))
+    monkeypatch.setattr(engine.pool,'submit',lambda *args:submitted.append(args))
+    engine.loop()
+    assert not submitted and not engine.active
+    assert env.job(job['id'])['status']=='queued'
+    monkeypatch.setitem(config.DEFAULTS,'queue_paused',False)
+    monkeypatch.setattr(engine.queue_intake,'check',lambda jobs:None)
+    engine.stop_event=Ticks()
+    engine.loop()
+    assert submitted==[(engine.run,job['id'])]
+    engine.pool.shutdown(wait=True)
+
+
+def test_disconnect_does_not_interrupt_active_worker(env,monkeypatch):
+    class Provider:
+        def complete(self,*args,**kwargs):
+            monkeypatch.setitem(config.DEFAULTS,'queue_paused',True)
+            return perform('finish',{'summary':'Finished active work'}),{}
+    engine=Engine(env,Provider())
+    job=env.create_job('Already dispatched','Technology')
+    try:
+        engine.run(job['id'])
+        assert env.job(job['id'])['status']=='completed'
+    finally:
+        engine.stop()
+
+
+@pytest.mark.parametrize('pause_during',['model','tool'])
+@pytest.mark.parametrize('child',[False,True])
+def test_disconnect_checkpoints_between_agent_steps_and_resumes_without_replay(env,monkeypatch,pause_during,child):
+    monkeypatch.setitem(config.DEFAULTS,'queue_paused',False)
+    calls=[]
+    class Provider:
+        count=0
+        def complete(self,messages,**kwargs):
+            self.count+=1
+            if self.count==1:
+                if pause_during=='model':
+                    config.DEFAULTS['queue_paused']=True
+                return perform('write_file',{'path':'result.txt','content':'Saved evidence'}),{}
+            assert any(m.get('role')=='tool' and 'Saved evidence' in m.get('content','') for m in messages)
+            return perform('finish',{'summary':'Resumed from saved evidence'}),{}
+    provider=Provider()
+    engine=Engine(env,provider)
+    parent=env.create_job('Parent','Technology') if child else None
+    job=env.create_job('Perform work','Technology',parent_id=parent['id'] if parent else None)
+    def execute(job,action,args):
+        calls.append(action)
+        if pause_during=='tool':
+            config.DEFAULTS['queue_paused']=True
+        return {'text':'Saved evidence'}
+    monkeypatch.setattr(engine.tools,'execute',execute)
+    try:
+        engine.run(job['id'])
+        paused=env.job(job['id'])
+        assert paused['status']=='queued' and paused['step']==1
+        assert paused['question']=='' and provider.count==1
+        assert calls==['write_file']
+        saved=session(paused)
+        assert 'waiting_call' not in saved and 'waiting_action' not in saved
+        assert env.one('SELECT status FROM approvals WHERE job_id=?',(job['id'],))['status']=='executed'
+        assert env.one("SELECT 1 FROM events WHERE job_id=? AND kind='paused'",(job['id'],))
+        # A submitted worker that reaches the engine while paused cannot run.
+        engine.run(job['id'])
+        assert provider.count==1 and calls==['write_file']
+        monkeypatch.setitem(config.DEFAULTS,'queue_paused',False)
+        engine.run(job['id'])
+        assert provider.count==2 and calls==['write_file']
+        assert env.job(job['id'])['status']=='completed'
+        assert env.job(job['id'])['step']==2
+        assert len(env.rows('SELECT * FROM approvals WHERE job_id=?',(job['id'],)))==1
+    finally:
+        engine.stop()
+
+
+def test_disconnect_before_routing_does_not_call_model(env,monkeypatch):
+    monkeypatch.setitem(config.DEFAULTS,'queue_paused',True)
+    provider=Scripted()
+    engine=Engine(env,provider)
+    job=env.create_job('Unrouted request','Chief of Staff')
+    try:
+        engine.run(job['id'])
+        assert env.job(job['id'])['status']=='queued'
+        assert env.job(job['id'])['step']==0
+        assert not env.rows('SELECT * FROM approvals')
+    finally:
+        engine.stop()

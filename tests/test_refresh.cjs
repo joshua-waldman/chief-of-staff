@@ -83,3 +83,34 @@ test('monitor failure is visible, escaped, and clears on recovery',()=>{
  assert.equal(alertContext.monitoringAlert(),'');
  assert.match(source,/view==='attention'\?monitoringAlert\(\)/);
 });
+
+
+test('queue control drains, reconnects, prevents duplicate clicks and recovers from failures',async()=>{
+ const status={},button={},calls=[],notices=[];
+ let release;
+ const ctx={state:{settings:{queue_paused:false},queue_active:2},queueChanging:false,$:s=>s==='#queue-status'?status:button,handle:f=>f,toast:t=>notices.push(t),refresh:async()=>{},api:async(path,body)=>{calls.push([path,body]);await new Promise(r=>release=r);return body}};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function renderQueueControl('),source.indexOf('function render(){')),ctx);
+ ctx.renderQueueControl();
+ assert.equal(button.textContent,'Disconnect');
+ assert.match(status.textContent,/Connected/);
+ const disconnect=ctx.toggleQueue();
+ assert.equal(button.disabled,true);
+ await ctx.toggleQueue();
+ assert.equal(calls.length,1);
+ assert.equal(calls[0][1].queue_paused,true);
+ release();await disconnect;
+ assert.equal(button.disabled,false);
+ assert.equal(button.textContent,'Connect');
+ assert.match(status.textContent,/Finishing current agent steps \(2\)/);
+ ctx.state.queue_active=0;ctx.renderQueueControl();
+ assert.match(status.textContent,/Disconnected/);
+ const connect=ctx.toggleQueue();release();await connect;
+ assert.equal(calls[1][1].queue_paused,false);
+ assert.equal(button.textContent,'Disconnect');
+ ctx.api=async()=>{throw Error('Save failed')};
+ await assert.rejects(ctx.toggleQueue(),/Save failed/);
+ assert.equal(button.disabled,false);
+ assert.equal(button.textContent,'Disconnect');
+ assert.equal(ctx.state.settings.queue_paused,false);
+});

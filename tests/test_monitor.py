@@ -137,6 +137,42 @@ def test_mail_process_failure_does_not_block_teams(tmp_path,monkeypatch):
     assert m.store.state('monitor_status')['state']=='needs_attention'
 
 
+@pytest.mark.parametrize('field',['internetMessageId','receivedDateTime','subject','bodyPreview','from','emailAddress','address','all'])
+def test_nullable_mail_metadata_recovers_scan_and_deduplicates(tmp_path,monkeypatch,field):
+    m=setup_monitor(tmp_path,monkeypatch)
+    m.store.set_state('monitor_status',{'state':'needs_attention','attention_required':True,'error':'Previous mail failure'})
+    email={'id':'mail','conversationId':'thread','internetMessageId':'<mail@example.com>',
+           'receivedDateTime':'2026-10-22T01:00:00Z','subject':'An ask','bodyPreview':'Please review',
+           'from':{'emailAddress':{'address':'other@amd.com'}}}
+    if field=='emailAddress':
+        email['from']['emailAddress']=None
+    elif field=='address':
+        email['from']['emailAddress']['address']=None
+    elif field=='all':
+        email.update({key:None for key in email if key!='id'})
+    else:
+        email[field]=None
+    # Include a second message in the same thread to exercise date ordering.
+    other={**email,'id':'other','receivedDateTime':'2026-10-22T02:00:00Z'}
+    monkeypatch.setattr('cos.monitor.subprocess.run',lambda args,**kw:response(emails=[email,other]) if args[-1]=='email' else response())
+    m.tick()
+    status=m.store.state('monitor_status')
+    assert status['state']=='watching'
+    assert not status['attention_required']
+    assert 'error' not in status
+    assert m.store.state('monitor_checkpoint_email')!=SINCE
+    sources=m.store.rows('SELECT * FROM communication_sources')
+    assert len(sources)==2
+    assert all(isinstance(row[key],str) for row in sources for key in ('sender','subject','received','body'))
+    jobs=len(m.store.rows('SELECT * FROM jobs'))
+    m.tick()
+    assert len(m.store.rows('SELECT * FROM jobs'))==jobs
+    assert len(m.store.rows('SELECT * FROM communication_sources'))==2
+    # Normalization must not mutate the upstream payload.
+    if field not in {'emailAddress','address','all'}:
+        assert email[field] is None
+
+
 def test_retry_preserves_last_success_and_alert(tmp_path,monkeypatch):
     m=setup_monitor(tmp_path,monkeypatch)
     previous={'state':'needs_attention','attention_required':True,'error':'Old failure','last_poll':SINCE}
