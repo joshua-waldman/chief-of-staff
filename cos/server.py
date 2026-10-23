@@ -101,12 +101,14 @@ def jobs():
     rows=store.rows('''SELECT j.id,j.parent_id,j.title,j.org,j.project,j.status,j.created,j.updated,j.result,j.question,b.body AS brief_body
         FROM jobs j LEFT JOIN job_briefs b ON b.job_id=j.id ORDER BY j.created DESC LIMIT 1000''')
     from .message_triage import category
-    from .job_names import display_name
+    from .job_names import add_display_names
+    briefs={}
     for job in rows:
         brief=json.loads(job.pop('brief_body') or '{}')
-        job['display_name']=display_name(job,brief)
+        briefs[job['id']]=brief
         job['triage_category']=category(brief) if job['org']=='Communications' else ''
         job['triage_summary']=brief.get('email_excerpt','') if job['org']=='Communications' else ''
+    add_display_names(store,rows,briefs)
     return rows
 
 @app.get('/api/organization-agents')
@@ -128,6 +130,8 @@ def job(id):
         raise HTTPException(404,'Job not found')
     from .message_triage import read_targets
     result['read_targets']=read_targets(store,result)
+    from .job_names import add_display_names
+    add_display_names(store,[result,*result['children']])
     return result
 
 @app.post('/api/jobs/{id}/mark-read')
