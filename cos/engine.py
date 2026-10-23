@@ -121,6 +121,9 @@ class Engine:
                 # lock and before any model/tool orchestration starts.
                 self.queue_intake.check(self.ready_jobs(25))
                 with self.lock:
+                    # Disconnect may arrive while intake is checking the queue.
+                    if settings().get('queue_paused',False):
+                        continue
                     available=settings()['parallel_agents']-len(self.active)
                     if available<=0:
                         continue
@@ -153,6 +156,9 @@ class Engine:
             if not self.store.write("UPDATE jobs SET status='running',updated=? WHERE id=? AND status='queued'",(now(),id)):
                 return
             job=self.store.job(id)
+            if settings().get('queue_paused',False):
+                self.yield_work(id,session(job))
+                return
             if job['org']=='Chief of Staff':
                 self.route(job)
                 job=self.store.job(id)
@@ -169,6 +175,12 @@ class Engine:
             # max_steps is a worker time slice, never a lifetime budget for a
             # conversation. Source revisions may reset their own saved step count.
             for turn in range(settings()['max_steps']):
+                # Checkpoint between agent steps, after recording any previous
+                # tool result. Reconnection continues without replaying actions.
+                if settings().get('queue_paused',False):
+                    if self.yield_work(id,s):
+                        self.store.event(id,'paused','Agent progress saved; waiting for Connect before the next step.')
+                    return
                 if not conversation_ready(self.store,id):
                     self.yield_work(id,s)
                     return
@@ -205,6 +217,9 @@ class Engine:
                 prepare_context(self,current,s,role,SCHEMA)
                 # Retry inference only. No tool or external mutation is replayed.
                 for recovery in range(3):
+                    if settings().get('queue_paused',False):
+                        self.yield_work(id,s)
+                        return
                     try:
                         answer,meta=self.provider.complete(messages,role=role,tools=SCHEMA)
                         break

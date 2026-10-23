@@ -44,3 +44,26 @@ def test_communication_source_endpoint_loads_text_without_changing_job(tmp_path,
     assert detail['source_messages'][0]['body']=='Full source\nFinal line'
     assert detail['status']=='queued'
     assert not detail['approvals']
+
+
+def test_queue_toggle_persists_and_status_counts_inflight_workers(tmp_path,monkeypatch):
+    from cos import config,server
+    monkeypatch.setattr(config,'ROOT',tmp_path)
+    client=TestClient(app)
+    client.cookies.set('cos_session',TOKEN)
+    headers={'x-cos-token':TOKEN}
+    assert client.post('/api/settings',json={'queue_paused':True}).status_code==403
+    try:
+        with server.engine.lock:
+            server.engine.active.add('synthetic-inflight-worker')
+        response=client.post('/api/settings',json={'queue_paused':True},headers=headers)
+        assert response.status_code==200 and response.json()['queue_paused'] is True
+        state=client.get('/api/status').json()
+        assert state['settings']['queue_paused'] is True
+        assert state['queue_active']>=1
+        assert config.settings()['queue_paused'] is True
+        assert client.post('/api/settings',json={'queue_paused':'yes'},headers=headers).status_code==400
+        assert client.post('/api/settings',json={'queue_paused':False},headers=headers).json()['queue_paused'] is False
+    finally:
+        with server.engine.lock:
+            server.engine.active.discard('synthetic-inflight-worker')

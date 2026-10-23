@@ -34,7 +34,7 @@ def allowed(name):
         len(p.parts) == 2 and (
             (p.parts[0] == 'cos' and p.suffix == '.py') or
             (p.parts[0] == 'web' and p.suffix in {'.html', '.js', '.css'}) or
-            (p.parts[0] == 'tests' and p.name.startswith('test_') and p.suffix in {'.py', '.cjs'})
+            (p.parts[0] == 'tests' and ((p.name.startswith('test_') and p.suffix in {'.py', '.cjs'}) or p.name == 'conftest.py'))
         )
     )
 

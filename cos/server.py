@@ -90,9 +90,11 @@ def index():
 def status():
     jobs=store.rows('SELECT id,parent_id,status,org FROM jobs')
     config=settings()
+    with engine.lock:
+        active=len(engine.active)
     monitoring=store.state('monitor_status',{'state':'paused'})
     monitor_attention=bool(config['monitor_enabled'] and (monitoring.get('attention_required') or monitoring.get('state')=='needs_attention'))
-    return {'gateway_configured':bool(gateway_key()),'jobs':len([j for j in jobs if not j['parent_id']]),'running':sum(j['status']=='running' for j in jobs),'needs_attention':sum(j['status'] in {'waiting_input','awaiting_approval','blocked','failed'} for j in jobs)+int(monitor_attention),'monitor_attention':monitor_attention,'completed':sum(j['status']=='completed' for j in jobs),'monitor':monitoring,'settings':config,'organizations':store.rows('SELECT * FROM organizations ORDER BY created')}
+    return {'gateway_configured':bool(gateway_key()),'jobs':len([j for j in jobs if not j['parent_id']]),'running':sum(j['status']=='running' for j in jobs),'needs_attention':sum(j['status'] in {'waiting_input','awaiting_approval','blocked','failed'} for j in jobs)+int(monitor_attention),'monitor_attention':monitor_attention,'completed':sum(j['status']=='completed' for j in jobs),'monitor':monitoring,'settings':config,'queue_active':active,'organizations':store.rows('SELECT * FROM organizations ORDER BY created')}
 
 @app.get('/api/jobs')
 def jobs():
@@ -223,7 +225,11 @@ def connections():
 
 @app.post('/api/settings')
 async def update_settings(request:Request):
-    s=save_settings(await request.json())
+    changes=await request.json()
+    # Serialize the pause with worker submission so nothing new starts after
+    # the disconnect request has been acknowledged.
+    with engine.lock:
+        s=save_settings(changes)
     return s
 
 @app.post('/api/gateway/key')
