@@ -186,3 +186,24 @@ test('queue control drains, reconnects, prevents duplicate clicks and recovers f
  assert.equal(button.textContent,'Disconnect');
  assert.equal(ctx.state.settings.queue_paused,false);
 });
+
+
+test('deliverables stay visible and recovery downloads are collapsed separately',()=>{
+ const ctx={esc:x=>String(x??'').replace(/</g,'&lt;')};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function jobFilesView('),source.indexOf('async function openJob(')),ctx);
+ assert.equal(ctx.jobFilesView([]),'');
+ const files=[{id:'report',name:'history-report.txt',purpose:'deliverable'},
+  {id:'archive',name:'history-123.txt',purpose:'recovery'},
+  {id:'checkpoint',name:'checkpoint-456.txt',purpose:'recovery'}];
+ const html=ctx.jobFilesView(files);
+ assert.match(html,/<h3>Deliverables<\/h3>/);
+ assert.ok(html.indexOf('history-report.txt')<html.indexOf('<details'));
+ assert.match(html,/<details id="recovery-files"><summary>Internal recovery files \(2\)<\/summary>/);
+ assert.ok(html.indexOf('history-123.txt')>html.indexOf('<details'));
+ assert.match(html,/href="\/api\/files\/archive"/);
+ const recoveryOnly=ctx.jobFilesView(files.slice(1));
+ assert.ok(!recoveryOnly.includes('<h3>Deliverables'));
+ assert.ok(!recoveryOnly.includes(' open'));
+ assert.match(ctx.jobFilesView([{id:'old',name:'Report <draft>.txt'}]),/Report &lt;draft>.txt/);
+});

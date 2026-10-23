@@ -261,3 +261,22 @@ def test_long_lived_source_updates_archive_without_losing_owner_direction(env,ta
     assert estimate(state['messages'],SCHEMA)<input_budget('worker')
     checkpoint=json.loads(Path(state['checkpoint_path']).read_text(encoding='utf-8'))
     assert json.loads(Path(checkpoint['history_path']).read_text(encoding='utf-8'))==original
+
+
+def test_detail_separates_existing_recovery_files_by_directory(env):
+    job=env.create_job('Write a report','Technology')
+    root=tools.workspace(job['id'])
+    for name in ('context/history-old.txt','context/checkpoint-old.txt','context/content-old.txt',
+                 'context/image-old.png','history-report.txt','context-copy/checkpoint-report.txt'):
+        path=root/name
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text('synthetic evidence',encoding='utf-8')
+        tools.file_record(env,job['id'],path)
+    before=env.rows('SELECT * FROM files WHERE job_id=?',(job['id'],))
+    files=env.detail(job['id'])['files']
+    assert {f['name'] for f in files if f['purpose']=='recovery'}=={
+        'history-old.txt','checkpoint-old.txt','content-old.txt','image-old.png'}
+    assert {f['name'] for f in files if f['purpose']=='deliverable'}=={
+        'history-report.txt','checkpoint-report.txt'}
+    assert env.rows('SELECT * FROM files WHERE job_id=?',(job['id'],))==before
+    assert all(Path(f['path']).exists() for f in files)

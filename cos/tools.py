@@ -80,6 +80,12 @@ def workspace(job_id):
     p.mkdir(parents=True,exist_ok=True)
     return p
 
+
+def is_recovery_file(job_id,path):
+    """Classify existing archives by their reserved directory, not filename."""
+    root=DATA/'jobs'/job_id/'workspace'/'context'
+    return Path(path).resolve().is_relative_to(root.resolve())
+
 def safe_name(name):
     return re.sub(r'[^a-zA-Z0-9._ -]','_',name)[:100].strip(' .') or 'artifact'
 
