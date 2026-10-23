@@ -88,6 +88,8 @@ Docker tasks run without network access, with resource limits and only their job
 
 ## Use the tool
 
+Communication triage evaluates your personal obligations before proposing replies or work. FYIs, updates, optional suggestions and tasks assigned to others finish with a useful summary and no follow-up. Completed informational summaries offer optional source-specific mark-as-read controls through exact-action approval (Teams marks the entire chat). Approving or rejecting that read action leaves the summary completed without another planning pass.
+
 1. Enter a request in **Overview**, optionally attach files, and select a registered project or let the app route it.
 2. Follow progress in **Job tracker**. The initial organizations are Communications, Technology, Engineering, Strategy, and Self-Improvement. Directors can delegate work and resume with child results.
 3. Answer questions and inspect proposed actions in **Needs attention**. Review recipients, bodies, arguments, and diffs before approving. Rejection or new direction lets the agent revise its work.
