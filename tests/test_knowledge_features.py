@@ -145,11 +145,12 @@ def test_delegation_preserves_same_named_files(tmp_path,monkeypatch):
     from cos.tools import file_record
     store=Store(tmp_path/'test.db'); monkeypatch.setattr(tools,'DATA',tmp_path)
     parent=store.create_job('Research','Strategy')
+    selected=[]
     for folder,content in [('first','one'),('second','two')]:
-        path=tmp_path/folder/'same.txt'; path.parent.mkdir(); path.write_text(content)
-        file_record(store,parent['id'],path)
+        path=tools.workspace(parent['id'])/folder/'same.txt'; path.parent.mkdir(); path.write_text(content)
+        selected.append(file_record(store,parent['id'],path)['file_id'])
     engine=Engine(store)
-    engine.delegate(parent,{'tasks':[{'org':'Technology','request':'Read all files'}]})
+    engine.delegate(parent,{'tasks':[{'org':'Technology','request':'Read these two source files','file_ids':selected}]})
     child=store.one('SELECT id FROM jobs WHERE parent_id=?',(parent['id'],))
     files=store.rows('SELECT path FROM files WHERE job_id=?',(child['id'],))
     assert {Path(f['path']).read_text() for f in files}=={'one','two'}
