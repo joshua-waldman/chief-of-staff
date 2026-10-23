@@ -28,7 +28,7 @@ test('conversation shows newest messages first without changing stored order and
  assert.ok(html.indexOf('Newest message')<html.indexOf('Older message'));
  assert.ok(html.indexOf('Older message')<html.indexOf('Undated message'));
  assert.equal(messages[0].body,'Older message');
- assert.match(html,/<details id="source-conversation" open><summary/);
+ assert.match(html,/<details id="source-conversation"><summary/);
  assert.match(html,/Collapse conversation/);
  assert.ok(html.indexOf('Collapse conversation')<html.indexOf('Newest message'));
  assert.equal((html.match(/data-collapse-source/g)||[]).length,2);
