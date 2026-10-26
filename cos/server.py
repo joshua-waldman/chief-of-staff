@@ -96,7 +96,19 @@ def status():
     monitor_attention=bool(config['monitor_enabled'] and (monitoring.get('attention_required') or monitoring.get('state')=='needs_attention'))
     from .commitments import Commitments
     commitment_count=Commitments(store).attention_count()
-    return {'commitments_attention':commitment_count,'gateway_configured':bool(gateway_key()),'jobs':len([j for j in jobs if not j['parent_id']]),'running':sum(j['status']=='running' for j in jobs),'needs_attention':commitment_count+sum(j['status'] in {'waiting_input','awaiting_approval','blocked','failed'} for j in jobs)+int(monitor_attention)+int(any(j['status']=='capacity_paused' for j in jobs)),'monitor_attention':monitor_attention,'completed':sum(j['status']=='completed' for j in jobs),'monitor':monitoring,'settings':config,'queue_active':active,'organizations':store.rows('SELECT * FROM organizations ORDER BY created')}
+    return {'ready_for_review':store.one("SELECT COUNT(*) AS n FROM result_reviews r JOIN jobs j ON j.id=r.job_id WHERE r.reviewed IS NULL AND j.status='completed' AND j.parent_id IS NULL")['n'],'commitments_attention':commitment_count,'gateway_configured':bool(gateway_key()),'jobs':len([j for j in jobs if not j['parent_id']]),'running':sum(j['status']=='running' for j in jobs),'needs_attention':commitment_count+sum(j['status'] in {'waiting_input','awaiting_approval','blocked','failed'} for j in jobs)+int(monitor_attention)+int(any(j['status']=='capacity_paused' for j in jobs)),'monitor_attention':monitor_attention,'completed':sum(j['status']=='completed' for j in jobs),'monitor':monitoring,'settings':config,'queue_active':active,'organizations':store.rows('SELECT * FROM organizations ORDER BY created')}
+
+@app.get('/api/results')
+def pending_results():
+    rows=store.pending_results()
+    from .job_names import add_display_names
+    add_display_names(store,rows)
+    return rows
+
+@app.post('/api/jobs/{id}/result-review')
+async def result_review(id,request:Request):
+    body=await request.json()
+    return store.review_result(id,body.get('revision'))
 
 @app.get('/api/commitments')
 def commitment_list(q:str='',status:str='active',owner:str='',scope:str='',offset:int=0,limit:int=25):

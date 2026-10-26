@@ -80,7 +80,7 @@ function jobRefreshContext(){
   $:s=>({'#job-dialog':dialog,'#detail':detail,'#refresh-job':refreshButton}[s]||null),
   api:()=>new Promise(resolve=>resolveRequest=resolve),
   captureView:root=>({y:root.scrollTop}),restoreView:(root,saved)=>root.scrollTop=saved.y,
-  esc:x=>String(x??''),badge:()=>'',date:()=>'',readable:()=>'',reviewView:()=>'',btn:()=>'',bindReview:()=>{}};
+  esc:x=>String(x??''),badge:()=>'',date:()=>'',readable:()=>'',reviewView:()=>'',returnedResultView:()=>'',btn:()=>'',bindReview:()=>{}};
  vm.createContext(ctx);
  vm.runInContext(source.slice(source.indexOf('function capacityView('),source.indexOf('async function navigate(')),ctx);
  return {ctx,dialog,detail,writes:()=>writes,respond:(title='Title',extra={})=>resolveRequest({id:'job',title,display_name:title,org:'Engineering',status:'completed',approvals:[],files:[],children:[],events:[],...extra})};
@@ -89,7 +89,7 @@ function jobRefreshContext(){
 test('unchanged main content keeps its DOM and scroll while header status updates',()=>{
  let writes=0;
  const main={dataset:{view:'acceptance'},scrollTop:0,set innerHTML(value){writes++;this.scrollTop=0}};
- const pill={},ctx={view:'acceptance',tests:[],names:{acceptance:'Acceptance tests'},
+ const pill={},ctx={returnedResults:[],view:'acceptance',tests:[],names:{acceptance:'Acceptance tests'},
   state:{settings:{},monitor:{state:'paused'}},document:{querySelectorAll:()=>[]},
   $:s=>s==='#main'?main:s==='#search'?null:pill,
   renderQueueControl:()=>{},intro:()=>'',bind:()=>{},
@@ -136,14 +136,14 @@ test('monitor failure is visible, escaped, and clears on recovery',()=>{
  assert.match(html,/Email/);
  alertContext.state.monitor_attention=false;
  assert.equal(alertContext.monitoringAlert(),'');
- assert.match(source,/view==='attention'\?monitoringAlert\(\)/);
+ assert.match(source,/view==='attention'\?resultsNotice\(\)\+monitoringAlert\(\)/);
 });
 
 
 test('resolved job questions disappear from current status while error history remains',async()=>{
  const nodes={'#detail':{innerHTML:''},'#job-dialog':{open:false,showModal(){this.open=true}},'#refresh-job':{}};
  const job={id:'research',org:'Technology',title:'Research',status:'running',project:'',created:'now',request:'Research',brief:{status_summary:'Continuing'},question:'Old access error',approvals:[],files:[],children:[],events:[{id:1,kind:'tool_error',body:'Old access error',created:'then'}]};
- const ctx={selected:null,api:async()=>job,$:s=>nodes[s]||null,esc:x=>String(x??''),badge:x=>x,date:x=>x,readable:()=>'',btn:()=>'',reviewView:()=>'',bindReview:()=>{},document:{querySelectorAll:()=>[]}};
+ const ctx={selected:null,api:async()=>job,$:s=>nodes[s]||null,esc:x=>String(x??''),badge:x=>x,date:x=>x,readable:()=>'',btn:()=>'',reviewView:()=>'',returnedResultView:()=>'',bindReview:()=>{},document:{querySelectorAll:()=>[]}};
  vm.createContext(ctx);
  const start=source.indexOf('async function openJob(');
  const end=source.indexOf('\n}',start)+2;
