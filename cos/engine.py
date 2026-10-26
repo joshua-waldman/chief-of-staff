@@ -225,7 +225,8 @@ class Engine:
 
     def dispatch_jobs(self):
         # Called under self.lock. Keep one slot available for Communications
-        # even when its queue is empty; other organizations share the rest.
+        # even when its queue is empty. Communications may also use spare slots
+        # after ready work from other organizations has been admitted.
         total=settings()['parallel_agents']
         available=max(0,total-len(self.active))
         if not available:
@@ -239,13 +240,13 @@ class Engine:
             job=self.store.job(id)
             communications+=bool(job and job['org']=='Communications')
         general=len(self.active)-communications
-        budgets={True:max(0,1-communications),False:max(0,total-1-general)}
-        selected=[]
-        for job in ready:
-            lane=job['org']=='Communications'
-            if budgets[lane] and len(selected)<available:
-                selected.append(job)
-                budgets[lane]-=1
+        messages=[job for job in ready if job['org']=='Communications']
+        other=[job for job in ready if job['org']!='Communications']
+        reserved=min(available,max(0,1-communications))
+        selected=messages[:reserved]
+        general_budget=min(available-len(selected),max(0,total-1-general))
+        selected.extend(other[:general_budget])
+        selected.extend(messages[reserved:reserved+available-len(selected)])
         return selected
 
     def loop(self):

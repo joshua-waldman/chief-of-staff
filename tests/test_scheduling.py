@@ -85,6 +85,48 @@ def test_scheduler_keeps_general_work_moving_with_a_message_backlog(env,monkeypa
         engine.stop()
 
 
+@pytest.mark.parametrize('general_count',[0,1,2,3])
+def test_communications_uses_all_spare_slots(env,monkeypatch,general_count):
+    monkeypatch.setitem(config.DEFAULTS,'parallel_agents',4)
+    engine=Engine(env,Scripted())
+    for _ in range(6):
+        env.create_job('Triage this incoming email','Communications')
+    for _ in range(general_count):
+        env.create_job('Research','Technology')
+    try:
+        selected=engine.dispatch_jobs()
+        assert len(selected)==4
+        assert sum(job['org']=='Communications' for job in selected)==4-general_count
+        assert sum(job['org']=='Technology' for job in selected)==general_count
+        assert len({job['id'] for job in selected})==4
+        engine.active.update(job['id'] for job in selected)
+        assert engine.dispatch_jobs()==[]
+    finally:
+        engine.stop()
+
+
+def test_borrowed_communications_slots_return_to_ready_general_work(env,monkeypatch):
+    monkeypatch.setitem(config.DEFAULTS,'parallel_agents',4)
+    engine=Engine(env,Scripted())
+    for _ in range(6):
+        env.create_job('Triage this incoming Teams message','Communications')
+    try:
+        selected=engine.dispatch_jobs()
+        engine.active.update(job['id'] for job in selected)
+        research=env.create_job('New research','Technology')
+        assert engine.dispatch_jobs()==[]
+        finished=selected[0]
+        engine.active.remove(finished['id'])
+        env.update(finished['id'],status='completed')
+        assert [job['id'] for job in engine.dispatch_jobs()]==[research['id']]
+        engine.active.add(research['id'])
+        env.update(research['id'],status='completed')
+        engine.active.remove(research['id'])
+        assert engine.dispatch_jobs()[0]['org']=='Communications'
+    finally:
+        engine.stop()
+
+
 def test_scheduler_skips_unsettled_messages_without_using_their_slot(env,monkeypatch,clock):
     monkeypatch.setitem(config.DEFAULTS,'parallel_agents',4)
     engine=Engine(env,Scripted())
@@ -130,7 +172,7 @@ def test_routing_communications_returns_to_its_reserved_slot(env,monkeypatch):
         engine.run(job['id'])
         assert env.job(job['id'])['status']=='queued'
         assert env.job(job['id'])['org']=='Communications'
-        assert engine.dispatch_jobs()==[]
+        assert [row['id'] for row in engine.dispatch_jobs()]==[job['id']]
         engine.active.remove(existing['id'])
         assert [row['id'] for row in engine.dispatch_jobs()]==[job['id']]
     finally:
