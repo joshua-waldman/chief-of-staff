@@ -22,9 +22,10 @@ def hydrate_reads(store,job_id,state):
         args=json.loads(row['args'])
         result=json.loads(row['result'])
         if not bookkeeping_read(args.get('path','')) and isinstance(result,dict) and result.get('sha256') and isinstance(result.get('text'),str):
-            saved={k:state[k] for k in ('stalled_steps','reads_since_brief','last_progress_action','progress_warning') if k in state}
+            preserved=('stalled_steps','reads_since_brief','last_progress_action','progress_warning','stall_recovery')
+            saved=json.loads(json.dumps({k:state[k] for k in preserved if k in state}))
             observe(state,'read_file',args,result)
-            for key in ('stalled_steps','reads_since_brief','last_progress_action','progress_warning'):
+            for key in preserved:
                 state.pop(key,None)
             state.update(saved)
         state['file_read_cursor']=row['cursor']
@@ -33,8 +34,51 @@ LEGACY_STEP_QUESTION='The agent reached its step budget. Review its progress and
 
 
 def reset(state):
-    for key in ('progress_seen','stalled_steps','progress_warning','last_progress_action','decision_fingerprint','reads_since_brief'):
+    for key in ('progress_seen','stalled_steps','progress_warning','last_progress_action','decision_fingerprint','reads_since_brief','stall_recovery'):
         state.pop(key,None)
+
+
+def saved_findings(store,job_id):
+    """Carry bounded source notes through compaction instead of rereading archives.
+
+    These are previous observations, not instructions or execution authority.
+    Read the successful brief arguments, since the current brief overwrites them.
+    """
+    rows=store.rows("SELECT args FROM approvals WHERE job_id=? AND tool='update_brief' AND status='executed' ORDER BY rowid DESC LIMIT 8",(job_id,))
+    notes=[]
+    for row in reversed(rows):
+        args=json.loads(row['args'])
+        note={key:args[key][:size] for key,size in (('context',1200),('status_summary',600),('next_step',200)) if isinstance(args.get(key),str)}
+        if note and note not in notes:
+            notes.append(note)
+        while len(json.dumps(notes))>12000:
+            notes.pop(0)
+    return notes
+
+
+def recovery_step(state,limit):
+    """One persisted replan per source/owner revision, with at most six actions."""
+    attempt=state.get('stall_recovery')
+    if attempt and attempt['active']:
+        if attempt['remaining']<=0:
+            return 'exhausted'
+        return 'recovering'
+    if state.get('stalled_steps',0)<limit:
+        return 'continue'
+    if attempt:
+        return 'exhausted'
+    state['stall_recovery']={'active':True,'remaining':6}
+    return 'started'
+
+
+def recovery_instruction():
+    return ('Automatic progress recovery: stop the reading loop and replan from the owner request, '
+        'saved source findings, latest brief and read coverage. There are at most six recovery actions. '
+        'Synthesize and write the requested deliverable, then finish only if the task is actually complete. '
+        'Do not restart completed sources or reconstruct the job from recovery archives. '
+        'If a precise fact is missing, verify only that source range. If access genuinely fails, '
+        'ask a specific question identifying the missing evidence and failure. '
+        'Never fabricate evidence, completion or approvals; all existing action gates still apply.')
 
 
 def stable(value):
@@ -96,6 +140,8 @@ def observe(state,action,args,result,*,error=False):
     state['stalled_steps']=0 if fresh else state.get('stalled_steps',0)+1
     if fresh:
         state.pop('progress_warning',None)
+        if action!='update_brief' and state.get('stall_recovery',{}).get('active'):
+            state['stall_recovery']['active']=False
 
 
 def read_guidance(state):
