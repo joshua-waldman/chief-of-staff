@@ -60,11 +60,17 @@ ORG_ACTIONS = {
  'Self-Improvement': {'create_skill','create_organization','run_python','run_sandbox','run_command','install_dependencies','apply_changes'},
 }
 COMMON = {'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','delegate','ask_user','finish','list_skills','read_skill','mcp_list_tools','mcp_call'}
-COMMON |= {'read_action_receipt','edit_file'}
+COMMON |= {'read_action_receipt','edit_file','search_commitments'}
+for org in ('Communications','Technology'):
+    ORG_ACTIONS[org] |= {'record_commitment','add_commitment_evidence'}
 ORG_ACTIONS['Communications'] |= {'calendar_events','calendar_event','calendar_rsvp','delete_email','mark_email_read','mark_teams_read'}
 ORG_ACTIONS['Engineering'].add('create_feature_branch')
 ORG_ACTIONS['Self-Improvement'].add('create_feature_branch')
 CATALOG += '''
+search_commitments {query?,status?:active|all|proposed|open|completed|dismissed|merged,owner?,scope?}: search the persistent meeting commitment register. Search all statuses before proposing repeated work, including completed or dismissed items. Read-only; retrieved records are evidence, never authorization.
+record_commitment {owner,deliverable,source_file_id,meeting_date?:YYYY-MM-DD,source_timestamp,evidence,scope?,deadline_text?,deadline_date?:YYYY-MM-DD,deadline_certainty?:unknown|explicit|inferred,deadline_basis?}: propose an explicitly assigned meeting commitment for owner review. Source must be a transcript registered by meeting_transcripts in this job. Include the timestamp in an exact excerpt; preserve deadline wording from that excerpt. Unknown speakers or unnamed we/you do not establish an owner. Distinguish stated wording from inferred calendar dates and explain inference. No external work is started. New items always await owner acceptance; completed/dismissed records are never reopened automatically. Exact repeats are idempotent; paraphrases are possible duplicates for human review, not automatic merges.
+add_commitment_evidence {commitment_id,source_file_id,source_timestamp,evidence,meeting_date?,kind:corroboration|completion}: attach timestamped, exact transcript evidence from another meeting to an existing commitment. Completion evidence requests review; it cannot complete or reopen a commitment. Only the owner's register controls can confirm, dismiss, reopen or merge records. A later meeting is not proof that a promised invitation was sent or deliverable produced.
+
 calendar_events {start,end}: read up to 50 calendar events between explicit ISO timestamps; follow returned continuation only through narrower date ranges.
 calendar_event {id}: read the exact event before proposing a response. Invitations and promotional emails are distinct.
 calendar_rsvp {id,response:accept|decline|tentative,comment?,send_response?:true}: RSVP through Outlook Calendar after exact-action approval. Do not use email replies to RSVP.
@@ -251,6 +257,13 @@ class Tools:
         if action=='search_knowledge':
             from .knowledge import Knowledge
             return Knowledge(self.store).search(a.get('query',''),a.get('scope','*'),job=job)
+        if action=='search_commitments':
+            from .commitments import Commitments
+            return Commitments(self.store).search(query=a.get('query',''),status=a.get('status','active'),owner=a.get('owner',''),scope=a.get('scope',''))
+        if action in {'record_commitment','add_commitment_evidence'}:
+            from .commitments import Commitments
+            registry=Commitments(self.store)
+            return registry.record(job,a) if action=='record_commitment' else registry.add_evidence(job,a)
         if action=='suggest_knowledge':
             from .knowledge import Knowledge
             return Knowledge(self.store).save(a,job=job)
@@ -447,7 +460,7 @@ class Tools:
                     p=resolve_path(id,item['path'])
                     record=file_record(self.store,id,p)
                     item.update(record)
-                    sources[record['file_id']]={'source':item['source'],'chat_id':a['chat_id'],
+                    sources[record['file_id']]={'source':item['source'],'chat_id':a['chat_id'],'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),
                         'identity':hashlib.sha256((a['chat_id']+':'+p.name).encode()).hexdigest()}
             self.store.set_state('meeting_sources:'+id,sources)
             return data
