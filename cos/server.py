@@ -94,7 +94,24 @@ def status():
         active=len(engine.active)
     monitoring=store.state('monitor_status',{'state':'paused'})
     monitor_attention=bool(config['monitor_enabled'] and (monitoring.get('attention_required') or monitoring.get('state')=='needs_attention'))
-    return {'gateway_configured':bool(gateway_key()),'jobs':len([j for j in jobs if not j['parent_id']]),'running':sum(j['status']=='running' for j in jobs),'needs_attention':sum(j['status'] in {'waiting_input','awaiting_approval','blocked','failed'} for j in jobs)+int(monitor_attention)+int(any(j['status']=='capacity_paused' for j in jobs)),'monitor_attention':monitor_attention,'completed':sum(j['status']=='completed' for j in jobs),'monitor':monitoring,'settings':config,'queue_active':active,'organizations':store.rows('SELECT * FROM organizations ORDER BY created')}
+    from .commitments import Commitments
+    commitment_count=Commitments(store).attention_count()
+    return {'commitments_attention':commitment_count,'gateway_configured':bool(gateway_key()),'jobs':len([j for j in jobs if not j['parent_id']]),'running':sum(j['status']=='running' for j in jobs),'needs_attention':commitment_count+sum(j['status'] in {'waiting_input','awaiting_approval','blocked','failed'} for j in jobs)+int(monitor_attention)+int(any(j['status']=='capacity_paused' for j in jobs)),'monitor_attention':monitor_attention,'completed':sum(j['status']=='completed' for j in jobs),'monitor':monitoring,'settings':config,'queue_active':active,'organizations':store.rows('SELECT * FROM organizations ORDER BY created')}
+
+@app.get('/api/commitments')
+def commitment_list(q:str='',status:str='active',owner:str='',scope:str='',offset:int=0,limit:int=25):
+    from .commitments import Commitments
+    return Commitments(store).search(q,status,owner,scope,offset,limit)
+
+@app.get('/api/commitments/{id}')
+def commitment_detail(id):
+    from .commitments import Commitments
+    return Commitments(store).detail(id)
+
+@app.post('/api/commitments/{id}')
+async def commitment_review(id,request:Request):
+    from .commitments import Commitments
+    return Commitments(store).review(id,await request.json())
 
 @app.get('/api/jobs')
 def jobs():
