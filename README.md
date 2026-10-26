@@ -268,6 +268,38 @@ Restart the server after updating source to load these capabilities and the addi
 conversation-binding table. Refresh the browser afterward. Installing this version
 does not accept KB suggestions, change personal workflow settings, or execute actions.
 
+## Meeting commitment register
+
+The **Commitments** view keeps source-linked meeting actions independently of job
+completion. Agents use `search_commitments` before `record_commitment`, or attach
+corroborating/completion evidence to an existing record with `add_commitment_evidence`.
+Each proposal must cite an exact excerpt and timestamp from a transcript registered
+to the source job. The transcript hash is checked before evidence is accepted; older
+cached transcripts without integrity metadata must be collected again. Owner, deliverable, scope, meeting date, deadline wording, normalized
+date and certainty are stored separately. Inferred deadlines require an explanation;
+unknown deadlines cannot acquire a calendar date. Unknown speakers and indirect
+suggestions must not be treated as assignments.
+
+New records are **proposed**, requiring owner acceptance before becoming **open**.
+You can correct fields, confirm completion using cited evidence or a personal
+verification note, dismiss with a reason, and reopen with a reason. Source evidence
+can request completion review but cannot close or reopen an item automatically.
+Active proposals and accepted commitments contribute to Needs attention, even if
+their original meeting job finishes. Search and status filters retain closed history.
+
+Exact source/deliverable repeats are idempotent. Related records for the same owner
+and scope appear as possible duplicates. Compare both records before merging;
+merging retains the target's fields, combines source evidence, preserves the original
+record as a redirect and writes an audit entry. Neither repeated extraction nor new
+evidence resurrects a dismissed or completed item. Concurrent review uses versions
+and rejects stale changes instead of overwriting them.
+
+The additive database tables are created on server restart. Existing summaries and
+planning files are retained; no bulk conversion or historical assignment is inferred
+on startup. To populate older meetings, ask COS to reread their registered transcripts
+and propose commitments for review. The register is local memory: accepting a record
+does not send messages, schedule meetings, create tickets or approve delegated work.
+
 ## Source map
 
 - `cos/server.py`: local API, sessions, attachments, and connections.
