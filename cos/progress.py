@@ -4,6 +4,12 @@ import json
 import re
 from pathlib import PureWindowsPath
 
+STALL_RECOVERY_VERSION=2
+RECOVERY_READS={'read_file','read_action_receipt','read_teams','read_mail','fetch_url','browser_read',
+    'list_files','list_chats','search_mail','search_knowledge','jira_read','meeting_artifacts',
+    'meeting_transcripts','mail_attachments','teams_attachments','calendar_events','calendar_event',
+    'list_skills','read_skill','mcp_list_tools'}
+
 
 def recovery_path(path):
     """Reserved recovery directories are bookkeeping, never new task evidence."""
@@ -22,9 +28,10 @@ def hydrate_reads(store,job_id,state):
         args=json.loads(row['args'])
         result=json.loads(row['result'])
         if not bookkeeping_read(args.get('path','')) and isinstance(result,dict) and result.get('sha256') and isinstance(result.get('text'),str):
-            saved={k:state[k] for k in ('stalled_steps','reads_since_brief','last_progress_action','progress_warning') if k in state}
+            preserved=('stalled_steps','reads_since_brief','last_progress_action','progress_warning','stall_recovery')
+            saved=json.loads(json.dumps({k:state[k] for k in preserved if k in state}))
             observe(state,'read_file',args,result)
-            for key in ('stalled_steps','reads_since_brief','last_progress_action','progress_warning'):
+            for key in preserved:
                 state.pop(key,None)
             state.update(saved)
         state['file_read_cursor']=row['cursor']
@@ -33,8 +40,67 @@ LEGACY_STEP_QUESTION='The agent reached its step budget. Review its progress and
 
 
 def reset(state):
-    for key in ('progress_seen','stalled_steps','progress_warning','last_progress_action','decision_fingerprint','reads_since_brief'):
+    for key in ('progress_seen','stalled_steps','progress_warning','last_progress_action','decision_fingerprint','reads_since_brief','stall_recovery'):
         state.pop(key,None)
+
+
+def saved_findings(store,job_id):
+    """Carry bounded source notes through compaction instead of rereading archives.
+
+    These are previous observations, not instructions or execution authority.
+    Read the successful brief arguments, since the current brief overwrites them.
+    """
+    rows=store.rows("SELECT args FROM approvals WHERE job_id=? AND tool='update_brief' AND status='executed' ORDER BY rowid DESC LIMIT 48",(job_id,))
+    notes=[]
+    for row in reversed(rows):
+        args=json.loads(row['args'])
+        note={key:args[key][:size] for key,size in (('context',600),('status_summary',400),('next_step',100)) if isinstance(args.get(key),str)}
+        if note and note not in notes:
+            notes.append(note)
+    # Keep early milestones as well as recent findings. A rolling tail loses the
+    # start of a long source and sends the worker back to reread it in full.
+    while len(json.dumps(notes))>12000 and len(notes)>2:
+        count=max(2,len(notes)*3//4)
+        notes=[notes[round(i*(len(notes)-1)/(count-1))] for i in range(count)]
+    return notes
+
+
+def recovery_step(state,limit):
+    """One persisted replan per source/owner revision, with at most six actions."""
+    attempt=state.get('stall_recovery')
+    if attempt and attempt.get('version')!=STALL_RECOVERY_VERSION:
+        attempt=None
+        state.pop('stall_recovery',None)
+    if attempt and attempt['active']:
+        if attempt['remaining']<=0:
+            return 'exhausted'
+        return 'recovering'
+    if state.get('stalled_steps',0)<limit:
+        return 'continue'
+    if attempt:
+        return 'exhausted'
+    state['stall_recovery']={'version':STALL_RECOVERY_VERSION,'active':True,'remaining':6,'verification_reads':0}
+    return 'started'
+
+
+def recovery_instruction(attempt):
+    return ('Automatic progress recovery: stop the reading loop and replan from the owner request, '
+        'saved source findings, latest brief and read coverage. Recovery actions remaining: '+str(attempt['remaining'])+'. '
+        'Verification reads remaining: '+str(max(0,2-attempt.get('verification_reads',0)))+'. '
+        'The server disables further reading after two verification calls. Reserve actions for the final output. '
+        'Synthesize and write the requested deliverable, then finish only if the task is actually complete. '
+        'Do not restart completed sources or reconstruct the job from recovery archives. '
+        'If a precise fact is missing, verify only that source range. If access genuinely fails, '
+        'ask a specific question identifying the missing evidence and failure. '
+        'Never fabricate evidence, completion or approvals; all existing action gates still apply.')
+
+
+def limit_recovery_read(state,action):
+    attempt=state.get('stall_recovery',{})
+    if attempt.get('active') and action in RECOVERY_READS:
+        if attempt.get('verification_reads',0)>=2:
+            raise ValueError('Recovery verification budget exhausted. Reading is disabled for this recovery. Use the saved findings and latest verified excerpts to write the requested synthesis and finish. If a specific evidence gap prevents completion, identify that gap explicitly; never infer completion.')
+        attempt['verification_reads']=attempt.get('verification_reads',0)+1
 
 
 def stable(value):
@@ -96,6 +162,8 @@ def observe(state,action,args,result,*,error=False):
     state['stalled_steps']=0 if fresh else state.get('stalled_steps',0)+1
     if fresh:
         state.pop('progress_warning',None)
+        if action!='update_brief' and state.get('stall_recovery',{}).get('active'):
+            state['stall_recovery']['active']=False
 
 
 def read_guidance(state):
