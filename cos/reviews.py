@@ -29,8 +29,10 @@ def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None
     with store.lock,store.connect() as c:
         c.execute('BEGIN IMMEDIATE')
         row=c.execute('SELECT * FROM jobs WHERE id=?',(id,)).fetchone()
-        if not row or row['org']!='Communications':
-            raise ValueError('Choose a Communications job.')
+        if not row or (row['org']!='Communications' and not c.execute('SELECT 1 FROM result_reviews WHERE job_id=?',(id,)).fetchone()):
+            raise ValueError('Choose a Communications job or a job with a returned result.')
+        if row['org']!='Communications' and (remember or draft is not None):
+            raise ValueError('Saved communication guidance and email drafts require a Communications job.')
         target=None
         if remember and remember_target=='conversation':
             threads=c.execute('SELECT source,thread_id FROM communication_threads WHERE job_id=?',(id,)).fetchall()

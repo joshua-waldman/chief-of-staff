@@ -27,6 +27,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS review_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,role TEXT,body TEXT,created TEXT);
             CREATE INDEX IF NOT EXISTS review_job ON review_messages(job_id,id);
             CREATE TABLE IF NOT EXISTS job_briefs(job_id TEXT PRIMARY KEY,body TEXT,updated TEXT);
+            CREATE TABLE IF NOT EXISTS result_reviews(job_id TEXT PRIMARY KEY,revision TEXT NOT NULL,summary TEXT NOT NULL,file_ids TEXT NOT NULL,completed TEXT NOT NULL,reviewed TEXT);
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,parent_id TEXT,title TEXT,request TEXT,org TEXT,project TEXT,status TEXT,created TEXT,updated TEXT,result TEXT DEFAULT '',question TEXT DEFAULT '',messages TEXT DEFAULT '[]',step INTEGER DEFAULT 0);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,kind TEXT,body TEXT,created TEXT);
             CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY,job_id TEXT,tool TEXT,args TEXT,risk TEXT,reason TEXT,status TEXT,created TEXT,result TEXT DEFAULT '');
@@ -45,6 +46,19 @@ class Store:
             orgs = [('Communications','Chief Communications Officer','Monitor and triage communications, propose action delegation for approval, and draft grounded responses.'),('Technology','Chief Technology Officer','Research with traceable evidence.'),('Self-Improvement','Director of Self-Improvement','Improve this application and create skills and organizations.'),('Engineering','Director of Engineering','Implement and validate project changes.'),('Strategy','Chief Strategy Officer','Develop scope, plans, priorities, and acceptance criteria.')]
             c.executemany('INSERT OR IGNORE INTO organizations VALUES(?,?,?,?)', [(*o, now()) for o in orgs])
             c.execute("UPDATE organizations SET purpose=? WHERE name='Communications' AND purpose=?",(orgs[0][2],'Monitor, triage, and draft grounded responses.'))
+
+            # Recover earlier explicit LLM returns once; intake closures have no
+            # deliverable selection and delegated work belongs to its parent.
+            old_results=c.execute('''SELECT j.* FROM jobs j LEFT JOIN result_reviews r ON r.job_id=j.id
+                WHERE j.status='completed' AND j.parent_id IS NULL AND r.job_id IS NULL''').fetchall()
+            for job in old_results:
+                try:
+                    state=json.loads(job['messages'])
+                except (ValueError,TypeError):
+                    continue
+                if isinstance(state,dict) and 'deliverable_file_ids' in state:
+                    c.execute('INSERT OR IGNORE INTO result_reviews VALUES(?,?,?,?,?,NULL)',
+                        (job['id'],uid(),job['result'],json.dumps(state['deliverable_file_ids']),job['updated']))
 
     def connect(self):
         c = sqlite3.connect(self.path, timeout=30)
@@ -102,6 +116,7 @@ class Store:
         from .briefs import detail_brief
         j['brief']=detail_brief(self,j)
         j['review_messages']=self.rows('SELECT * FROM review_messages WHERE job_id=? ORDER BY id',(id,))
+        j['result_review']=self.result_review(id) if j['status']=='completed' else None
         j['source_messages']=self.rows('SELECT * FROM communication_sources WHERE job_id=? ORDER BY received,message_id',(id,))
         from .capacity import Capacity
         raw=json.loads(j['messages'])
@@ -110,6 +125,46 @@ class Store:
             j['capacity']={**saved,**Capacity(self).get(saved['model'])}
         j.pop('messages',None)
         return j
+
+    def complete_result(self,id,state,summary,step):
+        """Commit the returned work and its owner review notification together."""
+        stamp=now()
+        with self.lock,self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            job=c.execute('SELECT parent_id,status FROM jobs WHERE id=?',(id,)).fetchone()
+            if not job or job['status']=='cancelled':
+                return
+            c.execute("UPDATE jobs SET status='completed',result=?,question='',messages=?,step=?,updated=? WHERE id=?",
+                (summary,json.dumps({**state,'messages':[m for m in state.get('messages',[]) if not m.get('_cos_memory')]}),step,stamp,id))
+            if not job['parent_id']:
+                c.execute('INSERT OR REPLACE INTO result_reviews VALUES(?,?,?,?,?,NULL)',
+                    (id,uid(),summary,json.dumps(state.get('deliverable_file_ids',[])),stamp))
+
+    def result_review(self,id):
+        row=self.one('SELECT * FROM result_reviews WHERE job_id=?',(id,))
+        if row:
+            row['file_ids']=json.loads(row['file_ids'])
+        return row
+
+    def pending_results(self):
+        return self.rows('''SELECT j.id,j.title,j.org,j.project,r.revision,r.completed,
+            substr(r.summary,1,600) AS summary FROM result_reviews r JOIN jobs j ON j.id=r.job_id
+            WHERE r.reviewed IS NULL AND j.status='completed' AND j.parent_id IS NULL
+            ORDER BY r.completed DESC,j.id''')
+
+    def review_result(self,id,revision):
+        with self.lock,self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute('''SELECT r.*,j.status FROM result_reviews r JOIN jobs j ON j.id=r.job_id
+                WHERE r.job_id=?''',(id,)).fetchone()
+            if not row or row['status']!='completed' or row['revision']!=revision:
+                raise ValueError('This result has changed. Open the latest completed result before marking it reviewed.')
+            if not row['reviewed']:
+                stamp=now()
+                c.execute('UPDATE result_reviews SET reviewed=? WHERE job_id=?',(stamp,id))
+                c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
+                    (id,'result_reviewed','Owner marked the returned result reviewed.',stamp))
+        return {'ok':True}
 
     def state(self,key,default=None):
         row = self.one('SELECT value FROM state WHERE key=?',(key,))

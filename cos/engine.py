@@ -499,7 +499,7 @@ class Engine:
                                 return
                         recovery.complete(self.store,id,s)
                         recovery.clear_status(self.store,id,args['summary'][:2000],next_step='Review the result and any deliverables.')
-                        self.persist(id,s,status='completed',result=args['summary'],step=step+1)
+                        self.store.complete_result(id,s,args['summary'],step+1)
                         self.store.event(id,'completed',args['summary'])
                         review_reply(self.store,id,args['summary'])
                         self.knowledge.outcome(self.store.job(id))
