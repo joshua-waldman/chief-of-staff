@@ -483,6 +483,10 @@ class Engine:
                         review_reply(self.store,id,args['question'])
                         return
                     if action=='finish':
+                        from .result_reviews import KINDS
+                        if 'result_kind' in args and (not isinstance(args['result_kind'],str) or args['result_kind'] not in KINDS):
+                            raise ValueError('Choose result_kind: strategy, generated_content, triage, or action_receipt.')
+                        s['result_kind']=args.get('result_kind')
                         selected_files(self.store,id,args.get('file_ids',[]))
                         s['deliverable_file_ids']=args.get('file_ids',[])
                         if triage:

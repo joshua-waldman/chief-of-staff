@@ -47,18 +47,24 @@ class Store:
             c.executemany('INSERT OR IGNORE INTO organizations VALUES(?,?,?,?)', [(*o, now()) for o in orgs])
             c.execute("UPDATE organizations SET purpose=? WHERE name='Communications' AND purpose=?",(orgs[0][2],'Monitor, triage, and draft grounded responses.'))
 
-            # Recover earlier explicit LLM returns once; intake closures have no
-            # deliverable selection and delegated work belongs to its parent.
-            old_results=c.execute('''SELECT j.* FROM jobs j LEFT JOIN result_reviews r ON r.job_id=j.id
-                WHERE j.status='completed' AND j.parent_id IS NULL AND r.job_id IS NULL''').fetchall()
+            if 'eligible' not in {row['name'] for row in c.execute('PRAGMA table_info(result_reviews)')}:
+                c.execute('ALTER TABLE result_reviews ADD COLUMN eligible INTEGER NOT NULL DEFAULT 1')
+            from .result_reviews import eligible
+            # Reconcile the old broad inbox without marking anything owner-reviewed.
+            old_results=c.execute('''SELECT j.*,r.job_id AS review_job_id FROM jobs j LEFT JOIN result_reviews r ON r.job_id=j.id
+                WHERE j.status='completed' AND j.parent_id IS NULL AND r.reviewed IS NULL''').fetchall()
             for job in old_results:
                 try:
                     state=json.loads(job['messages'])
                 except (ValueError,TypeError):
                     continue
                 if isinstance(state,dict) and 'deliverable_file_ids' in state:
-                    c.execute('INSERT OR IGNORE INTO result_reviews VALUES(?,?,?,?,?,NULL)',
-                        (job['id'],uid(),job['result'],json.dumps(state['deliverable_file_ids']),job['updated']))
+                    reviewable=eligible(c,job,state)
+                    if job['review_job_id']:
+                        c.execute('UPDATE result_reviews SET eligible=? WHERE job_id=?',(int(reviewable),job['id']))
+                    elif reviewable:
+                        c.execute('INSERT OR IGNORE INTO result_reviews(job_id,revision,summary,file_ids,completed,reviewed) VALUES(?,?,?,?,?,NULL)',
+                            (job['id'],uid(),job['result'],json.dumps(state['deliverable_file_ids']),job['updated']))
 
     def connect(self):
         c = sqlite3.connect(self.path, timeout=30)
@@ -131,17 +137,18 @@ class Store:
         stamp=now()
         with self.lock,self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            job=c.execute('SELECT parent_id,status FROM jobs WHERE id=?',(id,)).fetchone()
+            job=c.execute('SELECT * FROM jobs WHERE id=?',(id,)).fetchone()
             if not job or job['status']=='cancelled':
                 return
             c.execute("UPDATE jobs SET status='completed',result=?,question='',messages=?,step=?,updated=? WHERE id=?",
                 (summary,json.dumps({**state,'messages':[m for m in state.get('messages',[]) if not m.get('_cos_memory')]}),step,stamp,id))
             if not job['parent_id']:
-                c.execute('INSERT OR REPLACE INTO result_reviews VALUES(?,?,?,?,?,NULL)',
-                    (id,uid(),summary,json.dumps(state.get('deliverable_file_ids',[])),stamp))
+                from .result_reviews import eligible
+                c.execute('INSERT OR REPLACE INTO result_reviews(job_id,revision,summary,file_ids,completed,reviewed,eligible) VALUES(?,?,?,?,?,NULL,?)',
+                    (id,uid(),summary,json.dumps(state.get('deliverable_file_ids',[])),stamp,int(eligible(c,job,state))))
 
     def result_review(self,id):
-        row=self.one('SELECT * FROM result_reviews WHERE job_id=?',(id,))
+        row=self.one('SELECT * FROM result_reviews WHERE job_id=? AND eligible=1',(id,))
         if row:
             row['file_ids']=json.loads(row['file_ids'])
         return row
@@ -149,7 +156,7 @@ class Store:
     def pending_results(self):
         return self.rows('''SELECT j.id,j.title,j.org,j.project,r.revision,r.completed,
             substr(r.summary,1,600) AS summary FROM result_reviews r JOIN jobs j ON j.id=r.job_id
-            WHERE r.reviewed IS NULL AND j.status='completed' AND j.parent_id IS NULL
+            WHERE r.eligible=1 AND r.reviewed IS NULL AND j.status='completed' AND j.parent_id IS NULL
             ORDER BY r.completed DESC,j.id''')
 
     def review_result(self,id,revision):
@@ -157,7 +164,7 @@ class Store:
             c.execute('BEGIN IMMEDIATE')
             row=c.execute('''SELECT r.*,j.status FROM result_reviews r JOIN jobs j ON j.id=r.job_id
                 WHERE r.job_id=?''',(id,)).fetchone()
-            if not row or row['status']!='completed' or row['revision']!=revision:
+            if not row or not row['eligible'] or row['status']!='completed' or row['revision']!=revision:
                 raise ValueError('This result has changed. Open the latest completed result before marking it reviewed.')
             if not row['reviewed']:
                 stamp=now()
