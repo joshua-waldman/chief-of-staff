@@ -169,3 +169,27 @@ def test_recovery_read_limit_is_enforced_even_if_provider_ignores_schema():
     with pytest.raises(ValueError,match='Reading is disabled'):
         progress.limit_recovery_read(state,'read_mail')
     progress.limit_recovery_read(state,'finish')
+
+
+def test_cached_primary_messages_are_available_without_reading_archives(env):
+    from cos import recovery
+    from pathlib import Path
+    job=stopped(env,'Communications')
+    env.write('INSERT INTO communication_sources VALUES(?,?,?,?,?,?,?,?)',
+        (job['id'],'teams','message-1','Speaker','','2026-10-22','Actual retained conversation text',1))
+    state={}
+    recovery.conversation_evidence(env,job,state)
+    record=state['conversation_evidence']
+    assert 'Actual retained conversation text' in Path(record['path']).read_text(encoding='utf-8')
+    assert not progress.bookkeeping_read(record['path'])
+    assert env.one('SELECT job_id FROM files WHERE id=?',(record['file_id'],))['job_id']==job['id']
+    recovery.conversation_evidence(env,job,state)
+    assert env.one('SELECT COUNT(*) count FROM files WHERE job_id=?',(job['id'],))['count']==1
+    env.write('UPDATE communication_sources SET body=? WHERE job_id=?',('Updated source evidence',job['id']))
+    recovery.conversation_evidence(env,job,state)
+    assert state['conversation_evidence']['digest']!=record['digest']
+    assert 'Updated source evidence' in Path(record['path']).read_text(encoding='utf-8')
+    empty=stopped(env,'Communications')
+    other={}
+    recovery.conversation_evidence(env,empty,other)
+    assert not other
