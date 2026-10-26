@@ -637,40 +637,51 @@ class Engine:
         for t in a['tasks']:
             child=self.store.create_job(t['request'],t['org'],t.get('project',job['project']),job['id'])
             for f in selected_files(self.store,job['id'],t.get('file_ids',[])):
-                src=Path(f['path'])
-                target=workspace(child['id'])/'inputs'/f['id']/src.name
-                target.parent.mkdir(parents=True,exist_ok=True)
-                shutil.copy2(src,target)
-                file_record(self.store,child['id'],target)
+                self.handoff_file(child['id'],f,'inputs')
             self.store.event(job['id'],'delegated',t['org']+': '+t['request'][:200])
+
+    def handoff_file(self,job_id,file,directory):
+        # Source file IDs are globally unique. Keep physical paths compact even
+        # when the app is installed in a long Windows user-profile directory.
+        target=workspace(job_id)/directory/(file['id']+Path(file['name']).suffix)
+        target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copy2(Path(file['path']),target)
+        return {**file_record(self.store,job_id,target,file['mime'],name=file['name']),'path':str(target)}
 
     def release_parents(self):
         for parent in self.store.rows("SELECT * FROM jobs WHERE status='waiting_children'"):
-            children=self.store.rows('SELECT * FROM jobs WHERE parent_id=?',(parent['id'],))
-            if any(c['status'] not in {'completed','failed','cancelled','blocked'} for c in children):
-                continue
-            s=session(parent)
-            if not s.get('waiting_call'):
-                continue
-            results=[]
-            for child in children:
-                files=[]
-                for f in selected_files(self.store,child['id'],session(child).get('deliverable_file_ids',[])):
-                    src=Path(f['path'])
-                    target=workspace(parent['id'])/'delegated'/child['id']/f['id']/src.name
-                    target.parent.mkdir(parents=True,exist_ok=True)
-                    shutil.copy2(src,target)
-                    files.append({**file_record(self.store,parent['id'],target),'path':str(target)})
-                result=child['result']
-                full_result={}
-                if len(result)>2400:
-                    from .context import save_text
-                    full_result['full_result_path']=save_text(self.store,parent['id'],result,'child-result')
-                    result=result[:2400]
-                results.append({'id':child['id'],'org':child['org'],'status':child['status'],'result':result,'blocker':child['question'][:1200],'files':files,**full_result})
-            self.add_result(s['messages'],s.pop('waiting_call'),results)
-            self.persist(parent['id'],s,status='queued')
-            self.store.event(parent['id'],'resumed','Sub-agents returned; director resumes the next step.')
+            try:
+                self.release_parent(parent)
+            except Exception as error:
+                # One broken deliverable must not prevent unrelated dispatch.
+                log.exception('Delegated result handoff failed for %s',parent['id'])
+                s=session(parent)
+                s['handoff_error']=str(error)
+                self.persist(parent['id'],s,status='blocked',question='Could not return delegated results. Child files and progress are saved. Send direction to retry the handoff. Details: '+str(error)[:1000])
+                self.store.event(parent['id'],'handoff_failed',str(error)[:2000])
+
+    def release_parent(self,parent):
+        children=self.store.rows('SELECT * FROM jobs WHERE parent_id=?',(parent['id'],))
+        if any(c['status'] not in {'completed','failed','cancelled','blocked'} for c in children):
+            return
+        s=session(parent)
+        if not s.get('waiting_call'):
+            return
+        results=[]
+        for child in children:
+            files=[]
+            for f in selected_files(self.store,child['id'],session(child).get('deliverable_file_ids',[])):
+                files.append(self.handoff_file(parent['id'],f,'delegated'))
+            result=child['result']
+            full_result={}
+            if len(result)>2400:
+                from .context import save_text
+                full_result['full_result_path']=save_text(self.store,parent['id'],result,'child-result')
+                result=result[:2400]
+            results.append({'id':child['id'],'org':child['org'],'status':child['status'],'result':result,'blocker':child['question'][:1200],'files':files,**full_result})
+        self.add_result(s['messages'],s.pop('waiting_call'),results)
+        self.persist(parent['id'],s,status='queued')
+        self.store.event(parent['id'],'resumed','Sub-agents returned; director resumes the next step.')
 
     def answer(self,id,text):
         job=self.store.job(id)
@@ -683,6 +694,11 @@ class Engine:
         s.pop('context_budget',None)
         progress.reset(s)
         recovery.clear_status(self.store,id,'Resuming work and checking the latest results.')
+        if s.pop('handoff_error',None) is not None:
+            # Retry the saved child handoff, retaining the original tool call.
+            self.persist(id,s,status='waiting_children',question='')
+            self.store.event(id,'user',text)
+            return
         if s.get('waiting_call'):
             self.add_result(s['messages'],s.pop('waiting_call'),{'user_answer':text})
         else:

@@ -148,15 +148,16 @@ def resolve_path(job_id,path,write=False):
         raise ValueError('Credentials and runtime configuration cannot be read or changed by agents.')
     return p
 
-def file_record(store,job_id,p,mime=None):
+def file_record(store,job_id,p,mime=None,*,name=None):
+    name=name or p.name
     old = store.one('SELECT id FROM files WHERE job_id=? AND path=?',(job_id,str(p)))
     id = old['id'] if old else uid()
-    store.write('INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?)',(id,job_id,p.name,str(p),mime or mimetypes.guess_type(p.name)[0] or 'application/octet-stream',now()))
+    store.write('INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?)',(id,job_id,name,str(p),mime or mimetypes.guess_type(name)[0] or 'application/octet-stream',now()))
     with p.open('rb') as stream:
         sha=hashlib.file_digest(stream,'sha256').hexdigest()
     store.write('INSERT OR REPLACE INTO artifact_provenance VALUES(?,?,?,?)',(id,sha,p.stat().st_size,now()))
-    emit('artifact.recorded',{'file_id':id,'name':p.name,'sha256':sha,'size':p.stat().st_size},store=store,job_id=job_id)
-    return {'file_id':id,'name':p.name,'url':'/api/files/'+id}
+    emit('artifact.recorded',{'file_id':id,'name':name,'sha256':sha,'size':p.stat().st_size},store=store,job_id=job_id)
+    return {'file_id':id,'name':name,'url':'/api/files/'+id}
 
 
 def selected_files(store,job_id,file_ids):
