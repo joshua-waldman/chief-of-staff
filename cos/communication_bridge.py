@@ -141,7 +141,7 @@ def perform(graph, action, a):
         if not operation or type(a.get('send_response',True)) is not bool: raise ValueError('Choose accept, decline or tentative, and a boolean send_response.')
         graph.post('/me/events/'+ident(a['id'])+'/'+operation,{'comment':a.get('comment',''),'sendResponse':a.get('send_response',True)})
     elif action=='delete_email':
-        graph.delete('/me/messages/'+ident(a['id']))
+        graph.post('/me/messages/'+ident(a['id'])+'/move', {'destinationId':'deleteditems'})
     elif action=='mark_email_read':
         graph.patch('/me/messages/'+ident(a['id']),{'isRead':True})
     elif action=='mark_teams_read':

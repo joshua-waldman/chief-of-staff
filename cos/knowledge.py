@@ -6,11 +6,19 @@ from collections import Counter
 from .db import uid, now
 
 KINDS = {'preference','profile','project','lesson','task'}
+TEAMS_INVITATION_PASSCODE = re.compile(
+    r'(https://teams\.microsoft\.com/(?:meet/|l/meetup-join/)\S+'
+    r'[\s\S]{0,1000}?\bMeeting ID:\s*\d[\d \t]*\s+)'
+    r'Passcode:\s*\S+', re.IGNORECASE)
+
 def clean(value, limit=4000):
     if not isinstance(value,str) or len(value)>limit:
         raise ValueError('Text exceeds the allowed length.')
     value=value.strip()
-    if re.search(r'(?i)(bearer\s+[a-z0-9._-]{16,}|sk-[a-z0-9_-]{16,}|(?:api[_ -]?key|access[_ -]?token|password|passcode|client[_ -]?secret|refresh[_ -]?token)\s*[:=]\s*\S+)',value):
+    # Exempt only the standard Teams meeting passcode field. Credentials in
+    # the surrounding message still go through the existing validation.
+    checked=TEAMS_INVITATION_PASSCODE.sub(r'\1[meeting passcode]',value)
+    if re.search(r'(?i)(bearer\s+[a-z0-9._-]{16,}|sk-[a-z0-9_-]{16,}|(?:api[_ -]?key|access[_ -]?token|password|passcode|client[_ -]?secret|refresh[_ -]?token)\s*[:=]\s*\S+)',checked):
         raise ValueError('Credentials must not be stored in knowledge.')
     return value
 
