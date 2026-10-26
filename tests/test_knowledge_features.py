@@ -112,7 +112,7 @@ def test_cleanup_actions_are_exact_and_reviewed():
     for action,args in [('delete_email',{'id':'m'}),('mark_email_read',{'id':'m'}),('mark_teams_read',{'chat_id':'chat'})]:
         assert classify(action,args).approval
         assert perform(graph,action,args)['executed']
-    assert ('DELETE','/me/messages/m') in graph.calls
+    assert ('POST','/me/messages/m/move',{'destinationId':'deleteditems'}) in graph.calls
     assert ('PATCH','/me/messages/m',{'isRead':True}) in graph.calls
     assert graph.calls[-1]==('POST','/chats/chat/markChatReadForUser',{'user':{'id':'owner-id'}})
 
