@@ -4,6 +4,12 @@ import json
 import re
 from pathlib import PureWindowsPath
 
+STALL_RECOVERY_VERSION=2
+RECOVERY_READS={'read_file','read_action_receipt','read_teams','read_mail','fetch_url','browser_read',
+    'list_files','list_chats','search_mail','search_knowledge','jira_read','meeting_artifacts',
+    'meeting_transcripts','mail_attachments','teams_attachments','calendar_events','calendar_event',
+    'list_skills','read_skill','mcp_list_tools'}
+
 
 def recovery_path(path):
     """Reserved recovery directories are bookkeeping, never new task evidence."""
@@ -44,21 +50,27 @@ def saved_findings(store,job_id):
     These are previous observations, not instructions or execution authority.
     Read the successful brief arguments, since the current brief overwrites them.
     """
-    rows=store.rows("SELECT args FROM approvals WHERE job_id=? AND tool='update_brief' AND status='executed' ORDER BY rowid DESC LIMIT 8",(job_id,))
+    rows=store.rows("SELECT args FROM approvals WHERE job_id=? AND tool='update_brief' AND status='executed' ORDER BY rowid DESC LIMIT 48",(job_id,))
     notes=[]
     for row in reversed(rows):
         args=json.loads(row['args'])
-        note={key:args[key][:size] for key,size in (('context',1200),('status_summary',600),('next_step',200)) if isinstance(args.get(key),str)}
+        note={key:args[key][:size] for key,size in (('context',600),('status_summary',400),('next_step',100)) if isinstance(args.get(key),str)}
         if note and note not in notes:
             notes.append(note)
-        while len(json.dumps(notes))>12000:
-            notes.pop(0)
+    # Keep early milestones as well as recent findings. A rolling tail loses the
+    # start of a long source and sends the worker back to reread it in full.
+    while len(json.dumps(notes))>12000 and len(notes)>2:
+        count=max(2,len(notes)*3//4)
+        notes=[notes[round(i*(len(notes)-1)/(count-1))] for i in range(count)]
     return notes
 
 
 def recovery_step(state,limit):
     """One persisted replan per source/owner revision, with at most six actions."""
     attempt=state.get('stall_recovery')
+    if attempt and attempt.get('version')!=STALL_RECOVERY_VERSION:
+        attempt=None
+        state.pop('stall_recovery',None)
     if attempt and attempt['active']:
         if attempt['remaining']<=0:
             return 'exhausted'
@@ -67,18 +79,28 @@ def recovery_step(state,limit):
         return 'continue'
     if attempt:
         return 'exhausted'
-    state['stall_recovery']={'active':True,'remaining':6}
+    state['stall_recovery']={'version':STALL_RECOVERY_VERSION,'active':True,'remaining':6,'verification_reads':0}
     return 'started'
 
 
-def recovery_instruction():
+def recovery_instruction(attempt):
     return ('Automatic progress recovery: stop the reading loop and replan from the owner request, '
-        'saved source findings, latest brief and read coverage. There are at most six recovery actions. '
+        'saved source findings, latest brief and read coverage. Recovery actions remaining: '+str(attempt['remaining'])+'. '
+        'Verification reads remaining: '+str(max(0,2-attempt.get('verification_reads',0)))+'. '
+        'The server disables further reading after two verification calls. Reserve actions for the final output. '
         'Synthesize and write the requested deliverable, then finish only if the task is actually complete. '
         'Do not restart completed sources or reconstruct the job from recovery archives. '
         'If a precise fact is missing, verify only that source range. If access genuinely fails, '
         'ask a specific question identifying the missing evidence and failure. '
         'Never fabricate evidence, completion or approvals; all existing action gates still apply.')
+
+
+def limit_recovery_read(state,action):
+    attempt=state.get('stall_recovery',{})
+    if attempt.get('active') and action in RECOVERY_READS:
+        if attempt.get('verification_reads',0)>=2:
+            raise ValueError('Recovery verification budget exhausted. Reading is disabled for this recovery. Use the saved findings and latest verified excerpts to write the requested synthesis and finish. If a specific evidence gap prevents completion, identify that gap explicitly; never infer completion.')
+        attempt['verification_reads']=attempt.get('verification_reads',0)+1
 
 
 def stable(value):

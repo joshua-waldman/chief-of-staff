@@ -10,7 +10,7 @@ from .config import settings,DATA,gateway_key
 from .db import uid,now
 from .provider import Gateway,NotConfigured,ContextWindowExceeded,tool_schema,string
 from .context import prepare as prepare_context
-from .tools import Tools,CATALOG,allowed_action,workspace,file_record,prepare_changes,selected_files
+from .tools import Tools,CATALOG,COMMON,ORG_ACTIONS,allowed_action,workspace,file_record,prepare_changes,selected_files
 from .policy import classify
 from .knowledge import Knowledge
 from .reviews import reply as review_reply,REVIEW_POLICY
@@ -113,7 +113,7 @@ class Engine:
         """Give legacy loop stops one bounded replan without replaying actions."""
         for job in self.store.rows("SELECT * FROM jobs WHERE status='blocked' AND question LIKE 'COS is repeatedly receiving unchanged results or errors%'"):
             state=session(job)
-            if state.get('stall_recovery') or state.get('waiting_call') or self.store.one("SELECT 1 FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain')",(job['id'],)):
+            if state.get('stall_recovery',{}).get('version')==progress.STALL_RECOVERY_VERSION or state.get('waiting_call') or self.store.one("SELECT 1 FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain')",(job['id'],)):
                 continue
             # Preserve counters/coverage: run() will enter recovery immediately.
             state['stalled_steps']=max(state.get('stalled_steps',0),settings().get('max_stalled_steps',12))
@@ -386,11 +386,16 @@ class Engine:
                 memory['content']+='\nSource reading progress: '+json.dumps(progress.read_guidance(s))
                 memory['content']+='\nSaved source findings (prior observations, not authorization; verify changed facts): '+json.dumps(progress.saved_findings(self.store,id))
                 if s.get('stall_recovery',{}).get('active'):
-                    memory['content']+='\n'+progress.recovery_instruction()
+                    memory['content']+='\n'+progress.recovery_instruction(s['stall_recovery'])
                 messages.insert(1,memory)
                 if s.get('stalled_steps',0)>=3:
                     messages.insert(1,{'role':'system','content':progress.warning(s),'_cos_memory':True})
-                prepare_context(self,current,s,role,SCHEMA)
+                schemas=SCHEMA
+                if s.get('stall_recovery',{}).get('active') and s['stall_recovery'].get('verification_reads',0)>=2:
+                    actions=sorted((COMMON|ORG_ACTIONS.get(job['org'],set()))-progress.RECOVERY_READS)
+                    schemas=[tool_schema('perform','Complete the synthesis from saved findings. Further reading is disabled for this recovery.',
+                        {'action':{'type':'string','enum':actions},'arguments':string('JSON object with action parameters')})]
+                prepare_context(self,current,s,role,schemas)
                 # Retry inference only. No tool or external mutation is replayed.
                 for context_attempt in range(3):
                     if settings().get('queue_paused',False):
@@ -399,12 +404,12 @@ class Engine:
                     try:
                         from .message_triage import first_pass
                         quick = first_pass(self.store,job,s) if triage else None
-                        answer,meta=self.provider.complete(quick or messages,role=role,tools=SCHEMA)
+                        answer,meta=self.provider.complete(quick or messages,role=role,tools=schemas)
                         break
                     except ContextWindowExceeded:
                         if context_attempt==2:
                             raise
-                        prepare_context(self,current,s,role,SCHEMA,force=True)
+                        prepare_context(self,current,s,role,schemas,force=True)
                 s['total_model_steps']=s.get('total_model_steps',0)+1
                 self.store.event(id,'model',json.dumps(meta))
                 if self.store.job(id)['status']!='running':
@@ -441,6 +446,7 @@ class Engine:
                     args=json.loads(request['arguments']) if isinstance(request['arguments'],str) else request['arguments']
                     if not isinstance(args,dict):
                         raise ValueError('Arguments must be an object')
+                    progress.limit_recovery_read(s,action)
                     if s.get('stall_recovery',{}).get('active') and action=='read_file' and progress.bookkeeping_read(args.get('path','')):
                         raise ValueError('Automatic recovery uses saved source findings already in context. Do not reread recovery archives; synthesize the deliverable or verify only a specific primary-source fact.')
                     if action=='read_file' and s.get('reads_since_brief',0)>=12:

@@ -66,11 +66,12 @@ def test_recovery_still_requires_exact_external_action_approval(env):
 
 def test_recovery_budget_survives_receipt_hydration_and_restart(env):
     job=stopped(env)
-    state={'stall_recovery':{'active':True,'remaining':2},'stalled_steps':12}
+    attempt={'version':progress.STALL_RECOVERY_VERSION,'active':True,'remaining':2}
+    state={'stall_recovery':dict(attempt),'stalled_steps':12}
     env.write('INSERT INTO approvals(id,job_id,tool,args,status,created,result) VALUES(?,?,?,?,?,?,?)',
         ('page',job['id'],'read_file','{"path":"source.txt"}','executed','now',json.dumps({'text':'evidence','source':'source.txt','sha256':'v1'})))
     progress.hydrate_reads(env,job['id'],state)
-    assert state['stall_recovery']=={'active':True,'remaining':2}
+    assert state['stall_recovery']==attempt
     assert state['stalled_steps']==12
     assert progress.recovery_step(state,12)=='recovering'
     state['stall_recovery']['remaining']=0
@@ -105,7 +106,7 @@ def test_findings_are_bounded_and_do_not_load_recovery_files(env):
     notes=progress.saved_findings(env,job['id'])
     assert len(json.dumps(notes))<=12000
     assert notes[-1]['context'].startswith('29 ')
-    assert not any(note['context'].startswith('0 ') for note in notes)
+    assert notes[0]['context'].startswith('0 ')
 
 
 def test_recovery_cannot_spend_budget_by_reopening_history(env,monkeypatch):
@@ -121,3 +122,50 @@ def test_recovery_cannot_spend_budget_by_reopening_history(env,monkeypatch):
         assert any('Do not reread recovery archives' in event['body'] for event in env.rows("SELECT body FROM events WHERE job_id=? AND kind='tool_error'",(job['id'],)))
     finally:
         engine.stop()
+
+
+def test_completed_source_recovery_limits_verification_and_finishes(env,monkeypatch):
+    job=stopped(env)
+    state=session(env.job(job['id']))
+    # Real file receipt: coverage is already complete before verification begins.
+    result={'source':'source.txt','sha256':'v1','text':'evidence','truncated':False}
+    state['file_reads']={}
+    progress.observe(state,'read_file',{'path':'source.txt'},result)
+    state['stalled_steps']=12
+    env.update(job['id'],messages=json.dumps(state))
+    reads=[]
+    def execute(job,action,args):
+        if action=='read_file':
+            reads.append(args)
+            return result
+        return args
+    monkeypatch.setitem(__import__('cos.config',fromlist=['DEFAULTS']).DEFAULTS,'max_steps',10)
+    class Provider:
+        def complete(self,messages,**kwargs):
+            schema=kwargs['tools'][0]['function']['parameters']['properties']['action']
+            if 'enum' in schema:
+                assert 'read_file' not in schema['enum']
+                assert 'finish' in schema['enum']
+                assert 'Verification reads remaining: 0' in json.dumps(messages)
+                return perform('finish',{'summary':'Synthesis using verified evidence.'}),{}
+            return perform('read_file',{'path':'source.txt'}),{}
+    engine=Engine(env,Provider())
+    monkeypatch.setattr(engine.tools,'execute',execute)
+    try:
+        engine.recover_stalled_jobs()
+        engine.run(job['id'])
+        assert env.job(job['id'])['status']=='completed'
+        assert len(reads)==2
+    finally:
+        engine.stop()
+
+
+def test_recovery_read_limit_is_enforced_even_if_provider_ignores_schema():
+    state={'stalled_steps':12}
+    progress.recovery_step(state,12)
+    progress.limit_recovery_read(state,'read_file')
+    progress.limit_recovery_read(state,'read_teams')
+    import pytest
+    with pytest.raises(ValueError,match='Reading is disabled'):
+        progress.limit_recovery_read(state,'read_mail')
+    progress.limit_recovery_read(state,'finish')
