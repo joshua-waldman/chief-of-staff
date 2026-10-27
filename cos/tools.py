@@ -24,13 +24,13 @@ update_brief {job_name?:short 3-7 word topic name without source IDs,triage_cate
 
 apply_changes {changes:[{source,target,expected_sha256}]}: apply staged files to registered projects or app source after approval. Self-Improvement application source patches are autonomous on a feature branch, with hash checks and backups. Supply SHA256 of current target, or empty for a new file. Exact diffs are retained in the action receipt.
 list_files {path?: absolute approved project path or workspace-relative path}
-read_file {path,offset?:0,limit?:4000}: text, PDF, DOCX, PPTX and images. Text pages are capped at 8000 characters even if a larger limit is requested. Follow next_offset, saving findings with update_brief after each batch. Reuse file_read_progress instead of restarting completed sources. Read screenshots before discussing them.
+read_file {path,offset?:0,limit?:4000}: text, PDF, DOCX, PPTX and images. Accepts an approved path, attached file ID or /api/files/ID link; links never grant access to other jobs. Text pages are capped at 8000 characters even if a larger limit is requested. Follow next_offset, saving findings with update_brief after each batch. Reuse file_read_progress instead of restarting completed sources. Read screenshots before discussing them.
 read_action_receipt {id,offset?:0,limit?:4000}: read a specific exact action receipt belonging to this job, in bounded text pages. Use to verify an identified action, never to reconstruct the whole history.
 write_file {path,content}: relative path in this job's workspace; never changes the live app.
 edit_file {path,expected_sha256,old_text,new_text}: replace exactly one nonempty text fragment in an existing UTF-8 workspace file. Use the sha256 returned by read_file or the previous edit. Preserves a backup and returns the new hash. Use small edits for staged code instead of rewriting or rereading whole files. Cannot edit live projects or application source.
 create_document {name,title,sections:[{heading,body}]}: creates or replaces a DOCX; backs up prior version.
 create_presentation {name,title,slides:[{title,bullets:[text],notes?:text}]}: exactly one PPTX slide per supplied slide; no implicit cover. Maximum five bullets per slide, 220 characters per bullet; put detailed citations in notes.
-delegate {tasks:[{request,org,project?,file_ids?:[id]}]}: start independent sub-agents with fresh context containing only the scoped request and explicitly selected source files (default none, max 16). Include facts, constraints, scope, deliverables and acceptance criteria; use separate children for independent source analysis. Parent history and recovery archives are never copied. Children return summaries and explicitly selected deliverables. Communications proposals require approval before any children start. Technology handles research. Max 8 per call, bounded depth.
+delegate {tasks:[{request,org,project?,file_ids?:[id]}]}: start independent sub-agents with fresh context containing only the scoped request and explicitly selected source files (default none, max 16). Every /api/files/ID reference in the request must have its job-local file ID selected in file_ids; use list_files to find returned deliverables. Links are rewritten to the child's copied files. Include facts, constraints, scope, deliverables and acceptance criteria; use separate children for independent source analysis. Parent history and recovery archives are never copied. Children return summaries and explicitly selected deliverables. Communications proposals require approval before any children start. Technology handles research. Max 8 per call, bounded depth.
 ask_user {question}: route a missing-information question through the Chief of Staff.
 finish {summary,result_kind?:strategy|generated_content|triage|action_receipt,file_ids?:[id]}: finish after all necessary tools succeed. Always set result_kind: strategy for a completed plan, analysis or research task; generated_content for newly drafted text, documents, code or presentations; triage for routine reading, FYI/ignore decisions, no-action closures and ordinary email summaries; action_receipt for deletion, mark-read, calendar responses, sends or other operational confirmations. Only strategy and generated_content enter Ready for review. A model-generated completion sentence does not itself make the task generated_content. If delegated strategy or content work returns for owner review, classify that deliverable accordingly; selecting source files or merely executing an action does not qualify. Select up to 16 final deliverable file IDs for owner review and parent handoff (default none). When returning a document or other artifact, include its file ID here and its artifact link /api/files/FILE_ID in the summary. Do not return input files or recovery archives as deliverables.
 list_skills {} / read_skill {name}: read instructions before using an installed skill.
@@ -177,6 +177,24 @@ def selected_files(store,job_id,file_ids):
         selected.append(row)
     return selected
 
+
+ARTIFACT_LINK = re.compile(r'/api/files/([A-Za-z0-9_-]+)')
+
+
+def local_artifact(store,job_id,file_id):
+    """Resolve a reference only to an artifact already held by this job.
+
+    Returned deliverables have new IDs. An older link may identify the same
+    bytes, but never grants access to another job's workspace.
+    """
+    row=store.one('SELECT * FROM files WHERE job_id=? AND id=?',(job_id,file_id))
+    if row:
+        return row
+    return store.one('''SELECT f.* FROM files f
+        JOIN artifact_provenance local ON local.file_id=f.id
+        JOIN artifact_provenance source ON source.sha256=local.sha256 AND source.size=local.size
+        WHERE f.job_id=? AND source.file_id=? ORDER BY f.created,f.id LIMIT 1''',(job_id,file_id))
+
 def extract(p):
     if p.suffix.lower() in {'.docx','.pptx','.xlsx'}:
         import zipfile
@@ -287,7 +305,11 @@ class Tools:
         if action=='read_file':
             from .recovery_storage import archived_bytes
             with self.store.lock:
-                p = resolve_path(id,a['path'])
+                reference=ARTIFACT_LINK.fullmatch(a['path'])
+                file=local_artifact(self.store,id,reference[1] if reference else a['path'])
+                if reference and not file:
+                    raise ValueError('Artifact is not attached to this job. Select its job-local file_id when delegating or attach the document first.')
+                p = resolve_path(id,file['path'] if file else a['path'])
                 raw=archived_bytes(self.store,id,p,max_size=25*1024*1024)
                 if raw is None:
                     if p.stat().st_size > 25*1024*1024:
