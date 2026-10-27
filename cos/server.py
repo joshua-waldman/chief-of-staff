@@ -18,6 +18,7 @@ from .config import ROOT,DATA,settings,save_settings,gateway_key,store_key
 from .db import Store,uid,now
 from .engine import Engine,session
 from .monitor import Monitor
+from .timing import TimingAssessor
 from .integrations import skill_inventory,mcp_inventory,auth_status,skill_dir
 from .tools import file_record,workspace,safe_name
 from .provider import Gateway
@@ -27,6 +28,7 @@ TOKEN=secrets.token_urlsafe(32)
 store=Store()
 engine=Engine(store)
 monitor=Monitor(store)
+timing_assessor=TimingAssessor(store)
 auth={'running':False,'output':''}
 
 @asynccontextmanager
@@ -34,7 +36,9 @@ async def lifespan(app):
     emit('server.started',{'source_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/'cos').glob('*.py')},'models':settings()['models'],'parallel_agents':settings()['parallel_agents']})
     engine.start()
     monitor.start()
+    timing_assessor.start()
     yield
+    timing_assessor.stop_event.set()
     monitor.stop_event.set()
     engine.stop()
 

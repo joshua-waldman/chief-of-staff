@@ -39,3 +39,13 @@ test('commitment calendar dates use local days and preserve inferred uncertainty
  const inferred=ctx.commitmentTiming({...item,deadline_certainty:'inferred',deadline_date:'2026-10-26'},today);
  assert.match(inferred.label,/Possible timing — confirm/);assert.equal(inferred.level,'soon');
 });
+
+test('timing column makes routine, unknown and unassessed items visibly distinct',()=>{
+ for(const [time_sensitive,label] of [['no','Routine'],['unknown','Timing unclear'],['','Not yet assessed']]){
+  const html=ctx.table([{id:'job',title:'Request',org:'Technology',status:'waiting_input',time_sensitive,timing_reason:'Context <evidence>',updated:'now'}]);
+  assert.match(html,/<th>TIMING<\/th>/);
+  assert.ok(html.includes(label));
+  assert.ok(html.includes('Context &lt;evidence&gt;'));
+  assert.ok(!html.includes('<evidence>'));
+ }
+});

@@ -227,6 +227,6 @@ test('job details display inferred time sensitivity without a deadline',async()=
  s.respond('Launch decision',{status:'waiting_input',brief:{time_sensitive:'yes',timing_reason:'Assessment: dependent team is blocked.'}});
  await pending;
  assert.match(s.detail.html,/Time sensitive/);
- assert.match(s.detail.html,/Timing: Assessment: dependent team is blocked/);
+ assert.match(s.detail.html,/Timing rationale: Assessment: dependent team is blocked/);
  assert.ok(!s.detail.html.includes('Overdue'));
 });

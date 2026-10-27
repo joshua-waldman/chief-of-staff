@@ -9,7 +9,7 @@ DEFAULTS = {
     'gateway_url': 'https://llm-api.amd.com/Unified/v1',
     'models': {'chief': 'gpt-6-luna', 'director': 'gpt-6.1-sol', 'worker': 'gpt-6-sol', 'triage': 'gpt-6-luna'},
     'parallel_agents': 4, 'max_steps': 30, 'monitor_enabled': False,
-    'queue_paused': False,
+    'queue_paused': False, 'timing_assessment_enabled': False,
     'conversation_settle_seconds': 15, 'conversation_max_wait_seconds': 60,
     'max_stalled_steps': 12,
     'capacity_recovery_seconds': 900,
@@ -46,6 +46,8 @@ def save_settings(changes):
     s['parallel_agents'] = max(1, min(12, int(s['parallel_agents'])))
     if type(s['queue_paused']) is not bool:
         raise ValueError('Queue paused must be true or false.')
+    if type(s['timing_assessment_enabled']) is not bool:
+        raise ValueError('Timing assessment enabled must be true or false.')
     s['poll_seconds'] = max(30, int(s['poll_seconds']))
     s['max_steps'] = max(5, min(100, int(s['max_steps'])))
     s['capacity_recovery_seconds'] = max(30,min(86400,int(s['capacity_recovery_seconds'])))

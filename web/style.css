@@ -21,3 +21,6 @@ tr.timing-overdue>td:first-child,.panel.timing-overdue{box-shadow:inset 3px 0 #b
 .timing-badge.timing-overdue{border-color:#e9b3a8;background:#fce8e2;color:#963c2c}
 tbody tr.timing-soon:hover{background:#fff4dc}tbody tr.timing-overdue:hover{background:#fce8e2}
 .detail-meta{flex-wrap:wrap}
+
+.timing-badge.timing-neutral{background:#f0f3f1;color:#52645a;border-color:#dbe3de}
+.timing-cell{min-width:180px;max-width:280px}.timing-reason{white-space:normal;line-height:1.5}
