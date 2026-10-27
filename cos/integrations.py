@@ -1,4 +1,5 @@
 """Reuse installed skills and Claude MCP definitions without copying credentials."""
+from .processes import background_options
 import asyncio
 import json
 import os
@@ -43,7 +44,7 @@ def communication(action, arguments):
     """Only the fixed bridge operation set is exposed, never arbitrary endpoints."""
     result=subprocess.run([sys.executable,'-m','cos.communication_bridge'],
         input=json.dumps({'action':action,'arguments':arguments}),cwd=ROOT,
-        capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=120)
+        capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=120,**background_options())
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout)[-4000:])
     data=json.loads(result.stdout)
@@ -65,7 +66,7 @@ def run_skill(name,script,args, timeout=90):
     emit('skill.started',{'skill':name,'script':p.name,'arguments':shape(args),'flags':[str(x) for x in args if re.fullmatch(r'--[a-z][a-z0-9-]{0,40}',str(x))]})
     started=time.monotonic()
     try:
-        result = subprocess.run([sys.executable,str(p),*map(str,args)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout,env={**os.environ,'PYTHONIOENCODING':'utf-8'})
+        result = subprocess.run([sys.executable,str(p),*map(str,args)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout,env={**os.environ,'PYTHONIOENCODING':'utf-8'},**background_options())
     except Exception as error:
         emit('skill.failed',{'skill':name,'script':p.name,'duration_ms':round((time.monotonic()-started)*1000),**failure(error)})
         raise

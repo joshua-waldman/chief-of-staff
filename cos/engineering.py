@@ -1,4 +1,5 @@
 """Owner-configured project workflow, independent of project names and vendors."""
+from .processes import background_options
 import re
 import subprocess
 from pathlib import Path
@@ -34,7 +35,7 @@ def project_root(job):
 
 
 def git(root,*args):
-    result=subprocess.run(['git','-C',str(root),*args],capture_output=True,text=True,timeout=30)
+    result=subprocess.run(['git','-C',str(root),*args],capture_output=True,text=True,timeout=30,**background_options())
     if result.returncode: raise ValueError(result.stderr.strip() or 'Git operation failed.')
     return result.stdout.strip()
 

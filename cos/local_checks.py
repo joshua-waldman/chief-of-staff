@@ -1,4 +1,5 @@
 """Recognize local test commands without granting arbitrary host execution."""
+from .processes import background_options
 from pathlib import PureWindowsPath
 import subprocess
 
@@ -12,7 +13,7 @@ def run_host(command, *, cwd, env, timeout=180):
     # waiting for an existing process must retain their uncertain outcome.
     try:
         process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
+                                   stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',**background_options())
     except OSError as error:
         raise ActionNotExecuted(str(error)) from error
     with process:
