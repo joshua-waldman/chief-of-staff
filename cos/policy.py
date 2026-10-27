@@ -19,16 +19,27 @@ TRUSTED_PACKAGES={'fastapi','uvicorn','httpx','pytest','python-docx','python-ppt
 def trusted_packages(packages):
     return bool(packages) and all(isinstance(p,str) and re.fullmatch(r'[A-Za-z0-9_.-]+(?:[<>=!~]+[A-Za-z0-9.*+-]+(?:,[<>=!~]+[A-Za-z0-9.*+-]+)*)?',p) and re.split(r'[<>=!~]',p)[0].lower().replace('_','-') in TRUSTED_PACKAGES for p in packages)
 
-def classify(tool,args,org=None):
+def research_delegation(args):
+    tasks=args.get('tasks')
+    return isinstance(tasks,list) and 1<=len(tasks)<=8 and all(isinstance(t,dict) and t.get('org')=='Technology' for t in tasks)
+
+
+def classify(tool,args,org=None,research_only=False):
     from .local_checks import autonomous_check
+    if research_only and (tool in ALWAYS or tool in {'jira_write','mcp_call'}):
+        return Decision('high',True,'Research authorizes external reads and COS-local outputs only; external writes require approval.')
+    if tool=='delegate' and research_only:
+        return Decision('low',False,'Delegated research inherits the restriction to external reads and COS-local outputs.')
+    if tool=='delegate' and org=='Communications':
+        if research_delegation(args):
+            return Decision('low',False,'Research may read external sources and produce COS-local findings without delegation approval.')
+        return Decision('high',True,'Review delegated work beyond Technology research before starting it.')
     if autonomous_check(org,tool,args):
         return Decision('low',False,'Self-Improvement local tests are authorized; the server selects its Python interpreter and validates the working directory.')
     if org=='Self-Improvement' and tool=='apply_changes':
         return Decision('low',False,'Self-Improvement may apply staged application source updates with hash checks and backups.')
     if org=='Self-Improvement' and tool=='create_feature_branch':
         return Decision('low',False,'Self-Improvement creates a new application feature branch before source updates.')
-    if tool=='delegate' and org=='Communications':
-        return Decision('high',True,'Review the requested work, destination organizations and deliverables before Communications starts delegated action.')
     if tool=='install_dependencies' and trusted_packages(args.get('packages',[])):
         return Decision('low',False,'Known registry packages are installed as binary wheels into the job-local dependencies directory.')
     if tool in ALWAYS:
