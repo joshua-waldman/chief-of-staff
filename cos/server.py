@@ -319,7 +319,8 @@ def download(id):
 
 @app.get('/api/connections')
 def connections():
-    return {'gateway':{'configured':bool(gateway_key()),'url':settings()['gateway_url']},'microsoft':auth_status(),'skills':skill_inventory(),'mcp':mcp_inventory(),'sandbox':{'available':bool(shutil.which('docker'))},'auth_flow':auth}
+    from .github import connection_status
+    return {'gateway':{'configured':bool(gateway_key()),'url':settings()['gateway_url']},'microsoft':auth_status(),'github':connection_status(),'skills':skill_inventory(),'mcp':mcp_inventory(),'sandbox':{'available':bool(shutil.which('docker'))},'auth_flow':auth}
 
 @app.post('/api/settings')
 async def update_settings(request:Request):

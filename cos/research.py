@@ -13,7 +13,9 @@ def validate_url(url, *, dns=True):
     if u.scheme != 'https' or not u.hostname or u.username or u.password or u.fragment or u.port not in (None, 443):
         raise ValueError('Research requires HTTPS without credentials, fragments or custom ports.')
     if u.hostname not in settings()['research_hosts']:
-        raise ValueError('Add this exact research host in Connections before retrieval.')
+        hint = (' For GitHub source evidence, use repository_connections, repository_search and repository_read with the repository owner account; public host allowlisting does not control those authenticated reads.'
+                if u.hostname in {'github.com','api.github.com','raw.githubusercontent.com'} else '')
+        raise ValueError('Add this exact research host in Connections before retrieval.'+hint)
     if u.query:
         # Only documented display selectors, never arbitrary source text or secrets.
         pairs = parse_qsl(u.query, keep_blank_values=True, strict_parsing=True)

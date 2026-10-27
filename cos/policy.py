@@ -13,6 +13,7 @@ ALWAYS |= {'calendar_rsvp','delete_email','mark_email_read','mark_teams_read','c
 LOW = {'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','create_skill','create_organization','delegate','ask_user','finish','fetch_url','search_mail','read_mail','list_chats','read_teams','meeting_artifacts','meeting_transcripts','save_meeting_summary','jira_read','jira_write','list_skills','read_skill','mcp_list_tools','run_sandbox','run_python','mail_attachments','teams_attachments','browser_read'}
 LOW |= {'calendar_events','calendar_event','search_commitments','record_commitment','add_commitment_evidence'}
 LOW |= {'read_action_receipt','edit_file'}
+LOW |= {'repository_connections','repository_search','repository_read'}
 
 TRUSTED_PACKAGES={'fastapi','uvicorn','httpx','pytest','python-docx','python-pptx','pypdf','mcp','requests','pandas','numpy','openpyxl','rich','pydantic','keyring','playwright'}
 
@@ -21,7 +22,7 @@ def trusted_packages(packages):
 
 def research_delegation(args):
     tasks=args.get('tasks')
-    return isinstance(tasks,list) and 1<=len(tasks)<=8 and all(isinstance(t,dict) and t.get('org')=='Technology' for t in tasks)
+    return isinstance(tasks,list) and 1<=len(tasks)<=8 and all(isinstance(t,dict) and (t.get('org')=='Technology' or (t.get('org') in {'Communications','Engineering'} and t.get('source_only') is True)) for t in tasks)
 
 
 def classify(tool,args,org=None,research_only=False):
