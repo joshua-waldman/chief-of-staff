@@ -1,0 +1,48 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('web/schedules.js','utf8');
+test('schedule view escapes requests, shows timezone and links existing runs',()=>{
+ const ctx={Intl,Date,Object,state:{settings:{projects:{}}},intro:()=>'',input:()=>'',esc:x=>String(x??'').replace(/</g,'&lt;'),btn:(t,a)=>`<button ${a}>${t}</button>`,date:x=>x,labels:{queued:'Queued'}};
+ vm.createContext(ctx);vm.runInContext(source,ctx);
+ vm.runInContext(`scheduledTasks=[{id:'schedule',name:'<unsafe>',request:'<script>example',cadence:'daily',status:'active',project:'Removed project',timezone:'America/Chicago',next_run:'2026-01-01T15:00:00+00:00',runs:[{job_id:'job-1',created:'2026-01-01',due:'2026-01-01',status:'queued'}]}]`,ctx);
+ const html=ctx.schedulesView();
+ assert.ok(html.includes('&lt;script>example'));
+ assert.ok(!html.includes('<script>example'));
+ assert.ok(html.includes('America/Chicago'));
+ assert.ok(html.includes('Project is no longer registered'));
+ assert.ok(html.includes('data-schedule-job="job-1"'));
+ assert.ok(html.includes('data-schedule-action="pause"'));
+ assert.ok(html.includes('COS must be running and connected'));
+});
+test('schedule form sends the chosen local time and timezone without browser conversion',async()=>{
+ const nodes={'#schedule-form':{},'#schedule-name':{value:'Planning'},'#schedule-request':{value:'Prepare brief'},'#schedule-project':{value:''},'#schedule-cadence':{value:'weekly'},'#schedule-start':{value:'2026-11-06T09:00'},'#schedule-zone':{value:'America/Chicago'}};
+ const calls=[];
+ const ctx={$:s=>nodes[s],document:{querySelectorAll:()=>[]},handle:fn=>fn,api:async(p,b)=>{calls.push([p,b]);return []},toast:()=>{}};
+ vm.createContext(ctx);vm.runInContext(source,ctx);
+ vm.runInContext('resetScheduleEditor=()=>{}',ctx);
+ ctx.bindSchedules();
+ await nodes['#schedule-form'].onsubmit({preventDefault(){}});
+ assert.equal(calls[0][0],'schedules');
+ assert.equal(calls[0][1].start_local,'2026-11-06T09:00');
+ assert.equal(calls[0][1].timezone,'America/Chicago');
+ assert.equal(calls[0][1].cadence,'weekly');
+});
+test('pending schedule changes disable edits across refresh and prevent duplicate actions',async()=>{
+ const action={dataset:{schedule:'s',scheduleAction:'resume'}},edit={dataset:{scheduleEdit:'s'}};
+ let release,calls=0;
+ const ctx={$:()=>null,document:{querySelectorAll:s=>s==='[data-schedule-action]'?[action]:s==='[data-schedule-edit]'?[edit]:s.includes(',')?[action,edit]:[]},handle:fn=>fn,render:()=>ctx.bindSchedules(),toast:()=>{},api:async(p,body)=>{if(!body)return [];calls++;await new Promise(resolve=>release=resolve)}};
+ vm.createContext(ctx);vm.runInContext(source,ctx);
+ vm.runInContext("scheduledTasks=[{id:'s',version:1}]",ctx);
+ ctx.bindSchedules();
+ const pending=action.onclick();
+ assert.equal(edit.disabled,true);
+ ctx.bindSchedules();
+ assert.equal(edit.disabled,true);
+ await action.onclick();
+ assert.equal(calls,1);
+ release();await pending;
+ assert.equal(edit.disabled,false);
+ assert.equal(action.disabled,false);
+});

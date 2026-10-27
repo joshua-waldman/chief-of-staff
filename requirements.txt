@@ -9,3 +9,4 @@ keyring>=25,<27
 pytest>=8,<10
 playwright>=1.50,<2
 openpyxl>=3.1,<4
+tzdata>=2025.1
