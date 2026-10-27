@@ -13,7 +13,7 @@ def target(action, args):
         u = urlparse(args['url'])
         view = parse_qs(u.query).get('view', ['graph-rest-1.0'])[0]
         return 'research:' + (u.hostname or '') + u.path.rstrip('/') + ':' + view
-    identity = {k: args[k] for k in ('id', 'path', 'chat_id', 'url', 'server', 'operation', 'to') if k in args}
+    identity = {k: args[k] for k in ('id', 'path', 'chat_id', 'url', 'server', 'operation', 'to', 'repository', 'ref', 'name', 'owner') if k in args}
     if action == 'read_file' and 'offset' in args:
         identity['offset'] = args['offset']
     return action + ':' + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()

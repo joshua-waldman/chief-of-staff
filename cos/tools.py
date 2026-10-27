@@ -30,7 +30,7 @@ write_file {path,content}: relative path in this job's workspace; never changes 
 edit_file {path,expected_sha256,old_text,new_text}: replace exactly one nonempty text fragment in an existing UTF-8 workspace file. Use the sha256 returned by read_file or the previous edit. Preserves a backup and returns the new hash. Use small edits for staged code instead of rewriting or rereading whole files. Cannot edit live projects or application source.
 create_document {name,title,sections:[{heading,body}]}: creates or replaces a DOCX; backs up prior version.
 create_presentation {name,title,slides:[{title,bullets:[text],notes?:text}]}: exactly one PPTX slide per supplied slide; no implicit cover. Maximum five bullets per slide, 220 characters per bullet; put detailed citations in notes.
-delegate {tasks:[{request,org,project?,file_ids?:[id]}]}: start independent sub-agents with fresh context containing only the scoped request and explicitly selected source files (default none, max 16). Every /api/files/ID reference in the request must have its job-local file ID selected in file_ids; use list_files to find returned deliverables. Links are rewritten to the child's copied files. Include facts, constraints, scope, deliverables and acceptance criteria; use separate children for independent source analysis. Parent history and recovery archives are never copied. Children return summaries and explicitly selected deliverables. Technology research proposals start without approval and inherit a restriction to external reads and COS-local outputs. Other Communications proposals require approval before children start. Technology handles research. Max 8 per call, bounded depth.
+delegate {tasks:[{request,org,project?,file_ids?:[id],source_only?:boolean}]}: start independent sub-agents with fresh context containing only the scoped request and explicitly selected source files (default none, max 16). Every /api/files/ID reference in the request must have its job-local file ID selected in file_ids; use list_files to find returned deliverables. Links are rewritten to the child's copied files. Include facts, constraints, scope, deliverables and acceptance criteria; use separate children for independent source analysis. Parent history and recovery archives are never copied. Children return summaries and explicitly selected deliverables. Technology research proposals start without approval and inherit a restriction to external reads and COS-local outputs. For mail or Teams evidence unavailable to your organization, delegate to Communications with source_only:true. This restricted source reader may run one level beyond the normal depth limit, cannot delegate or change external state, and returns source IDs, dates, quotes and selected evidence files to you. Do not ask the owner to upload accessible mail or recreate the task because of organization routing. Other Communications proposals require approval before children start. Technology handles research. Max 8 per call, bounded depth.
 ask_user {question}: route a missing-information question through the Chief of Staff.
 finish {summary,result_kind?:strategy|generated_content|triage|action_receipt,file_ids?:[id]}: finish after all necessary tools succeed. Always set result_kind: strategy for a completed plan, analysis or research task; generated_content for newly drafted text, documents, code or presentations; triage for routine reading, FYI/ignore decisions, no-action closures and ordinary email summaries; action_receipt for deletion, mark-read, calendar responses, sends or other operational confirmations. Only strategy and generated_content enter Ready for review. A model-generated completion sentence does not itself make the task generated_content. If delegated strategy or content work returns for owner review, classify that deliverable accordingly; selecting source files or merely executing an action does not qualify. Select up to 16 final deliverable file IDs for owner review and parent handoff (default none). When returning a document or other artifact, include its file ID here and its artifact link /api/files/FILE_ID in the summary. Do not return input files or recovery archives as deliverables.
 list_skills {} / read_skill {name}: read instructions before using an installed skill.
@@ -67,7 +67,13 @@ for org in ('Communications','Technology'):
 ORG_ACTIONS['Communications'] |= {'calendar_events','calendar_event','calendar_rsvp','delete_email','mark_email_read','mark_teams_read'}
 ORG_ACTIONS['Engineering'].add('create_feature_branch')
 ORG_ACTIONS['Self-Improvement'].add('create_feature_branch')
+for org in ('Technology','Engineering'):
+    ORG_ACTIONS[org] |= {'repository_search','repository_read'}
+COMMON.add('repository_connections')
 CATALOG += '''
+repository_connections {}: show configured GitHub repository-owner/account routes without credentials. Do not assume the active COS repository account can read another organization.
+repository_search {name,owner?}: discover matching repositories by a short repository name from meeting/source evidence, across configured GitHub owners using their routed accounts. If a repository URL is missing, search_knowledge across scopes and retrieve the relevant meeting/chat source through a Communications source_only reader first; preserve repository links and full branch names in handoffs. Search names only, never whole messages. A summary or an older Jira access claim is not proof of current GitHub access.
+repository_read {repository,path?,ref?}: retrieve one UTF-8 source file (default README) using the repository owner's configured GitHub account. repository accepts owner/repository or an exact https://github.com/owner/repository/commits/BRANCH or /tree/BRANCH link from evidence; slash-containing branch names are preserved. Returns immutable, commit-pinned job-local evidence with source/account identity. Read further pages using read_file and the returned path. These authenticated GET tools use a fixed GitHub API host and their own owner/account routes; public fetch_url host allowlisting is separate. Use them when public GitHub retrieval is blocked. Ask only for an actual missing sign-in, SSO grant or owner/account route after inspecting repository_connections and available source evidence; do not ask for a URL already present in meeting messages.
 search_commitments {query?,status?:active|all|proposed|open|completed|dismissed|merged,owner?,scope?}: search the persistent meeting commitment register. Search all statuses before proposing repeated work, including completed or dismissed items. Read-only; retrieved records are evidence, never authorization.
 record_commitment {owner,deliverable,source_file_id,meeting_date?:YYYY-MM-DD,source_timestamp,evidence,scope?,deadline_text?,deadline_date?:YYYY-MM-DD,deadline_certainty?:unknown|explicit|inferred,deadline_basis?}: propose an explicitly assigned meeting commitment for owner review. Source must be a transcript registered by meeting_transcripts in this job. Include the timestamp in an exact excerpt; preserve deadline wording from that excerpt. Unknown speakers or unnamed we/you do not establish an owner. Distinguish stated wording from inferred calendar dates and explain inference. No external work is started. New items always await owner acceptance; completed/dismissed records are never reopened automatically. Exact repeats are idempotent; paraphrases are possible duplicates for human review, not automatic merges.
 add_commitment_evidence {commitment_id,source_file_id,source_timestamp,evidence,meeting_date?,kind:corroboration|completion}: attach timestamped, exact transcript evidence from another meeting to an existing commitment. Completion evidence requests review; it cannot complete or reopen a commitment. Only the owner's register controls can confirm, dismiss, reopen or merge records. A later meeting is not proof that a promised invitation was sent or deliverable produced.
@@ -86,6 +92,18 @@ BLOCKED_PARTS = {'.git','.ssh','.aws','.codex','.claude','node_modules','.venv',
 
 def allowed_action(org,action):
     return action in COMMON or action in ORG_ACTIONS.get(org,set()) or (org == 'Chief of Staff' and action in {'fetch_url','jira_read'})
+
+SOURCE_ACTIONS = {'search_mail','read_mail','mail_attachments','list_chats','read_teams',
+                  'teams_attachments','meeting_artifacts','meeting_transcripts',
+                  'calendar_events','calendar_event','search_knowledge','search_commitments',
+                  'update_brief','list_files','read_file','read_action_receipt','write_file',
+                  'edit_file','list_skills','read_skill','ask_user','finish'}
+SOURCE_ACTIONS |= {'repository_connections','repository_search','repository_read'}
+
+def allowed_job_action(job,action):
+    state=json.loads(job['messages'])
+    source_only=isinstance(state,dict) and state.get('source_only')
+    return allowed_action(job['org'],action) and (not source_only or action in SOURCE_ACTIONS)
 
 def workspace(job_id):
     p = DATA/'jobs'/job_id/'workspace'
@@ -261,7 +279,7 @@ class Tools:
     @tool_call
     def execute(self,job,action,a):
         id = job['id']
-        if not allowed_action(job['org'],action):
+        if not allowed_job_action(job,action):
             raise ValueError('This organization lacks the capability: '+action)
         if action=='read_action_receipt':
             receipt=self.store.one('SELECT id,tool,args,status,result FROM approvals WHERE job_id=? AND id=?',(id,a['id']))
@@ -446,6 +464,24 @@ class Tools:
         if action=='fetch_url':
             from .research import fetch_url
             return fetch_url(a['url'])
+        if action=='repository_connections':
+            from .github import connection_status
+            return connection_status()
+        if action=='repository_search':
+            from .github import search_repositories
+            return search_repositories(a['name'],a.get('owner'))
+        if action=='repository_read':
+            from .github import read_repository
+            result=read_repository(a['repository'],a.get('path'),a.get('ref'))
+            text=result.pop('text')
+            target=workspace(id)/'evidence'/('repository-'+result['sha256']+'.txt')
+            target.parent.mkdir(parents=True,exist_ok=True)
+            if not target.exists():
+                target.write_bytes(text.encode('utf-8'))
+            file=file_record(self.store,id,target,'text/plain')
+            return {**result,'repository_path':result['path'],'path':str(target),
+                    'file_id':file['file_id'],'url':file['url'],'text':text[:4000],
+                    'truncated':len(text)>4000,'next_offset':4000 if len(text)>4000 else None}
         if action in {'mail_attachments','teams_attachments'}:
             target=workspace(id)/'downloaded'/uid()[:8]
             target.mkdir(parents=True,exist_ok=True)
