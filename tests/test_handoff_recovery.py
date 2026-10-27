@@ -2,10 +2,11 @@
 import hashlib
 import json
 from pathlib import Path
+import pytest
 
 from cos import tools
 from cos.engine import Engine,session
-from cos.tools import file_record,workspace
+from cos.tools import file_record,workspace,Tools
 from test_context import env
 
 
@@ -93,3 +94,51 @@ def test_missing_child_file_is_isolated(env):
     Engine(env).release_parents()
     assert env.job(broken['id'])['status']=='blocked'
     assert env.job(healthy['id'])['status']=='queued'
+
+
+def test_revision_requires_selected_file_and_rewrites_old_deliverable_link(env):
+    parent,source,ids=waiting_parent(env)
+    engine=Engine(env)
+    engine.release_parents()
+    local=env.one('SELECT * FROM files WHERE job_id=?',(parent['id'],))
+    request='Revise /api/files/'+ids[0]
+    count=len(env.rows('SELECT id FROM jobs'))
+    with pytest.raises(ValueError,match='Include local file_id '+local['id']):
+        engine.delegate(parent,{'tasks':[{'org':'Technology','request':request}]})
+    assert len(env.rows('SELECT id FROM jobs'))==count
+    engine.delegate(parent,{'tasks':[{'org':'Technology','request':request,'file_ids':[local['id']]}]})
+    child=env.one('SELECT * FROM jobs WHERE parent_id=? AND id<>?',(parent['id'],source['id']))
+    transferred=env.one('SELECT * FROM files WHERE job_id=?',(child['id'],))
+    assert child['request']=='Revise /api/files/'+transferred['id']
+    # Use plain text bytes for a real extraction through the tool.
+    p=workspace(child['id'])/'notes.txt'
+    p.write_text('Source-grounded tasks',encoding='utf-8')
+    fid=file_record(env,child['id'],p)['file_id']
+    for ref in [fid,'/api/files/'+fid]:
+        assert Tools(env).execute(child,'read_file',{'path':ref})['text']=='Source-grounded tasks'
+
+
+def test_artifact_references_do_not_grant_cross_job_access(env):
+    source=env.create_job('Private source','Technology')
+    p=workspace(source['id'])/'source.txt'
+    p.write_text('Private source bytes',encoding='utf-8')
+    fid=file_record(env,source['id'],p)['file_id']
+    unrelated=env.create_job('Unrelated task','Technology')
+    with pytest.raises(ValueError,match='not attached'):
+        Tools(env).execute(unrelated,'read_file',{'path':'/api/files/'+fid})
+    with pytest.raises(ValueError,match='Attach the source'):
+        Engine(env).delegate(unrelated,{'tasks':[{'org':'Technology','request':'Read /api/files/'+fid}]})
+    assert not env.rows('SELECT id FROM jobs WHERE parent_id=?',(unrelated['id'],))
+
+
+def test_old_links_resolve_only_after_a_copy_is_attached(env):
+    source=env.create_job('Produce source','Technology')
+    p=workspace(source['id'])/'source.txt'
+    p.write_text('Verified original content',encoding='utf-8')
+    fid=file_record(env,source['id'],p)['file_id']
+    target=env.create_job('Read returned document','Technology')
+    file=env.one('SELECT * FROM files WHERE id=?',(fid,))
+    Engine(env).handoff_file(target['id'],file,'inputs')
+    p.unlink()  # Reading must use the local copy, never the source workspace.
+    assert Tools(env).execute(target,'read_file',{'path':'/api/files/'+fid})['text']=='Verified original content'
+    assert Tools(env).execute(target,'read_file',{'path':fid})['text']=='Verified original content'

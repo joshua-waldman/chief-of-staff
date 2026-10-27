@@ -10,7 +10,7 @@ from .config import settings,DATA,gateway_key
 from .db import uid,now
 from .provider import Gateway,NotConfigured,ContextWindowExceeded,tool_schema,string
 from .context import prepare as prepare_context
-from .tools import Tools,CATALOG,COMMON,ORG_ACTIONS,allowed_action,workspace,file_record,prepare_changes,selected_files
+from .tools import Tools,CATALOG,COMMON,ORG_ACTIONS,allowed_action,workspace,file_record,prepare_changes,selected_files,local_artifact,ARTIFACT_LINK
 from .policy import classify
 from .knowledge import Knowledge
 from .reviews import reply as review_reply,REVIEW_POLICY
@@ -633,14 +633,30 @@ class Engine:
         for task in tasks:
             if len(task['request'])>12000:
                 raise ValueError('Keep each delegated request within 12000 characters; pass selected source file_ids instead of full history.')
-            selected_files(self.store,job['id'],task.get('file_ids',[]))
+            selected=selected_files(self.store,job['id'],task.get('file_ids',[]))
+            selected_ids={f['id'] for f in selected}
+            for reference in ARTIFACT_LINK.findall(task['request']):
+                file=local_artifact(self.store,job['id'],reference)
+                if not file or file['id'] not in selected_ids:
+                    hint=' Include local file_id '+file['id']+' in file_ids.' if file else ' Attach the source to this job first.'
+                    raise ValueError('Referenced artifact /api/files/'+reference+' is not selected for delegation.'+hint)
 
     def delegate(self,job,a):
+        # Dispatch uses this lock too: publish the child only after inputs and
+        # rewritten references are ready.
+        with self.lock:
+            return self._delegate_with_inputs(job,a)
+
+    def _delegate_with_inputs(self,job,a):
         self.validate_delegation(job,a)
         for t in a['tasks']:
             child=self.store.create_job(t['request'],t['org'],t.get('project',job['project']),job['id'])
+            links={}
             for f in selected_files(self.store,job['id'],t.get('file_ids',[])):
-                self.handoff_file(child['id'],f,'inputs')
+                links[f['id']]=self.handoff_file(child['id'],f,'inputs')['url']
+            request=ARTIFACT_LINK.sub(lambda match: links[local_artifact(self.store,job['id'],match[1])['id']],t['request'])
+            if request!=t['request']:
+                self.store.write('UPDATE jobs SET request=? WHERE id=?',(request,child['id']))
             self.store.event(job['id'],'delegated',t['org']+': '+t['request'][:200])
 
     def handoff_file(self,job_id,file,directory):
