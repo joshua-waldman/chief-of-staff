@@ -1,7 +1,7 @@
 
 const $=s=>document.querySelector(s),token=$('meta[name=cos-token]').content;
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const names={overview:'Overview',jobs:'Job tracker',attention:'Needs attention',results:'Ready for review',organizations:'Organizations',knowledge:'Knowledge base',commitments:'Commitments',connections:'Connections',acceptance:'Acceptance tests'};
+const names={schedules:'Scheduled tasks',overview:'Overview',jobs:'Job tracker',attention:'Needs attention',results:'Ready for review',organizations:'Organizations',knowledge:'Knowledge base',commitments:'Commitments',connections:'Connections',acceptance:'Acceptance tests'};
 const labels={waiting_capacity:'Waiting for model capacity',capacity_paused:'Model capacity needs attention',queued:'Queued',running:'Running',waiting_children:'Delegated',waiting_input:'Your input needed',awaiting_approval:'Approval needed',blocked:'Setup needed',completed:'Completed',failed:'Failed',cancelled:'Cancelled',watching:'Watching',needs_attention:'Needs attention',paused:'Paused'};
 let queueChanging=false;
 let returnedResults=[],knownResults=null;
@@ -112,6 +112,7 @@ function render(){
  }else if(view==='organizations'){
  html=intro('A team built around your work.','Your agent organization chart. Open any task to inspect its work, decisions, and delegated agents. Agents are task-specific; queued and waiting agents remain visible until finished.')+organizationChart()+'<div class="section-title"><h2>Engineering projects</h2></div>'+Object.entries(state.settings.projects).map(([n,p])=>'<div class="panel"><h3>'+esc(n)+'</h3><p class="code">'+esc(p)+'</p></div>').join('');
  }else if(view==='commitments')html=commitmentsView();
+ else if(view==='schedules')html=schedulesView();
  else if(view==='knowledge')html=knowledgeView();
  else if(view==='connections')html=connectionView();
  else html=intro('Evidence before confidence.','Create live acceptance requests after connecting services. Automated smoke tests run separately.')+'<div class="warning">Live requests consume AMD gateway usage. Communications sends still require approval.</div><div class="two-col">'+tests.map((t,i)=>'<article class="panel test-card"><div class="eyebrow">LIVE ACCEPTANCE</div><h2>'+esc(t.category)+'</h2><p>'+esc(t.request)+'</p><ol>'+t.checks.map(c=>'<li>'+esc(c)+'</li>').join('')+'</ol>'+btn('Create acceptance request ↗','data-test="'+i+'"')+'</article>').join('')+'</div>';
@@ -133,6 +134,7 @@ function connectionView(){if(!con)return intro('Your tools. Connected.','Loading
 function bindRows(){document.querySelectorAll('[data-job]').forEach(b=>{b.onclick=e=>{if(!e.target.closest('details'))openJob(b.dataset.job)};b.onkeydown=e=>{if(e.key==='Enter'&&!e.target.closest('details'))openJob(b.dataset.job)}})}
 function handle(fn){return async e=>{try{await fn(e)}catch(error){toast(error.message,true)}}}
 function bind(){
+ bindSchedules();
  bindCommitments();
  bindKnowledge();
  if($('#setup-atlassian'))$('#setup-atlassian').onclick=handle(async()=>{await api('atlassian/setup',{});toast('Complete setup in the local PowerShell window, then test the connection here.')});
@@ -227,8 +229,8 @@ async function openJob(id,{background=false}={}){
  if($('#retry-capacity'))$('#retry-capacity').onclick=handle(async()=>{await api('jobs/'+id+'/retry-capacity',{});await openJob(id);await refresh()});
  if($('#cancel-job'))$('#cancel-job').onclick=handle(async()=>{await api('jobs/'+id+'/cancel',{});await openJob(id);await refresh()});
 }
-async function navigate(next){view=next;if(view==='commitments')await loadCommitments();if(view==='connections'){con=await api('connections');atlassian=await api('atlassian');}if(view==='acceptance')tests=await api('acceptance');if(view==='knowledge')memories=await api('knowledge');if(view==='organizations')organizationAgents=await api('organization-agents');render()}
-async function refresh(force=false){const [nextState,nextJobs,nextResults,nextAgents]=await Promise.all([api('status'),api('jobs'),api('results'),view==='organizations'?api('organization-agents'):Promise.resolve(null)]);state=nextState;renderQueueControl();jobs=nextJobs;notifyResults(nextResults);returnedResults=nextResults;$('#results-count').textContent=returnedResults.length;if(nextAgents!==null)organizationAgents=nextAgents;if(view==='knowledge'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))memories=await api('knowledge');if(view==='commitments'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))await loadCommitments();if(force||!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))render()}
+async function navigate(next){view=next;if(view==='schedules')await loadSchedules();if(view==='commitments')await loadCommitments();if(view==='connections'){con=await api('connections');atlassian=await api('atlassian');}if(view==='acceptance')tests=await api('acceptance');if(view==='knowledge')memories=await api('knowledge');if(view==='organizations')organizationAgents=await api('organization-agents');render()}
+async function refresh(force=false){const [nextState,nextJobs,nextResults,nextAgents]=await Promise.all([api('status'),api('jobs'),api('results'),view==='organizations'?api('organization-agents'):Promise.resolve(null)]);state=nextState;renderQueueControl();jobs=nextJobs;notifyResults(nextResults);returnedResults=nextResults;$('#results-count').textContent=returnedResults.length;if(nextAgents!==null)organizationAgents=nextAgents;if(view==='knowledge'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))memories=await api('knowledge');if(view==='schedules')await loadSchedules();if(view==='commitments'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))await loadCommitments();if(force||!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))render()}
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=handle(()=>navigate(b.dataset.view)));$('#close-dialog').onclick=()=>{$('#job-dialog').close();selected=null};$('#job-dialog').addEventListener('close',()=>selected=null);
 refresh().catch(e=>toast(e.message,true));
 setInterval(async()=>{if(busy)return;busy=true;try{await refresh();if(view==='connections'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){con=await api('connections');render()}if(selected&&$('#job-dialog').open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)&&!document.querySelector('#detail button[disabled]'))await openJob(selected,{background:true})}catch(e){}finally{busy=false}},4000);

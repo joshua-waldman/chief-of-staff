@@ -120,6 +120,32 @@ Self-Improvement jobs autonomously create application feature branches, run Pyth
 
 ## Monitoring and remote requests
 
+### Scheduled tasks
+
+Open **Scheduled tasks** to create a named request, optionally select a registered
+project, and choose **Once**, **Daily**, or **Weekly**. Set the start date/time and
+an IANA timezone such as `America/Chicago`. Weekly tasks run on the start date's
+weekday. Daily and weekly tasks retain their local clock time across daylight
+saving changes. A repeated clock time runs once at its first occurrence; a time
+inside a spring-forward gap runs at the first valid minute after the gap.
+
+Schedules are stored in SQLite and survive restarts. COS must be running and
+connected to enqueue and execute them; it cannot wake the computer or start the
+server. After downtime or a disconnect, overdue occurrences produce one catch-up
+run, then the next future occurrence. A recurring task waits while its previous
+job is queued, running, awaiting review/input, or blocked, so unattended approvals
+cannot create an overlapping backlog. Ordinary completed results may remain in
+Ready for review without blocking the next run.
+
+Edit, pause, resume, or delete schedules from the same view. Changes apply to
+future runs; existing jobs and the saved run receipts remain. Recent runs link to
+their jobs and show their status. Removed project registrations stop new runs
+until you edit the schedule to select a valid project. Each run is an ordinary COS
+request with the existing queue limits, context, result review, and action approval
+rules. Creating a schedule does not approve its future external actions. Install
+updated requirements (including `tzdata` on Windows), restart the server, and
+refresh the browser after updating.
+
 With the default four parallel agents, at least one slot is reserved for Communications. Research, engineering, planning and other work can use up to three slots; Communications also uses any of those slots left idle, so all four agents can process email and Teams when no other work is ready. As borrowed slots become free, ready work from other organizations takes priority over additional communications jobs. The reserved slot stays available when the communications queue is empty. Waiting for approval or settling conversation activity releases the worker so another eligible job can run. With a single configured agent, both queues share that worker in queue order. Model capacity limits still apply across agents.
 
 Conversation replies settle for 15 seconds before reassessment, with a 60-second maximum coalescing wait for continuously busy chats. Prior findings and source details survive updates; obsolete drafts and approvals are retired immediately. `max_steps` controls automatic worker handoffs rather than stopping a long-lived job for owner input. Progress is saved and the job returns behind other ready work. Repeated unchanged evidence or errors trigger a warning and then a separate progress safeguard (`max_stalled_steps`, default 12); new source activity or owner direction resets that safeguard. Existing jobs stopped solely by the former step-budget question resume automatically on startup, while real questions and unresolved actions remain waiting.

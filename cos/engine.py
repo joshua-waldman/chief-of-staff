@@ -46,6 +46,8 @@ class Engine:
         self.store=store
         self.provider=provider or Gateway(store)
         self.capacity=Capacity(store)
+        from .schedules import Schedules
+        self.schedules=Schedules(store)
         self.tools=Tools(store)
         self.knowledge=Knowledge(store)
         from .queue_intake import QueueIntake
@@ -266,6 +268,7 @@ class Engine:
             try:
                 if settings().get('queue_paused',False):
                     continue
+                self.schedules.tick()
                 deliver_waiting(self.store)
                 self.release_parents()
                 with self.lock:

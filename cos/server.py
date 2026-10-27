@@ -125,6 +125,28 @@ async def commitment_review(id,request:Request):
     from .commitments import Commitments
     return Commitments(store).review(id,await request.json())
 
+@app.get('/api/schedules')
+def schedule_list():
+    from .schedules import Schedules
+    return Schedules(store).list()
+
+
+@app.post('/api/schedules')
+async def schedule_create(request:Request):
+    from .schedules import Schedules
+    return Schedules(store).save(await request.json())
+
+
+@app.post('/api/schedules/{id}')
+async def schedule_change(id,request:Request):
+    from .schedules import Schedules
+    body=await request.json()
+    if not isinstance(body,dict):
+        raise ValueError('Schedule must be an object.')
+    schedules=Schedules(store)
+    return schedules.change(id,body) if 'action' in body else schedules.save(body,id)
+
+
 @app.get('/api/jobs')
 def jobs():
     rows=store.rows('''SELECT j.id,j.parent_id,j.title,j.org,j.project,j.status,j.created,j.updated,j.result,j.question,b.body AS brief_body
