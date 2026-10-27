@@ -46,6 +46,22 @@ def test_finish_queues_response_and_selected_deliverables_durably(setup):
     assert store.job(job['id'])['result'] == 'Finished response'
 
 
+def test_parent_review_resolves_original_child_file_links(setup, monkeypatch):
+    store, engine = setup
+    monkeypatch.setattr(server, 'store', store)
+    parent = store.create_job('Coordinate plan', 'Strategy')
+    child = store.create_job('Draft task list', 'Strategy', parent_id=parent['id'])
+    output = engine.tools.execute(child, 'write_file', {'path': 'task-list.txt', 'content': 'Review these tasks'})
+    finish(store, engine, parent, 'Review '+output['url'])
+    files = store.detail(parent['id'])['result_review']['files']
+    assert [(f['id'], f['name']) for f in files] == [(output['file_id'], 'task-list.txt')]
+    client = TestClient(server.app)
+    client.get('/')
+    response = client.get(output['url'])
+    assert response.status_code == 200
+    assert response.content == b'Review these tasks'
+
+
 def test_child_results_and_intake_closures_do_not_notify_owner(setup):
     store, engine = setup
     parent = store.create_job('Coordinate research', 'Technology')

@@ -55,3 +55,23 @@ test('completion notice announces each new revision once and does not repeat aft
  ctx.notifyResults([{revision:'c',title:'Revised response'}]);
  assert.equal(ctx.messages.length,2);
 });
+
+test('review summaries turn bare and Markdown file references into safe named links',()=>{
+ const ctx=setup(),files=[{id:'abc-123',name:'Roadmap <draft>.docx'}];
+ const html=ctx.resultSummary('Review /api/files/abc-123. Also [Task list](/api/files/child). <script>bad</script>',files);
+ assert.match(html,/href="\/api\/files\/abc-123"[^>]*>Roadmap &lt;draft>.docx<\/a>\./);
+ assert.match(html,/href="\/api\/files\/child"[^>]*>Task list<\/a>/);
+ assert.match(html,/target="_blank" rel="noopener"/);
+ assert.ok(!html.includes('<script>'));
+ assert.match(ctx.resultSummary('/api/files/unknown'),/>Open review file<\/a>/);
+ assert.equal(ctx.resultSummary('[Bad](javascript:alert(1))'),'[Bad](javascript:alert(1))');
+});
+
+test('parent reviews use referenced child file names and queue cards offer file links',()=>{
+ const ctx=setup();
+ const review={summary:'Read /api/files/child.',file_ids:[],completed:'today',files:[{id:'child',name:'Task list.docx'}]};
+ const html=ctx.returnedResultView({files:[],result_review:review});
+ assert.match(html,/>Task list.docx<\/a>/);
+ ctx.returnedResults=[{...review,id:'parent',title:'Roadmap',org:'Strategy'}];
+ assert.match(ctx.resultsView(),/href="\/api\/files\/child"/);
+});

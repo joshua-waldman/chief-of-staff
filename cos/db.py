@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -123,6 +124,15 @@ class Store:
         j['brief']=detail_brief(self,j)
         j['review_messages']=self.rows('SELECT * FROM review_messages WHERE job_id=? ORDER BY id',(id,))
         j['result_review']=self.result_review(id) if j['status']=='completed' else None
+        if j['result_review']:
+            review=j['result_review']
+            ids=set(review['file_ids']) | set(re.findall(r'/api/files/([A-Za-z0-9_-]+)',review['summary']))
+            # Summaries may retain a child's original URL after a parent handoff.
+            review['files']=[]
+            for file_id in sorted(ids):
+                file=self.one('SELECT * FROM files WHERE id=?',(file_id,))
+                if file and not is_recovery_file(file['job_id'],file['path']):
+                    review['files'].append({**file,'purpose':'deliverable'})
         j['source_messages']=self.rows('SELECT * FROM communication_sources WHERE job_id=? ORDER BY received,message_id',(id,))
         from .capacity import Capacity
         raw=json.loads(j['messages'])
