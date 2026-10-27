@@ -71,14 +71,24 @@ function resultsNotice(){
  const count=returnedResults.length;
  return count?'<section class="panel result-notice" role="status"><h2>'+count+' completed '+(count===1?'result is':'results are')+' ready for review</h2><p>Responses and deliverables stay here until you mark them reviewed.</p>'+btn('Review completed work →','data-go="results"')+'</section>':'';
 }
+function resultSummary(summary,files=[]){
+ const text=String(summary||''),pattern=/\[([^\]\n]+)\]\(\/api\/files\/([A-Za-z0-9_-]+)\)|\/api\/files\/([A-Za-z0-9_-]+)/g;
+ let html='',end=0;
+ for(const match of text.matchAll(pattern)){
+  const id=match[2]||match[3],file=files.find(f=>f.id===id);
+  html+=esc(text.slice(end,match.index))+'<a class="review-file-link" href="/api/files/'+encodeURIComponent(id)+'" target="_blank" rel="noopener">'+esc(file?.name||match[1]||'Open review file')+'</a>';
+  end=match.index+match[0].length;
+ }
+ return html+esc(text.slice(end));
+}
 function resultsView(){
- return intro('Your completed work, ready to review.','Read the response, open its deliverables, and mark it reviewed when you are done.')+(returnedResults.length?returnedResults.map(r=>'<article class="panel"><div class="eyebrow">'+esc(r.org)+' · '+esc(date(r.completed))+'</div><h2>'+esc(r.display_name||r.title)+'</h2><p class="result">'+esc(r.summary)+'</p>'+btn('Review response & deliverables','data-job="'+esc(r.id)+'"')+'</article>').join(''):'<section class="panel empty"><h2>All caught up</h2><p>New completed responses and deliverables will appear here.</p></section>');
+ return intro('Your completed work, ready to review.','Read the response, open its deliverables, and mark it reviewed when you are done.')+(returnedResults.length?returnedResults.map(r=>'<article class="panel"><div class="eyebrow">'+esc(r.org)+' · '+esc(date(r.completed))+'</div><h2>'+esc(r.display_name||r.title)+'</h2><p class="result">'+resultSummary(r.summary)+'</p>'+btn('Review response & deliverables','data-job="'+esc(r.id)+'"')+'</article>').join(''):'<section class="panel empty"><h2>All caught up</h2><p>New completed responses and deliverables will appear here.</p></section>');
 }
 function returnedResultView(j){
  const r=j.result_review;
  if(!r)return '';
- const files=j.files.filter(f=>(r.file_ids.includes(f.id)||r.summary.includes('/api/files/'+f.id))&&f.purpose!=='recovery');
- return '<section class="panel returned-result"><h3>'+(r.reviewed?'Reviewed result':'Completed · Ready for your review')+'</h3><p class="small">Returned '+esc(date(r.completed))+'</p><div class="readable">'+esc(r.summary)+'</div>'+jobFilesView(files)+(r.reviewed?'<p class="small">Marked reviewed '+esc(date(r.reviewed))+'</p>':'<p class="small">This stays in Ready for review until you mark it reviewed.</p>'+btn('Mark reviewed','id="mark-result-reviewed"'))+'</section>';
+ const files=(r.files||j.files).filter(f=>(r.file_ids.includes(f.id)||r.summary.includes('/api/files/'+f.id))&&f.purpose!=='recovery');
+ return '<section class="panel returned-result"><h3>'+(r.reviewed?'Reviewed result':'Completed · Ready for your review')+'</h3><p class="small">Returned '+esc(date(r.completed))+'</p><div class="readable">'+resultSummary(r.summary,files)+'</div>'+jobFilesView(files)+(r.reviewed?'<p class="small">Marked reviewed '+esc(date(r.reviewed))+'</p>':'<p class="small">This stays in Ready for review until you mark it reviewed.</p>'+btn('Mark reviewed','id="mark-result-reviewed"'))+'</section>';
 }
 function notifyResults(results){
  const revisions=new Set(results.map(r=>r.revision));

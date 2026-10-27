@@ -10,3 +10,4 @@
 .header-controls{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}header:has(.header-controls){height:auto;min-height:72px;gap:12px;padding-top:10px;padding-bottom:10px}#queue-toggle:focus-visible{outline:2px solid var(--green);outline-offset:3px}@media(max-width:760px){.gateway-label{display:none}.header-controls{gap:5px}#queue-toggle{padding:8px 10px}}
 
 .result-notice,.returned-result{border-left:4px solid var(--green)}.returned-result>.primary{margin-top:12px}.result-notice h2{margin-top:0}
+.review-file-link{color:var(--green);font-weight:600;text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}.review-file-link:hover{background:#eef4ef}.review-file-link:focus-visible{outline:2px solid var(--green);outline-offset:3px}
