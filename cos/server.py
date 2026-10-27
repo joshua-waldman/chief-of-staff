@@ -158,6 +158,8 @@ def jobs():
     for job in rows:
         brief=json.loads(job.pop('brief_body') or '{}')
         briefs[job['id']]=brief
+        for field in ('time_sensitive','timing_reason','deadline_at'):
+            job[field]=brief.get(field,'')
         job['triage_category']=category(brief) if job['org']=='Communications' else ''
         job['triage_summary']=brief.get('email_excerpt','') if job['org']=='Communications' else ''
     add_display_names(store,rows,briefs)

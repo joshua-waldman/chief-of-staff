@@ -2,6 +2,18 @@
 let commitmentPage={items:[],total:0,offset:0,limit:25},commitmentQuery='',commitmentFilter='active',commitmentDetail=null,commitmentMergeTarget=null;
 const commitmentLabels={proposed:'Proposed — review owner and scope',open:'Open',completed:'Completed',dismissed:'Dismissed',merged:'Merged'};
 
+function commitmentTiming(item,now=new Date()){
+ if(!['open','proposed'].includes(item.status)||!['explicit','inferred'].includes(item.deadline_certainty)||!/^\d{4}-\d{2}-\d{2}$/.test(item.deadline_date||''))return null;
+ const [y,m,d]=item.deadline_date.split('-').map(Number),due=new Date(y,m-1,d);
+ if(due.getFullYear()!==y||due.getMonth()!==m-1||due.getDate()!==d)return null;
+ const today=Date.UTC(now.getFullYear(),now.getMonth(),now.getDate()),days=(Date.UTC(y,m-1,d)-today)/86400000;
+ if(days>2)return null;
+ const inferred=item.deadline_certainty==='inferred';
+ return {level:inferred?'soon':days<0?'overdue':'soon',label:(inferred?'Possible timing — confirm: ':'')+(days<0?'Overdue':days===0?'Due today':'Due soon')};
+}
+function commitmentTimingClass(item){const timing=commitmentTiming(item);return timing?' timing-'+timing.level:''}
+function commitmentTimingBadge(item){const timing=commitmentTiming(item);return timing?'<span class="timing-badge timing-'+timing.level+'">◷ '+esc(timing.label)+'</span>':''}
+
 function commitmentDeadline(item){
  const certainty={unknown:'Deadline unknown',explicit:'Stated deadline',inferred:'Inferred date — confirm'}[item.deadline_certainty]||'Deadline unknown';
  return certainty+(item.deadline_text?' · '+item.deadline_text:'')+(item.deadline_date?' · '+item.deadline_date:'');
@@ -24,7 +36,7 @@ function renderCommitments(resetFields=false){
 }
 
 function commitmentSummary(item){
- return '<article class="panel">'+readable('Owner',item.owner)+readable('Deliverable',item.deliverable)+readable('Scope',item.scope)+readable('Status',commitmentLabels[item.status]||item.status)+readable('Timing',commitmentDeadline(item))+(item.deadline_basis?readable('Date interpretation',item.deadline_basis):'')+'</article>';
+ return '<article class="panel'+commitmentTimingClass(item)+'">'+commitmentTimingBadge(item)+readable('Owner',item.owner)+readable('Deliverable',item.deliverable)+readable('Scope',item.scope)+readable('Status',commitmentLabels[item.status]||item.status)+readable('Timing',commitmentDeadline(item))+(item.deadline_basis?readable('Date interpretation',item.deadline_basis):'')+'</article>';
 }
 
 function commitmentSources(item){
@@ -61,7 +73,7 @@ function commitmentDetailView(item){
 }
 
 function commitmentsView(){
- return intro('Commitments that stay connected.','Review meeting assignments, preserve uncertain dates, and reconcile evidence across meetings.')+'<p>New assignments are proposals until you confirm them. Source evidence never closes work automatically.</p><div class="toolbar"><form id="cm-search-form"><label for="cm-query">Search commitments</label><input id="cm-query" value="'+esc(commitmentQuery)+'"><label for="cm-filter">Status</label><select id="cm-filter">'+Object.entries({active:'Proposed and open',all:'All records',...commitmentLabels}).map(([value,label])=>'<option value="'+value+'" '+(value===commitmentFilter?'selected':'')+'>'+esc(label)+'</option>').join('')+'</select>'+btn('Search','type="submit"')+'</form></div><div id="cm-list">'+(commitmentPage.items.length?commitmentPage.items.map(item=>'<article class="panel"><div class="section-title"><h2>'+esc(item.deliverable)+'</h2><span class="tag">'+esc(commitmentLabels[item.status])+'</span></div><p>'+esc(item.owner)+' · '+esc(item.scope)+'</p><p>'+esc(commitmentDeadline(item))+'</p>'+(item.completion_pending?'<p class="warning">Completion evidence needs review.</p>':'')+btn('Review record','data-cm-open="'+esc(item.id)+'"','secondary')+'</article>').join(''):'<div class="panel empty">No commitments match this view. Ask COS to review a meeting transcript and propose explicit owner commitments.</div>')+'</div><div class="row"><p>'+commitmentPage.total+' matching records</p>'+(commitmentPage.offset?btn('Previous','data-cm-page="'+Math.max(0,commitmentPage.offset-commitmentPage.limit)+'"','secondary'):'')+(commitmentPage.offset+commitmentPage.limit<commitmentPage.total?btn('Next','data-cm-page="'+(commitmentPage.offset+commitmentPage.limit)+'"','secondary'):'')+'</div>'+(commitmentDetail?commitmentDetailView(commitmentDetail):'');
+ return intro('Commitments that stay connected.','Review meeting assignments, preserve uncertain dates, and reconcile evidence across meetings.')+'<p>New assignments are proposals until you confirm them. Source evidence never closes work automatically.</p><div class="toolbar"><form id="cm-search-form"><label for="cm-query">Search commitments</label><input id="cm-query" value="'+esc(commitmentQuery)+'"><label for="cm-filter">Status</label><select id="cm-filter">'+Object.entries({active:'Proposed and open',all:'All records',...commitmentLabels}).map(([value,label])=>'<option value="'+value+'" '+(value===commitmentFilter?'selected':'')+'>'+esc(label)+'</option>').join('')+'</select>'+btn('Search','type="submit"')+'</form></div><div id="cm-list">'+(commitmentPage.items.length?commitmentPage.items.map(item=>'<article class="panel'+commitmentTimingClass(item)+'"><div class="section-title"><h2>'+esc(item.deliverable)+'</h2><span class="tag">'+esc(commitmentLabels[item.status])+'</span></div>'+commitmentTimingBadge(item)+'<p>'+esc(item.owner)+' · '+esc(item.scope)+'</p><p>'+esc(commitmentDeadline(item))+'</p>'+(item.completion_pending?'<p class="warning">Completion evidence needs review.</p>':'')+btn('Review record','data-cm-open="'+esc(item.id)+'"','secondary')+'</article>').join(''):'<div class="panel empty">No commitments match this view. Ask COS to review a meeting transcript and propose explicit owner commitments.</div>')+'</div><div class="row"><p>'+commitmentPage.total+' matching records</p>'+(commitmentPage.offset?btn('Previous','data-cm-page="'+Math.max(0,commitmentPage.offset-commitmentPage.limit)+'"','secondary'):'')+(commitmentPage.offset+commitmentPage.limit<commitmentPage.total?btn('Next','data-cm-page="'+(commitmentPage.offset+commitmentPage.limit)+'"','secondary'):'')+'</div>'+(commitmentDetail?commitmentDetailView(commitmentDetail):'');
 }
 
 async function reviewCommitment(action){

@@ -11,3 +11,13 @@
 
 .result-notice,.returned-result{border-left:4px solid var(--green)}.returned-result>.primary{margin-top:12px}.result-notice h2{margin-top:0}
 .review-file-link{color:var(--green);font-weight:600;text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}.review-file-link:hover{background:#eef4ef}.review-file-link:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+
+/* Timing is independent of workflow status; text labels accompany every accent. */
+.timing-badge{display:inline-block;margin:5px 6px 5px 0;padding:4px 8px;border:1px solid #e4c98e;border-radius:5px;font-size:10px;font-weight:600;background:#fff4dc;color:#795311;white-space:normal}
+tr.timing-soon,.panel.timing-soon{background:#fffcf4}
+tr.timing-overdue,.panel.timing-overdue{background:#fff7f5}
+tr.timing-soon>td:first-child,.panel.timing-soon{box-shadow:inset 3px 0 #c69435}
+tr.timing-overdue>td:first-child,.panel.timing-overdue{box-shadow:inset 3px 0 #bf5848}
+.timing-badge.timing-overdue{border-color:#e9b3a8;background:#fce8e2;color:#963c2c}
+tbody tr.timing-soon:hover{background:#fff4dc}tbody tr.timing-overdue:hover{background:#fce8e2}
+.detail-meta{flex-wrap:wrap}

@@ -4,6 +4,26 @@ import re
 from .db import now
 FIELDS={'action_needed','action_reason','requested_action','action_plan','context','status_summary','next_step','email_from','email_subject','email_received','email_excerpt','email_id','response_needed','response_reason','proposed_to','proposed_subject','proposed_body','uncertainties'}
 FIELDS |= {'triage_category','triage_reason','job_name'}
+FIELDS |= {'time_sensitive','timing_reason','deadline_at'}
+
+TIMING_POLICY = """Assess time sensitivity with LLM reasoning for every request requiring
+owner attention, even when no explicit timeline is stated. Before asking for
+input, requesting approval, or finishing triage, use update_brief to record
+time_sensitive (yes/no/unknown), timing_reason, and deadline_at (empty unless an
+actual deadline and timezone are established). Evaluate consequences of delay,
+blocked people or work, dependencies, active incidents, expiring opportunities,
+and the surrounding conversation. A credible need for prompt attention can be
+inferred without any date or the word urgent. Explain the contextual evidence
+and likely impact of delay in timing_reason; label inferred urgency as an
+assessment rather than a stated deadline. Use no for routine work that can wait;
+unknown when evidence is insufficient. Do not assume every approval, question,
+senior sender or urgent subject is time critical. Assess the owner's outstanding
+obligation, not work assigned to others or already resolved. Never invent a
+deadline to express urgency. Use deadline_at only for a supported ISO timestamp
+with timezone. Reassess timing as new evidence arrives and clear obsolete timing
+fields when an obligation is resolved or superseded.
+"""
+
 
 def unresolved_action(store, job):
     row=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
@@ -26,6 +46,16 @@ def update_brief(store,job,a):
             raise ValueError('Invalid summary field length.')
         if key in {'response_needed','action_needed'} and value not in {'yes','no','unknown'}:
             raise ValueError(key+' must be yes, no, or unknown.')
+        if key == 'time_sensitive' and value not in {'yes','no','unknown'}:
+            raise ValueError('time_sensitive must be yes, no, or unknown.')
+        if key == 'deadline_at' and value:
+            from datetime import datetime
+            try:
+                parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    raise ValueError()
+            except ValueError:
+                raise ValueError('deadline_at must be an ISO timestamp with a timezone, or empty.')
         if key == 'triage_category':
             from .message_triage import LABELS
             if value not in LABELS:
@@ -34,6 +64,8 @@ def update_brief(store,job,a):
             from .job_names import compact_name
             value = compact_name(value)
         body[key]=value.strip()
+    if body.get('time_sensitive') == 'yes' and not body.get('timing_reason'):
+        raise ValueError('Explain the evidence for time-sensitive attention in timing_reason.')
     if job['org'] == 'Communications':
         from .message_triage import category
         if body.get('triage_category') == 'review' and 'triage_category' not in a and {'response_needed','action_needed'}.intersection(a):

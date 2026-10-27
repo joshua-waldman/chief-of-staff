@@ -82,6 +82,7 @@ function jobRefreshContext(){
   captureView:root=>({y:root.scrollTop}),restoreView:(root,saved)=>root.scrollTop=saved.y,
   esc:x=>String(x??''),badge:()=>'',date:()=>'',readable:()=>'',reviewView:()=>'',returnedResultView:()=>'',btn:()=>'',bindReview:()=>{}};
  vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function itemTiming('),source.indexOf('function table(')),ctx);
  vm.runInContext(source.slice(source.indexOf('function capacityView('),source.indexOf('async function navigate(')),ctx);
  return {ctx,dialog,detail,writes:()=>writes,respond:(title='Title',extra={})=>resolveRequest({id:'job',title,display_name:title,org:'Engineering',status:'completed',approvals:[],files:[],children:[],events:[],...extra})};
 }
@@ -145,6 +146,7 @@ test('resolved job questions disappear from current status while error history r
  const job={id:'research',org:'Technology',title:'Research',status:'running',project:'',created:'now',request:'Research',brief:{status_summary:'Continuing'},question:'Old access error',approvals:[],files:[],children:[],events:[{id:1,kind:'tool_error',body:'Old access error',created:'then'}]};
  const ctx={selected:null,api:async()=>job,$:s=>nodes[s]||null,esc:x=>String(x??''),badge:x=>x,date:x=>x,readable:()=>'',btn:()=>'',reviewView:()=>'',returnedResultView:()=>'',bindReview:()=>{},document:{querySelectorAll:()=>[]}};
  vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function itemTiming('),source.indexOf('function table(')),ctx);
  const start=source.indexOf('async function openJob(');
  const end=source.indexOf('\n}',start)+2;
  vm.runInContext(source.slice(source.indexOf('function capacityView('),end),ctx);
@@ -216,4 +218,15 @@ test('job detail heading uses the escaped display name instead of the source ID 
  await pending;
  assert.match(s.detail.html,/<h2 class="detail-title">Launch &lt;readiness&gt;<\/h2>/);
  assert.ok(!s.detail.html.includes('19:meeting_opaque'));
+});
+
+test('job details display inferred time sensitivity without a deadline',async()=>{
+ const s=jobRefreshContext();
+ s.ctx.readable=(label,value)=>label+': '+s.ctx.esc(value);
+ const pending=s.ctx.openJob('job',{background:true});
+ s.respond('Launch decision',{status:'waiting_input',brief:{time_sensitive:'yes',timing_reason:'Assessment: dependent team is blocked.'}});
+ await pending;
+ assert.match(s.detail.html,/Time sensitive/);
+ assert.match(s.detail.html,/Timing: Assessment: dependent team is blocked/);
+ assert.ok(!s.detail.html.includes('Overdue'));
 });
