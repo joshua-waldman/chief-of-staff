@@ -1,3 +1,4 @@
+from .processes import background_options
 import base64
 import json
 import mimetypes
@@ -341,7 +342,7 @@ def start_auth():
     auth.update(running=True,output='')
     def run():
         try:
-            p=subprocess.Popen([sys.executable,'-u',str(skill_dir('slai-email')/'scripts/auth.py')],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace')
+            p=subprocess.Popen([sys.executable,'-u',str(skill_dir('slai-email')/'scripts/auth.py')],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace',**background_options())
             for line in p.stdout:
                 auth['output']=(auth['output']+line)[-12000:]
             p.wait()

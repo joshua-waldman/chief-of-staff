@@ -1,3 +1,4 @@
+from .processes import background_options
 import json
 import subprocess
 import sys
@@ -184,7 +185,7 @@ class Monitor:
             self.store.set_state('monitor_status',{**previous,'state':'scanning','attention_required':bool(previous.get('attention_required') or previous.get('state')=='needs_attention'),'started':started,'sources':sources,'active_source':source})
             old=sources.get(source,{})
             try:
-                r=subprocess.run([sys.executable,'-m','cos.monitor_bridge',since,source],cwd=ROOT,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=600)
+                r=subprocess.run([sys.executable,'-m','cos.monitor_bridge',since,source],cwd=ROOT,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=600,**background_options())
                 if r.returncode:
                     raise RuntimeError((r.stderr or r.stdout)[-2500:])
                 data=json.loads(r.stdout)

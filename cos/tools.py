@@ -1,3 +1,4 @@
+from .processes import background_options
 import base64
 import hashlib
 import difflib
@@ -451,7 +452,7 @@ class Tools:
         if action=='meeting_transcripts':
             target=workspace(id)/'meeting-transcripts'
             result=subprocess.run([sys.executable,'-m','cos.meetings',a['chat_id'],str(target),json.dumps({'date':a['date']} if a.get('date') else {})],
-                cwd=ROOT,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=300)
+                cwd=ROOT,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=300,**background_options())
             if result.returncode:
                 raise RuntimeError((result.stdout+'\n'+result.stderr)[-6000:])
             data=json.loads(result.stdout)
@@ -526,7 +527,7 @@ class Tools:
             validate(root)
             script=resolve_path(id,a['path'],True)
             env={k:v for k,v in os.environ.items() if k.upper() in {'SYSTEMROOT','WINDIR','TEMP','TMP','PATH','PATHEXT'}}
-            r=subprocess.run([sys.executable,'-I',str(ROOT/'cos/pure_runner.py'),str(root),str(script.relative_to(root))],cwd=root,env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=20)
+            r=subprocess.run([sys.executable,'-I',str(ROOT/'cos/pure_runner.py'),str(root),str(script.relative_to(root))],cwd=root,env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=20,**background_options())
             return {'exit_code':r.returncode,'stdout':r.stdout[-20000:],'stderr':r.stderr[-12000:],'execution':'restricted-pure-python'}
         if action=='run_sandbox':
             docker=shutil.which('docker')
@@ -538,9 +539,9 @@ class Tools:
             name='cos-'+uid()
             command=[docker,'run','--rm','--name',name,'--network','none','--cap-drop','ALL','--security-opt','no-new-privileges','--memory','1g','--cpus','2','--pids-limit','128','--read-only','--tmpfs','/tmp:rw,size=256m','--mount','type=bind,source='+str(workspace(id))+',target=/workspace','--workdir','/workspace',image,*a['command']]
             try:
-                r=subprocess.run(command,capture_output=True,text=True,timeout=120)
+                r=subprocess.run(command,capture_output=True,text=True,timeout=120,**background_options())
             finally:
-                subprocess.run([docker,'rm','-f',name],capture_output=True,timeout=20)
+                subprocess.run([docker,'rm','-f',name],capture_output=True,timeout=20,**background_options())
             return {'exit_code':r.returncode,'stdout':r.stdout[-24000:],'stderr':r.stderr[-12000:]}
         if action in {'run_command','install_dependencies'}:
             try:
