@@ -367,6 +367,10 @@ Supported deadlines within 48 hours show **Due soon**; past deadlines show
 
 Open and proposed commitments use calendar dates: today and the next two days
 are highlighted, while earlier dates are overdue. Inferred commitment dates
-remain amber and say **Possible timing — confirm**. Existing requests without a
-timing assessment keep their usual appearance until the agent next assesses
-them. Restart COS and refresh the browser after updating.
+remain amber and say **Possible timing — confirm**. The Timing column always distinguishes routine, unclear and not-yet-assessed
+requests. Enable **Connections → Timing assessments** for a tool-free background LLM
+pass that assesses existing attention items
+without resuming their work or changing approvals. It uses saved requests,
+briefs, messages and pending actions, and defers if those facts change during
+assessment. Assessment pauses when COS is disconnected; gateway failures leave
+items visibly unassessed for retry. Restart COS and refresh the browser after updating.
