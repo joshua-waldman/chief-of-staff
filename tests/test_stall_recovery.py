@@ -75,6 +75,8 @@ def test_recovery_budget_survives_receipt_hydration_and_restart(env):
     assert state['stalled_steps']==12
     assert progress.recovery_step(state,12)=='recovering'
     state['stall_recovery']['remaining']=0
+    assert progress.recovery_step(state,12)=='delivery'
+    state['stall_recovery']['remaining']=0
     assert progress.recovery_step(json.loads(json.dumps(state)),12)=='exhausted'
     env.update(job['id'],messages=json.dumps({'messages':[],**state}))
     engine=Engine(env,Scripted())
@@ -94,6 +96,10 @@ def test_new_evidence_can_end_recovery_but_brief_churn_cannot():
     progress.observe(state,'read_file',{'path':'new.txt'},{'source':'new.txt','sha256':'v2','text':'new evidence'})
     assert not state['stall_recovery']['active']
     state['stalled_steps']=12
+    assert progress.recovery_step(state,12)=='delivery'
+    assert state['stall_recovery']['active']
+    assert state['stall_recovery']['verification_reads']==2
+    state['stall_recovery']['remaining']=0
     assert progress.recovery_step(state,12)=='exhausted'
 
 
@@ -144,10 +150,10 @@ def test_completed_source_recovery_limits_verification_and_finishes(env,monkeypa
         def complete(self,messages,**kwargs):
             schema=kwargs['tools'][0]['function']['parameters']['properties']['action']
             if 'enum' in schema:
-                assert 'read_file' not in schema['enum']
                 assert 'finish' in schema['enum']
-                assert 'Verification reads remaining: 0' in json.dumps(messages)
-                return perform('finish',{'summary':'Synthesis using verified evidence.'}),{}
+                if 'read_file' not in schema['enum']:
+                    assert 'Verification reads remaining: 0' in json.dumps(messages)
+                    return perform('finish',{'summary':'Synthesis using verified evidence.'}),{}
             return perform('read_file',{'path':'source.txt'}),{}
     engine=Engine(env,Provider())
     monkeypatch.setattr(engine.tools,'execute',execute)
@@ -193,3 +199,76 @@ def test_cached_primary_messages_are_available_without_reading_archives(env):
     other={}
     recovery.conversation_evidence(env,empty,other)
     assert not other
+
+
+def test_legacy_exhausted_recovery_migrates_once(env):
+    job=stopped(env)
+    state=session(env.job(job['id']))
+    state['stall_recovery']={'version':2,'active':True,'remaining':0,'verification_reads':2}
+    env.update(job['id'],messages=json.dumps(state))
+    engine=Engine(env,Scripted())
+    try:
+        engine.recover_stalled_jobs()
+        assert env.job(job['id'])['status']=='queued'
+        state=session(env.job(job['id']))
+        assert progress.recovery_step(state,12)=='started'
+        state['stall_recovery'].update(phase='deliver',remaining=0)
+        env.update(job['id'],status='blocked',messages=json.dumps(state))
+        engine.recover_stalled_jobs()
+        assert env.job(job['id'])['status']=='blocked'
+    finally:
+        engine.stop()
+
+
+def test_truncated_output_is_not_executed_or_replayed(env,monkeypatch):
+    from cos import config
+    monkeypatch.setitem(config.DEFAULTS,'max_steps',10)
+    job=stopped(env)
+    budgets=[]
+    class Provider:
+        def complete(self,messages,**kwargs):
+            budgets.append(kwargs.get('max_tokens',4096))
+            assert 'partial-call' not in json.dumps(messages)
+            if len(budgets)<=2:
+                answer=perform('write_file',{'path':'must-not-exist.txt','content':'partial-call'})
+                return answer,{'output_incomplete':True}
+            return perform('finish',{'summary':'Finished from retained findings.'}),{}
+    engine=Engine(env,Provider())
+    try:
+        engine.recover_stalled_jobs()
+        engine.run(job['id'])
+        assert env.job(job['id'])['status']=='completed'
+        assert budgets==[4096,8192,16384]
+        assert not env.one("SELECT 1 FROM approvals WHERE job_id=?",(job['id'],))
+    finally:
+        engine.stop()
+
+
+def test_brief_loop_escalates_to_delivery_and_creates_real_output(env,monkeypatch):
+    from cos import config
+    monkeypatch.setitem(config.DEFAULTS,'max_steps',20)
+    job=stopped(env,'Engineering')
+    calls=[]
+    class Provider:
+        def complete(self,messages,**kwargs):
+            if env.one("SELECT 1 FROM approvals WHERE job_id=? AND tool='write_file'",(job['id'],)):
+                return perform('finish',{'summary':'Created verified deliverable.'}),{}
+            actions=kwargs['tools'][0]['function']['parameters']['properties']['action']['enum']
+            calls.append(actions)
+            if 'Focused delivery phase:' in json.dumps(messages):
+                if not env.one("SELECT 1 FROM approvals WHERE job_id=? AND tool='write_file'",(job['id'],)):
+                    assert 'search_mail' not in actions
+                    return perform('write_file',{'path':'result.txt','content':'Verified deliverable'}),{}
+                return perform('finish',{'summary':'Created verified deliverable.'}),{}
+            return perform('update_brief',{'status_summary':'Building the deliverable'}),{}
+    engine=Engine(env,Provider())
+    try:
+        engine.recover_stalled_jobs()
+        engine.run(job['id'])
+        assert env.job(job['id'])['status']=='completed'
+        assert (config.DATA/'jobs'/job['id']/'workspace'/'result.txt').read_text()=='Verified deliverable'
+        assert 'update_brief' not in calls[1]
+        assert env.one("SELECT COUNT(*) n FROM approvals WHERE job_id=? AND tool='update_brief'",(job['id'],))['n']==1
+        assert env.one("SELECT 1 FROM events WHERE job_id=? AND body LIKE 'Automatic focused delivery%'",(job['id'],))
+    finally:
+        engine.stop()
