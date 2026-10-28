@@ -51,6 +51,8 @@ def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None
                 raise ValueError('The reviewed action has already been decided. Wait for its job state to finish updating.')
         messages=s['messages']
         progress.reset(s)
+        # Explicit revision feedback retires the old result; source updates do not.
+        c.execute('UPDATE result_reviews SET eligible=0 WHERE job_id=?',(id,))
         superseded=c.execute("UPDATE approvals SET status='superseded' WHERE job_id=? AND status='pending'",(id,)).rowcount
         if s.get('waiting_call'):
             engine.add_result(messages,s.pop('waiting_call'),{'not_executed':True,'review_requested':True,'instruction':'The owner requested discussion or revision. The previous pending action is superseded. Do not send it.'})

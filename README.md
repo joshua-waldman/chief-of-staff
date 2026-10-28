@@ -384,3 +384,5 @@ without resuming their work or changing approvals. It uses saved requests,
 briefs, messages and pending actions, and defers if those facts change during
 assessment. Assessment pauses when COS is disconnected; gateway failures leave
 items visibly unassessed for retry. Restart COS and refresh the browser after updating.
+
+Saved results stay in Ready for review while new source activity reopens their parent conversation. Reviewing acknowledges that saved revision only and leaves the ongoing job running. Explicit revision feedback retires the old review until revised work returns; unrelated triage cannot replace an unreviewed draft.
