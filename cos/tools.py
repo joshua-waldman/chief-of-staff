@@ -103,7 +103,10 @@ SOURCE_ACTIONS |= {'repository_connections','repository_search','repository_read
 def allowed_job_action(job,action):
     state=json.loads(job['messages'])
     source_only=isinstance(state,dict) and state.get('source_only')
-    return allowed_action(job['org'],action) and (not source_only or action in SOURCE_ACTIONS)
+    historical=isinstance(state,dict) and state.get('historical_import')
+    historical_actions={'update_brief','finish','read_teams','read_file','list_files','read_action_receipt','search_knowledge','search_commitments'}
+    return (allowed_action(job['org'],action) and (not source_only or action in SOURCE_ACTIONS)
+            and (not historical or action in historical_actions))
 
 def workspace(job_id):
     p = DATA/'jobs'/job_id/'workspace'
@@ -502,6 +505,9 @@ class Tools:
             return run_skill('slai-teams','list_chats.py',['--json'])
         if action=='read_teams':
             result=run_skill('slai-teams','list_messages.py',['--chat-id',a['chat_id'],'--limit','100','--json'])
+            from .teams_topics import scoped_messages
+            if isinstance(result,list):
+                result=scoped_messages(self.store,id,a['chat_id'],result)
             from .conversations import cache_source_read
             cache_source_read(self.store,id,action,a,result)
             return result

@@ -92,8 +92,9 @@ def read_targets(store, job):
         return []
     targets = [{'tool':'mark_email_read','args':{'id':s['message_id'], 'subject':s['subject'], 'from':s['sender']},
                 'label':'Mark email as read: '+s['subject']} for s in sources if s['source']=='email']
-    targets += [{'tool':'mark_teams_read','args':{'chat_id':t['thread_id']}, 'label':'Mark entire Teams chat as read'}
-                for t in store.rows("SELECT thread_id FROM communication_threads WHERE job_id=? AND source='teams'", (job['id'],))]
+    from .teams_topics import chat_ids
+    targets += [{'tool':'mark_teams_read','args':{'chat_id':cid}, 'label':'Mark entire Teams chat as read'}
+                for cid in chat_ids(store,job['id'])]
     done = [(a['tool'],json.loads(a['args'])) for a in store.rows("SELECT tool,args FROM approvals WHERE job_id=? AND status='executed'", (job['id'],))]
     return [t for t in targets if not any(tool==t['tool'] and all(args.get(k)==v for k,v in t['args'].items() if k in {'id','chat_id'}) for tool,args in done)]
 
@@ -112,6 +113,7 @@ def request_read(store, job_id, tool, target_id):
             raise ValueError('This source is not available for a summary read approval. Refresh the conversation.')
         aid, call_id, stamp = uid(), uid(), now()
         state = session(job)
+        state.pop('historical_import',None)
         state['messages'].append({'role':'assistant','content':None,'tool_calls':[{'id':call_id,'type':'function','function':{'name':'perform','arguments':json.dumps({'action':tool,'arguments':json.dumps(target['args'])})}}]})
         state.update(waiting_call=call_id, waiting_action=aid, summary_read_approval=True)
         decision = classify(tool,target['args'],org='Communications')
@@ -136,7 +138,10 @@ def first_pass(store, job, state):
     with store.connect() as c:
         rules = preferences(c)
     from .config import settings
+    threads = store.rows('SELECT source,thread_id FROM communication_threads WHERE job_id=?', (job['id'],))
+    rules = [r for r in rules if not r['target'] or r['target'] in threads]
     evidence = json.dumps({'owner_email': settings()['self_email'], 'request': job['request'], 'sources': sources,
+                           'guidance_targets': threads,
                            'owner_preferences': rules,
                            'previous_read_results': [m.get('content','') for m in state.get('messages',[]) if m.get('role')=='tool']}, ensure_ascii=False)
     if len(evidence) > 60000:
