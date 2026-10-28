@@ -319,13 +319,13 @@ def test_repeated_unchanged_reads_stop_across_slices_and_warn_first(env,monkeypa
     engine=Engine(env,Provider())
     monkeypatch.setattr(engine.tools,'execute',lambda *a:{'text':'Unchanged evidence'})
     job=env.create_job('Analyze','Technology')
-    for _ in range(6):
+    for _ in range(10):
         engine.run(job['id'])
         if env.job(job['id'])['status']=='blocked': break
     current=env.job(job['id'])
     assert current['status']=='blocked'
     assert 'unchanged results' in current['question'] and 'step budget' not in current['question']
-    assert len(captured)==11
+    assert len(captured)==19
     assert any('Progress check:' in json.dumps(messages) for messages in captured)
     assert any('Automatic progress recovery:' in json.dumps(messages) for messages in captured)
     engine.stop()

@@ -9,6 +9,14 @@ class FakeResponse:
     def __init__(self,data):self.data=data
     def json(self):return self.data
 
+
+@pytest.mark.parametrize('output',[[],[{'type':'function_call','call_id':'partial','name':'perform','arguments':'{"action":"write_file"'}]])
+def test_incomplete_responses_are_marked_for_inference_recovery(monkeypatch,output):
+    monkeypatch.setattr(provider,'gateway_key',lambda:'test-secret')
+    monkeypatch.setattr(provider.httpx,'post',lambda *a,**kw:FakeResponse({'status':'incomplete','output':output}))
+    answer,meta=Gateway().complete([{'role':'user','content':'Build artifact'}],tools=SCHEMA)
+    assert meta['output_incomplete'] is True
+
 def test_reasoning_tools_use_responses_and_replay_items(monkeypatch):
     requests=[]
     outputs=[

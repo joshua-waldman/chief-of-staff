@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import PureWindowsPath
 
-STALL_RECOVERY_VERSION=2
+STALL_RECOVERY_VERSION=3
 RECOVERY_READS={'read_file','read_action_receipt','read_teams','read_mail','fetch_url','browser_read',
     'list_files','list_chats','search_mail','search_knowledge','jira_read','meeting_artifacts',
     'meeting_transcripts','mail_attachments','teams_attachments','calendar_events','calendar_event',
@@ -67,20 +67,26 @@ def saved_findings(store,job_id):
 
 
 def recovery_step(state,limit):
-    """One persisted replan per source/owner revision, with at most six actions."""
+    """Persist a verification replan followed by a focused delivery attempt."""
     attempt=state.get('stall_recovery')
     if attempt and attempt.get('version')!=STALL_RECOVERY_VERSION:
         attempt=None
         state.pop('stall_recovery',None)
     if attempt and attempt['active']:
         if attempt['remaining']<=0:
+            if attempt.get('phase','verify')=='verify':
+                attempt.update(phase='deliver',remaining=8,verification_reads=2,brief_updates=0)
+                return 'delivery'
             return 'exhausted'
         return 'recovering'
     if state.get('stalled_steps',0)<limit:
         return 'continue'
     if attempt:
+        if attempt.get('phase','verify')=='verify':
+            attempt.update(active=True,phase='deliver',remaining=8,verification_reads=2,brief_updates=0)
+            return 'delivery'
         return 'exhausted'
-    state['stall_recovery']={'version':STALL_RECOVERY_VERSION,'active':True,'remaining':6,'verification_reads':0}
+    state['stall_recovery']={'version':STALL_RECOVERY_VERSION,'active':True,'phase':'verify','remaining':6,'verification_reads':0,'brief_updates':0}
     return 'started'
 
 
@@ -93,11 +99,35 @@ def recovery_instruction(attempt):
         'Do not restart completed sources or reconstruct the job from recovery archives. '
         'If a precise fact is missing, verify only that source range. If access genuinely fails, '
         'ask a specific question identifying the missing evidence and failure. '
-        'Never fabricate evidence, completion or approvals; all existing action gates still apply.')
+        'Never fabricate evidence, completion or approvals; all existing action gates still apply. '
+        'Use only the perform function with arguments shaped as '
+        '{"action":"finish","arguments":{"summary":"actual result"}}; '
+        'choose the actual action and its parameters from the tool catalog. '
+        'Brief updates remaining: '+str(max(0,1-attempt.get('brief_updates',0)))+'. '
+        + ('Focused delivery phase: source verification is over. Create and validate the requested artifact '
+           'with the available output tools, or return the evidence-only result to the parent with finish. '
+           'Do not merely announce an intention to build it. '
+           if attempt.get('phase')=='deliver' else ''))
+
+
+def recovery_actions(state,actions):
+    """The schema and execution guard must apply the same recovery limits."""
+    attempt=state.get('stall_recovery',{})
+    actions=set(actions)
+    if attempt.get('active'):
+        if attempt.get('verification_reads',0)>=2:
+            actions-=RECOVERY_READS
+        if attempt.get('brief_updates',0)>=1:
+            actions.discard('update_brief')
+    return actions
 
 
 def limit_recovery_read(state,action):
     attempt=state.get('stall_recovery',{})
+    if attempt.get('active') and action=='update_brief':
+        if attempt.get('brief_updates',0)>=1:
+            raise ValueError('Recovery brief already saved. Produce the requested deliverable using output tools, then finish; status updates alone do not complete the work.')
+        attempt['brief_updates']=attempt.get('brief_updates',0)+1
     if attempt.get('active') and action in RECOVERY_READS:
         if attempt.get('verification_reads',0)>=2:
             raise ValueError('Recovery verification budget exhausted. Reading is disabled for this recovery. Use the saved findings and latest verified excerpts to write the requested synthesis and finish. If a specific evidence gap prevents completion, identify that gap explicitly; never infer completion.')

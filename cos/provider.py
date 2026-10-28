@@ -108,10 +108,11 @@ class Gateway:
                             answer['tool_calls'].append({'id':item['call_id'],'type':'function','function':{'name':item['name'],'arguments':item['arguments']}})
                         elif item['type']=='message':
                             answer['content']+=''.join(x.get('text','') for x in item.get('content',[]) if x.get('type')=='output_text')
-                    if data.get('status')=='incomplete' and not answer['tool_calls']:
-                        raise RuntimeError('Model exhausted its response budget before producing an action. Try a smaller task.')
-                    return answer,{'model':model,'usage':data.get('usage',{}),'api':'responses'}
-                return data['choices'][0]['message'], {'model':model,'usage':data.get('usage',{}),'api':'chat_completions'}
+                    return answer,{'model':model,'usage':data.get('usage',{}),'api':'responses',
+                        'output_incomplete':data.get('status')=='incomplete'}
+                choice=data['choices'][0]
+                return choice['message'], {'model':model,'usage':data.get('usage',{}),'api':'chat_completions',
+                    'output_incomplete':choice.get('finish_reason')=='length'}
             except (httpx.TimeoutException,httpx.ConnectError):
                 if attempt == attempts-1:
                     raise RuntimeError('Cannot reach AMD gateway. Check AMD network/VPN access.')

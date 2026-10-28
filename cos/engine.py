@@ -396,11 +396,13 @@ class Engine:
                 step=current['step']
                 recovery_step=progress.recovery_step(s,settings().get('max_stalled_steps',12))
                 if recovery_step=='exhausted':
-                    self.persist(id,s,status='blocked',question='COS is repeatedly receiving unchanged results or errors from '+s.get('last_progress_action','the model')+'. One bounded automatic recovery using saved findings was attempted without resolving the stall. Saved evidence, file read ranges, action receipts and approvals are retained. Resume only with a focused next step using the existing findings; recovery archives should not be reread to reconstruct the job.')
-                    self.store.event(id,'stalled','Stopped repeated unchanged work after one bounded automatic recovery; saved findings and approvals are retained.')
+                    self.persist(id,s,status='blocked',question='COS is repeatedly receiving unchanged results or errors from '+s.get('last_progress_action','the model')+'. Automatic verification and focused delivery recovery could not complete the requested work. Saved findings, source coverage and action receipts are retained. Latest tool failure: '+json.dumps(list(s.get('active_errors',{}).values())[-1:],ensure_ascii=False)[:1500])
+                    self.store.event(id,'stalled','Stopped after bounded verification and focused delivery attempts; saved findings and approvals are retained.')
                     return
                 if recovery_step=='started':
                     self.store.event(id,'progress_recovery','Automatic progress recovery started: synthesize from saved findings instead of repeating reads.')
+                if recovery_step=='delivery':
+                    self.store.event(id,'progress_recovery','Automatic focused delivery started: stop source and brief loops; produce and validate the requested output from retained findings.')
                 if s.get('stall_recovery',{}).get('active'):
                     recovery.conversation_evidence(self.store,job,s)
                 self.persist(id,s,step=step)
@@ -437,9 +439,9 @@ class Engine:
                 if s.get('stalled_steps',0)>=3:
                     messages.insert(1,{'role':'system','content':progress.warning(s),'_cos_memory':True})
                 schemas=SCHEMA
-                if s.get('stall_recovery',{}).get('active') and s['stall_recovery'].get('verification_reads',0)>=2:
-                    actions=sorted((COMMON|ORG_ACTIONS.get(job['org'],set()))-progress.RECOVERY_READS)
-                    schemas=[tool_schema('perform','Complete the synthesis from saved findings. Further reading is disabled for this recovery.',
+                if s.get('stall_recovery',{}).get('active'):
+                    actions=sorted(progress.recovery_actions(s,{a for a in COMMON|ORG_ACTIONS.get(job['org'],set()) if allowed_job_action(job,a)}))
+                    schemas=[tool_schema('perform','Produce the requested result from saved findings using one available action.',
                         {'action':{'type':'string','enum':actions},'arguments':string('JSON object with action parameters')})]
                 prepare_context(self,current,s,role,schemas)
                 # Retry inference only. No tool or external mutation is replayed.
@@ -450,7 +452,8 @@ class Engine:
                     try:
                         from .message_triage import first_pass
                         quick = first_pass(self.store,job,s) if triage else None
-                        answer,meta=self.provider.complete(quick or messages,role=role,tools=schemas)
+                        answer,meta=self.provider.complete(quick or messages,role=role,tools=schemas,
+                            **({'max_tokens':s['output_token_budget']} if s.get('output_token_budget') else {}))
                         break
                     except ContextWindowExceeded:
                         if context_attempt==2:
@@ -471,6 +474,15 @@ class Engine:
                     continue
                 if s.get('stall_recovery',{}).get('active'):
                     s['stall_recovery']['remaining']-=1
+                if meta.get('output_incomplete'):
+                    # Partial function arguments are never executable receipts and
+                    # must not be replayed as Responses function calls next turn.
+                    s['output_token_budget']=min(16384,s.get('output_token_budget',4096)*2)
+                    progress.observe(s,'invalid_tool',{},'Model output truncated before a complete action',error=True)
+                    messages.append({'role':'system','content':'The last model output was truncated; no action was executed. The response budget has been increased. Use one small complete perform call. Split large artifact scripts into small write_file/edit_file operations; do not resend the entire builder in one call.','_cos_memory':False})
+                    self.store.event(id,'progress_recovery','Discarded incomplete model output without executing tools; increased the response budget and requested a smaller action.')
+                    self.persist(id,s,step=step+1)
+                    continue
                 calls=answer.get('tool_calls') or []
                 if calls:
                     answer['tool_calls']=calls[:1]
@@ -605,6 +617,9 @@ class Engine:
                     s.pop('waiting_call',None)
                     s.pop('waiting_action',None)
                 except Exception as error:
+                    if aid is None and isinstance(error,json.JSONDecodeError):
+                        s['output_token_budget']=min(16384,s.get('output_token_budget',4096)*2)
+                        error=ValueError('Malformed tool JSON; no action executed. Use one complete perform call with a small arguments object. Split large builders into small write_file/edit_file operations. The output budget has been increased. '+str(error))
                     recovery.record(self.store,id,s,action,args if isinstance(args,dict) else {},str(error),error=True,receipt_id=aid)
                     progress.observe(s,action,{},str(error),error=True)
                     s.pop('waiting_call',None)
