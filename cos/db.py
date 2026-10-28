@@ -30,7 +30,9 @@ class Store:
             CREATE TABLE IF NOT EXISTS job_briefs(job_id TEXT PRIMARY KEY,body TEXT,updated TEXT);
             CREATE TABLE IF NOT EXISTS result_reviews(job_id TEXT PRIMARY KEY,revision TEXT NOT NULL,summary TEXT NOT NULL,file_ids TEXT NOT NULL,completed TEXT NOT NULL,reviewed TEXT);
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,parent_id TEXT,title TEXT,request TEXT,org TEXT,project TEXT,status TEXT,created TEXT,updated TEXT,result TEXT DEFAULT '',question TEXT DEFAULT '',messages TEXT DEFAULT '[]',step INTEGER DEFAULT 0);
+            CREATE INDEX IF NOT EXISTS jobs_parent_status ON jobs(parent_id,status,created,id);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,kind TEXT,body TEXT,created TEXT);
+            CREATE INDEX IF NOT EXISTS events_job_kind ON events(job_id,kind,created);
             CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY,job_id TEXT,tool TEXT,args TEXT,risk TEXT,reason TEXT,status TEXT,created TEXT,result TEXT DEFAULT '');
             CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,job_id TEXT,name TEXT,path TEXT,mime TEXT,created TEXT);
             CREATE TABLE IF NOT EXISTS seen(source TEXT,item_id TEXT,created TEXT,PRIMARY KEY(source,item_id));
@@ -52,7 +54,7 @@ class Store:
 
             if 'eligible' not in {row['name'] for row in c.execute('PRAGMA table_info(result_reviews)')}:
                 c.execute('ALTER TABLE result_reviews ADD COLUMN eligible INTEGER NOT NULL DEFAULT 1')
-            from .result_reviews import eligible
+            from .result_reviews import eligible, review_payload
             # Reconcile the old broad inbox without marking anything owner-reviewed.
             old_results=c.execute('''SELECT j.*,r.job_id AS review_job_id FROM jobs j LEFT JOIN result_reviews r ON r.job_id=j.id
                 WHERE j.status='completed' AND j.parent_id IS NULL AND r.reviewed IS NULL''').fetchall()
@@ -63,11 +65,18 @@ class Store:
                     continue
                 if isinstance(state,dict) and 'deliverable_file_ids' in state:
                     reviewable=eligible(c,job,state)
+                    summary,file_ids=review_payload(c,job,state,job['result'])
                     if job['review_job_id']:
                         c.execute('UPDATE result_reviews SET eligible=? WHERE job_id=?',(int(reviewable),job['id']))
+                        previous=c.execute('SELECT summary,file_ids FROM result_reviews WHERE job_id=?',(job['id'],)).fetchone()
+                        if reviewable and (previous['summary']!=summary or json.loads(previous['file_ids'])!=file_ids):
+                            c.execute('UPDATE result_reviews SET revision=?,summary=?,file_ids=? WHERE job_id=?',
+                                      (uid(),summary,json.dumps(file_ids),job['id']))
+                            c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
+                                      (job['id'],'result_review_repaired','Restored delegated work and deliverables to the pending owner review.',now()))
                     elif reviewable:
                         c.execute('INSERT OR IGNORE INTO result_reviews(job_id,revision,summary,file_ids,completed,reviewed) VALUES(?,?,?,?,?,NULL)',
-                            (job['id'],uid(),job['result'],json.dumps(state['deliverable_file_ids']),job['updated']))
+                            (job['id'],uid(),summary,json.dumps(file_ids),job['updated']))
 
     def connect(self):
         c = sqlite3.connect(self.path, timeout=30)
@@ -155,9 +164,10 @@ class Store:
             c.execute("UPDATE jobs SET status='completed',result=?,question='',messages=?,step=?,updated=? WHERE id=?",
                 (summary,json.dumps({**state,'messages':[m for m in state.get('messages',[]) if not m.get('_cos_memory')]}),step,stamp,id))
             if not job['parent_id']:
-                from .result_reviews import eligible
+                from .result_reviews import eligible, review_payload
+                review_summary,file_ids=review_payload(c,job,state,summary)
                 c.execute('INSERT OR REPLACE INTO result_reviews(job_id,revision,summary,file_ids,completed,reviewed,eligible) VALUES(?,?,?,?,?,NULL,?)',
-                    (id,uid(),summary,json.dumps(state.get('deliverable_file_ids',[])),stamp,int(eligible(c,job,state))))
+                    (id,uid(),review_summary,json.dumps(file_ids),stamp,int(eligible(c,job,state))))
 
     def result_review(self,id):
         row=self.one('SELECT * FROM result_reviews WHERE job_id=? AND eligible=1',(id,))
