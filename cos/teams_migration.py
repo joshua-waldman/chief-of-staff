@@ -71,6 +71,9 @@ def records(store, ids, chat_id):
                         'owner':True,'record_kind':kind,'legacy_job_id':job['id']}
             for row in store.rows('SELECT * FROM review_messages WHERE job_id=?', (job['id'],)):
                 history('owner_feedback' if row['role']=='user' else 'review_history',row['id'],row['body'],row['created'])
+            returned=store.one('SELECT * FROM result_reviews WHERE job_id=? AND eligible=1 AND reviewed IS NULL',(job['id'],))
+            if returned:
+                history('returned_work',job['id'],returned['summary'],returned['completed'])
             actions=sorted(ALWAYS|{'delegate','jira_write','mcp_call','record_commitment','add_commitment_evidence'})
             routine=sorted(LOW)
             query="SELECT * FROM approvals WHERE job_id=? AND status IN ('executed','uncertain','executing','pending','superseded') AND (tool IN ("+','.join('?' for _ in actions)+") OR tool NOT IN ("+','.join('?' for _ in routine)+'))'
@@ -155,7 +158,7 @@ def migrate(monitor, *, limit=None):
                               (jid,'topic_import','Imported retained history from '+', '.join(ids),stamp))
                     topic_jobs.append(jid)
                 for jid in ids:
-                    c.execute("WITH RECURSIVE tree(id) AS (SELECT ? UNION ALL SELECT j.id FROM jobs j JOIN tree t ON j.parent_id=t.id) UPDATE jobs SET status='cancelled',question='',updated=? WHERE id IN (SELECT id FROM tree) AND status NOT IN ('completed','cancelled')",(jid,now()))
+                    c.execute("WITH RECURSIVE tree(id) AS (SELECT ? UNION ALL SELECT j.id FROM jobs j JOIN tree t ON j.parent_id=t.id) UPDATE jobs SET status=CASE WHEN EXISTS (SELECT 1 FROM result_reviews r WHERE r.job_id=jobs.id AND r.eligible=1 AND r.reviewed IS NULL) THEN 'completed' ELSE 'cancelled' END,question='',updated=? WHERE id IN (SELECT id FROM tree) AND status NOT IN ('completed','cancelled')",(jid,now()))
                     c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
                               (jid,'topic_migrated','History preserved; continued in topic jobs: '+', '.join(topic_jobs),now()))
                     c.execute('DELETE FROM communication_inbox WHERE job_id=?',(jid,))

@@ -291,3 +291,14 @@ def test_pending_legacy_jobs_and_children_cannot_run_while_migrating(monitor):
     engine=Engine(monitor.store)
     assert engine.ready_jobs(None)==[]
     engine.stop()
+
+
+def test_migration_preserves_unreviewed_returned_drafts(monitor):
+    from cos.teams_migration import migrate
+    job=legacy_job(monitor)
+    monitor.store.write('INSERT INTO result_reviews(job_id,revision,summary,file_ids,completed,reviewed,eligible) VALUES(?,?,?,?,?,NULL,1)',
+        (job['id'],'draft-revision','Saved budget draft for review','[]','04'))
+    assert migrate(monitor)['migrated']==1
+    assert monitor.store.job(job['id'])['status']=='completed'
+    assert [r['job_id'] if 'job_id' in r else r['id'] for r in monitor.store.pending_results()]==[job['id']]
+    assert 'Saved budget draft for review' in topic_job(monitor,'Budget planning')['request']
