@@ -70,6 +70,10 @@ class Store:
                 except (ValueError,TypeError):
                     continue
                 if isinstance(state,dict) and 'deliverable_file_ids' in state:
+                    previous=c.execute('SELECT * FROM result_reviews WHERE job_id=?',(job['id'],)).fetchone()
+                    # A newer conversation pass does not invalidate an older saved review.
+                    if previous and previous['eligible'] and previous['completed'] < job['updated']:
+                        continue
                     reviewable=eligible(c,job,state)
                     summary,file_ids=review_payload(c,job,state,job['result'])
                     if job['review_job_id']:
@@ -140,7 +144,7 @@ class Store:
         from .briefs import detail_brief
         j['brief']=detail_brief(self,j)
         j['review_messages']=self.rows('SELECT * FROM review_messages WHERE job_id=? ORDER BY id',(id,))
-        j['result_review']=self.result_review(id) if j['status']=='completed' else None
+        j['result_review']=self.result_review(id) if j['status']!='cancelled' else None
         if j['result_review']:
             review=j['result_review']
             ids=set(review['file_ids']) | set(re.findall(r'/api/files/([A-Za-z0-9_-]+)',review['summary']))
@@ -172,8 +176,12 @@ class Store:
             if not job['parent_id']:
                 from .result_reviews import eligible, review_payload
                 review_summary,file_ids=review_payload(c,job,state,summary)
-                c.execute('INSERT OR REPLACE INTO result_reviews(job_id,revision,summary,file_ids,completed,reviewed,eligible) VALUES(?,?,?,?,?,NULL,?)',
-                    (id,uid(),review_summary,json.dumps(file_ids),stamp,int(eligible(c,job,state))))
+                reviewable=eligible(c,job,state)
+                previous=c.execute('SELECT eligible,reviewed FROM result_reviews WHERE job_id=?',(id,)).fetchone()
+                # Unrelated triage must not replace returned work still awaiting review.
+                if reviewable or state.get('result_kind')=='action_receipt' or not previous or not previous['eligible'] or previous['reviewed']:
+                    c.execute('INSERT OR REPLACE INTO result_reviews(job_id,revision,summary,file_ids,completed,reviewed,eligible) VALUES(?,?,?,?,?,NULL,?)',
+                        (id,uid(),review_summary,json.dumps(file_ids),stamp,int(reviewable)))
 
     def result_review(self,id):
         row=self.one('SELECT * FROM result_reviews WHERE job_id=? AND eligible=1',(id,))
@@ -184,7 +192,7 @@ class Store:
     def pending_results(self):
         return self.rows('''SELECT j.id,j.title,j.org,j.project,r.revision,r.completed,
             substr(r.summary,1,600) AS summary FROM result_reviews r JOIN jobs j ON j.id=r.job_id
-            WHERE r.eligible=1 AND r.reviewed IS NULL AND j.status='completed' AND j.parent_id IS NULL
+            WHERE r.eligible=1 AND r.reviewed IS NULL AND j.status<>'cancelled' AND j.parent_id IS NULL
             ORDER BY r.completed DESC,j.id''')
 
     def review_result(self,id,revision):
@@ -192,7 +200,7 @@ class Store:
             c.execute('BEGIN IMMEDIATE')
             row=c.execute('''SELECT r.*,j.status FROM result_reviews r JOIN jobs j ON j.id=r.job_id
                 WHERE r.job_id=?''',(id,)).fetchone()
-            if not row or not row['eligible'] or row['status']!='completed' or row['revision']!=revision:
+            if not row or not row['eligible'] or row['status']=='cancelled' or row['revision']!=revision:
                 raise ValueError('This result has changed. Open the latest completed result before marking it reviewed.')
             if not row['reviewed']:
                 stamp=now()

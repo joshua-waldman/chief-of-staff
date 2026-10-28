@@ -103,7 +103,7 @@ function returnedResultView(j){
  const r=j.result_review;
  if(!r)return '';
  const files=(r.files||j.files).filter(f=>(r.file_ids.includes(f.id)||r.summary.includes('/api/files/'+f.id))&&f.purpose!=='recovery');
- return '<section class="panel returned-result"><h3>'+(r.reviewed?'Reviewed result':'Completed · Ready for your review')+'</h3><p class="small">Returned '+esc(date(r.completed))+'</p><div class="readable">'+resultSummary(r.summary,files)+'</div>'+jobFilesView(files)+(r.reviewed?'<p class="small">Marked reviewed '+esc(date(r.reviewed))+'</p>':'<p class="small">This stays in Ready for review until you mark it reviewed.</p>'+btn('Mark reviewed','id="mark-result-reviewed"'))+'</section>';
+ return '<section class="panel returned-result"><h3>'+(r.reviewed?'Reviewed result':'Completed · Ready for your review')+'</h3><p class="small">Returned '+esc(date(r.completed))+'</p>'+(j.status&&j.status!=='completed'?'<p class="small">This saved result remains available while COS handles new activity.</p>':'')+'<div class="readable">'+resultSummary(r.summary,files)+'</div>'+jobFilesView(files)+(r.reviewed?'<p class="small">Marked reviewed '+esc(date(r.reviewed))+'</p>':'<p class="small">This stays in Ready for review until you mark it reviewed.</p>'+btn('Mark reviewed','id="mark-result-reviewed"'))+'</section>';
 }
 function notifyResults(results){
  const revisions=new Set(results.map(r=>r.revision));
