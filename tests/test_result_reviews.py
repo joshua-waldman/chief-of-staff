@@ -341,3 +341,41 @@ def test_later_receipt_does_not_requeue_reviewed_draft_but_child_revision_does(s
     assert 'Revised draft' in revised['summary']
     assert 'First draft' not in revised['summary']
     assert len(Store(store.path).pending_results()) == 1
+
+
+@pytest.mark.parametrize('status', ['queued', 'running', 'waiting_input', 'waiting_children', 'failed', 'blocked'])
+def test_source_reassessment_keeps_saved_review_visible_and_acknowledges_only_snapshot(setup, monkeypatch, status):
+    from cos.conversations import deliver
+    store, engine = setup
+    monkeypatch.setattr(server, 'store', store)
+    job = store.create_job('Handle incoming conversation', 'Communications')
+    child = store.create_job('Prepare strategy', 'Strategy', parent_id=job['id'])
+    store.complete_result(child['id'], {'result_kind': 'generated_content', 'deliverable_file_ids': []}, 'Saved strategy draft', 1)
+    original = finish(store, engine, job, 'Draft ready', result_kind='triage')
+    store.write('INSERT INTO communication_inbox(job_id,body,created) VALUES(?,?,?)', (job['id'], 'New source activity', '2026-10-28T00:00:00+00:00'))
+    assert deliver(store, job['id'])
+    store.update(job['id'], status=status)
+    restored = Store(store.path)
+    assert [r['id'] for r in restored.pending_results()] == [job['id']]
+    assert restored.detail(job['id'])['result_review'] == original | {'files': []}
+    client = TestClient(server.app)
+    client.get('/')
+    assert client.get('/api/status').json()['ready_for_review'] == 1
+    assert client.get('/api/results').json()[0]['revision'] == original['revision']
+    store.review_result(job['id'], original['revision'])
+    assert store.job(job['id'])['status'] == status
+    assert not store.pending_results()
+
+
+def test_unrelated_triage_completion_keeps_pending_draft_but_cancellation_hides_it(setup):
+    store, engine = setup
+    job = store.create_job('Draft content', 'Communications')
+    original = finish(store, engine, job, 'The original draft', result_kind='generated_content')
+    store.update(job['id'], status='queued')
+    assert finish(store, engine, job, 'No new action from the new source', result_kind='triage') == original
+    assert Store(store.path).result_review(job['id']) == original
+    engine.cancel(job['id'])
+    assert not store.pending_results()
+    assert store.detail(job['id'])['result_review'] is None
+    with pytest.raises(ValueError):
+        store.review_result(job['id'], original['revision'])

@@ -75,3 +75,12 @@ test('parent reviews use referenced child file names and queue cards offer file 
  ctx.returnedResults=[{...review,id:'parent',title:'Roadmap',org:'Strategy'}];
  assert.match(ctx.resultsView(),/href="\/api\/files\/child"/);
 });
+
+
+test('saved draft stays visible with reassessment context while parent is active',()=>{
+ const ctx=setup();
+ const html=ctx.returnedResultView({status:'running',files:[],result_review:{summary:'Saved draft',file_ids:[],completed:'earlier'}});
+ assert.match(html,/Saved draft/);
+ assert.match(html,/while COS handles new activity/);
+ assert.match(html,/mark-result-reviewed/);
+});
