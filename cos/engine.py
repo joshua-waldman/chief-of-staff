@@ -101,7 +101,6 @@ class Engine:
         self.recover_research_approvals()
         for completed in self.store.rows("SELECT * FROM jobs WHERE status='completed'"):
             self.knowledge.outcome(completed)
-        reconcile_legacy(self.store)
         for old in self.store.rows("SELECT * FROM jobs WHERE status='waiting_input' AND question=?",(progress.LEGACY_STEP_QUESTION,)):
             state=session(old)
             if state.get('waiting_call') or self.store.one("SELECT 1 FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain')",(old['id'],)):
@@ -112,6 +111,8 @@ class Engine:
         self.recover_rate_failures()
         self.recover_stalled_jobs()
         deliver_waiting(self.store)
+        from .teams_migration import prepare as prepare_teams_migration
+        prepare_teams_migration(self.store)
         self.thread=threading.Thread(target=self.loop,daemon=True)
         self.thread.start()
 
@@ -264,11 +265,15 @@ class Engine:
 
 
     def ready_jobs(self,limit):
+        held={r['id'] for r in self.store.rows('''WITH RECURSIVE held(id) AS (
+            SELECT value FROM teams_topic_migrations,json_each(job_ids) WHERE status<>'completed'
+            UNION SELECT j.id FROM jobs j JOIN held h ON j.parent_id=h.id)
+            SELECT id FROM held''')}
         # A yielded job goes behind other ready work, rather than monopolizing
         # every worker because it was created first.
         self.release_capacity()
         candidates=self.store.rows("SELECT * FROM jobs WHERE status='queued' ORDER BY CASE WHEN org='Communications' THEN 0 ELSE 1 END,updated,created,id")
-        return [job for job in candidates if conversation_ready(self.store,job['id']) and not self.capacity_waiting(job)][:limit]
+        return [job for job in candidates if job['id'] not in held and conversation_ready(self.store,job['id']) and not self.capacity_waiting(job)][:limit]
 
     def dispatch_jobs(self):
         # Called under self.lock. Keep one slot available for Communications

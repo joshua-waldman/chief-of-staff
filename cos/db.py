@@ -37,6 +37,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,job_id TEXT,name TEXT,path TEXT,mime TEXT,created TEXT);
             CREATE TABLE IF NOT EXISTS seen(source TEXT,item_id TEXT,created TEXT,PRIMARY KEY(source,item_id));
             CREATE TABLE IF NOT EXISTS communication_threads(source TEXT,thread_id TEXT,job_id TEXT,PRIMARY KEY(source,thread_id));
+            CREATE TABLE IF NOT EXISTS teams_topics(topic_id TEXT PRIMARY KEY,chat_id TEXT NOT NULL,title TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS teams_topics_chat ON teams_topics(chat_id);
+            CREATE TABLE IF NOT EXISTS teams_topic_messages(chat_id TEXT,message_id TEXT,topic_id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(chat_id,message_id));
+            CREATE INDEX IF NOT EXISTS teams_topic_members ON teams_topic_messages(topic_id);
             CREATE TABLE IF NOT EXISTS communication_inbox(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,body TEXT,created TEXT);
             CREATE TABLE IF NOT EXISTS communication_sources(job_id TEXT,source TEXT,message_id TEXT,sender TEXT,subject TEXT,received TEXT,body TEXT,complete INTEGER,PRIMARY KEY(job_id,source,message_id));
             CREATE INDEX IF NOT EXISTS communication_pending ON communication_inbox(job_id,id);
@@ -48,6 +52,8 @@ class Store:
             c.executescript(commitment_schema)
             from .schedules import SCHEMA as schedule_schema
             c.executescript(schedule_schema)
+            from .teams_migration import SCHEMA as teams_migration_schema
+            c.executescript(teams_migration_schema)
             orgs = [('Communications','Chief Communications Officer','Monitor and triage communications, propose action delegation for approval, and draft grounded responses.'),('Technology','Chief Technology Officer','Research with traceable evidence.'),('Self-Improvement','Director of Self-Improvement','Improve this application and create skills and organizations.'),('Engineering','Director of Engineering','Implement and validate project changes.'),('Strategy','Chief Strategy Officer','Develop scope, plans, priorities, and acceptance criteria.')]
             c.executemany('INSERT OR IGNORE INTO organizations VALUES(?,?,?,?)', [(*o, now()) for o in orgs])
             c.execute("UPDATE organizations SET purpose=? WHERE name='Communications' AND purpose=?",(orgs[0][2],'Monitor, triage, and draft grounded responses.'))

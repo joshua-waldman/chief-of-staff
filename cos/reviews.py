@@ -61,6 +61,7 @@ def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None
             if action=='finish':
                 engine.add_result(messages,call['id'],{'completed':True,'reopened_for_review':True})
         s.pop('waiting_action',None)
+        s.pop('historical_import',None)
         instruction='Owner review feedback: '+message
         if draft is not None:
             instruction+='\nCurrent unsent draft edited by the owner (revise as directed):\n'+draft

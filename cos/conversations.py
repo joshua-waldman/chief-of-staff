@@ -23,6 +23,8 @@ def cache_source_read(store, job_id, action, args, result):
         if action=='read_mail' and isinstance(result,dict) and isinstance(result.get('body'),str):
             save_source(c,job_id,'email',args['id'],result.get('from',''),result.get('subject',''),result.get('date',''),result['body'])
         elif action=='read_teams' and isinstance(result,list):
+            from .teams_topics import scoped_messages
+            result=scoped_messages(store,job_id,args['chat_id'],result)
             for m in result:
                 if isinstance(m,dict) and m.get('id') and isinstance(m.get('content'),str):
                     save_source(c,job_id,'teams',str(m['id']),m.get('imdisplayname') or m.get('from',''),'',m.get('time') or m.get('composetime') or m.get('originalarrivaltime') or '',m['content'])
@@ -32,14 +34,16 @@ def load_sources(store, job):
     """Read source text on demand for older jobs; never ask the model to reconstruct it."""
     from .integrations import run_skill
     job_id=job['id']
-    threads=store.rows('SELECT source,thread_id FROM communication_threads WHERE job_id=?',(job_id,))
-    chat_ids=[t['thread_id'] for t in threads if t['source']=='teams']
+    from .teams_topics import chat_ids as teams_chat_ids
+    chat_ids=teams_chat_ids(store,job_id)
     if not chat_ids:
         chat_ids=re.findall(r'(?m)Chat ID: (\S+)',job['request'])
     errors=[]
     for chat_id in dict.fromkeys(chat_ids):
         try:
-            result=run_skill('slai-teams','list_messages.py',['--chat-id',chat_id,'--limit','5','--json'])
+            topic=store.one('''SELECT 1 FROM teams_topics t JOIN communication_threads c
+                ON c.thread_id=t.topic_id AND c.source='teams' WHERE c.job_id=?''',(job_id,))
+            result=run_skill('slai-teams','list_messages.py',['--chat-id',chat_id,'--limit','100' if topic else '5','--json'])
             if not isinstance(result,list):
                 raise ValueError('Missing Teams messages')
             cache_source_read(store,job_id,'read_teams',{'chat_id':chat_id},result)
@@ -115,6 +119,7 @@ def deliver(store, job_id, running=False):
             last = messages[-1]['tool_calls'][0]
             messages.append({'role':'tool', 'tool_call_id':last['id'], 'content':json.dumps({'completed':True, 'conversation_continues':True})})
         s.pop('waiting_action', None)
+        s.pop('historical_import', None)
         update = SOURCE_PREFIX + '\n\n'.join(r['body'] for r in rows)
         update += '\nReassess these changes against the saved brief and prior evidence. Refresh the thread once for this batch when needed; inspect new or changed attachments, reusing prior findings for unchanged ones. Account for owner replies and executed sends; do not repeat them. Handle related asks together. Reassess action needs separately from reply needs, including delegated or completed work. Delegate Technology research without approval for external reads and COS-local outputs; propose other new requested work with delegate for fresh approval before it starts; request separate send approval if a reply is still needed. If no reply or unresolved work remains, update the brief and finish with a short reason.'
         s['source_revision']=s.get('source_revision',0)+1

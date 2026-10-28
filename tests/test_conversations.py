@@ -236,8 +236,9 @@ def test_legacy_duplicates_consolidate_and_preserve_owner_direction(monitor):
     assert 'Owner direction' in active[0]['messages']
     assert len(store.rows("SELECT * FROM events WHERE kind='consolidated'"))==2
     ingest(monitor,message('04',chat='legacy'))
-    assert len(store.rows('SELECT * FROM jobs'))==3
-    assert len(store.rows("SELECT * FROM jobs WHERE status<>'cancelled'"))==1
+    # New messages use topics; the earlier chat-wide context stays as history.
+    assert len(store.rows('SELECT * FROM jobs'))==4
+    assert len(store.rows("SELECT * FROM jobs WHERE status<>'cancelled'"))==2
 
 
 def test_legacy_uncertain_jobs_are_never_consolidated(monitor):
