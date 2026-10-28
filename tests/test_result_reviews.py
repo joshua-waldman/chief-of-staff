@@ -252,3 +252,92 @@ def test_legacy_routed_operation_without_generated_output_is_not_reviewable(setu
                 (uid(), job['id'], 'jira_write', '{}', 'low', 'Routine update', 'executed', now(), '{}'))
     assert finish(store, engine, job, 'Ticket updated') is None
     assert not Store(store.path).pending_results()
+
+
+def test_delegated_draft_and_files_survive_parent_triage_finish(setup):
+    store, engine = setup
+    parent = store.create_job('Triage conversation', 'Communications')
+    wrapper = store.create_job('Coordinate draft', 'Communications', parent_id=parent['id'])
+    child = store.create_job('Write strategy', 'Strategy', parent_id=wrapper['id'])
+    output = engine.tools.execute(child, 'write_file', {'path': 'strategy.txt', 'content': 'Full strategy'})
+    store.complete_result(child['id'], {'result_kind': 'generated_content', 'deliverable_file_ids': [output['file_id']]}, 'Full strategy draft', 1)
+    store.complete_result(wrapper['id'], {'result_kind': 'triage', 'deliverable_file_ids': []}, 'Work returned', 1)
+    review = finish(store, engine, parent, 'No further action needed.', result_kind='triage')
+    assert 'Full strategy draft' in review['summary']
+    assert review['file_ids'] == [output['file_id']]
+    assert [r['id'] for r in store.pending_results()] == [parent['id']]
+    assert store.detail(parent['id'])['result_review']['files'][0]['name'] == 'strategy.txt'
+    assert store.job(parent['id'])['result'] == 'No further action needed.'
+    restored = Store(store.path)
+    assert restored.result_review(parent['id']) == review
+    restored.review_result(parent['id'], review['revision'])
+    assert not Store(store.path).pending_results()
+
+
+def test_startup_repairs_missing_delegated_text_once_and_rejects_stale_ack(setup):
+    store, engine = setup
+    parent = store.create_job('Handle conversation', 'Communications')
+    child = store.create_job('Prepare draft', 'Strategy', parent_id=parent['id'])
+    store.complete_result(child['id'], {'result_kind': 'generated_content', 'deliverable_file_ids': []}, 'Draft for owner review', 1)
+    review = finish(store, engine, parent, 'Draft completed.')
+    # Reproduce the historical record: only the director summary was queued.
+    store.write('UPDATE result_reviews SET summary=? WHERE job_id=?', ('Draft completed.', parent['id']))
+    restored = Store(store.path)
+    repaired = restored.result_review(parent['id'])
+    assert 'Draft for owner review' in repaired['summary']
+    assert repaired['revision'] != review['revision']
+    with pytest.raises(ValueError):
+        restored.review_result(parent['id'], review['revision'])
+    assert Store(store.path).result_review(parent['id']) == repaired
+    assert len(store.rows("SELECT * FROM events WHERE kind='result_review_repaired'")) == 1
+    restored.review_result(parent['id'], repaired['revision'])
+    assert not Store(store.path).pending_results()
+
+
+def test_startup_does_not_reopen_already_reviewed_delegated_result(setup):
+    store, engine = setup
+    parent = store.create_job('Coordinate plan', 'Communications')
+    child = store.create_job('Prepare plan', 'Strategy', parent_id=parent['id'])
+    store.complete_result(child['id'], {'result_kind': 'strategy', 'deliverable_file_ids': []}, 'Child plan', 1)
+    review = finish(store, engine, parent, 'Plan completed.')
+    store.write('UPDATE result_reviews SET summary=? WHERE job_id=?', ('Plan completed.', parent['id']))
+    store.review_result(parent['id'], review['revision'])
+    restored = Store(store.path)
+    assert restored.result_review(parent['id'])['summary'] == 'Plan completed.'
+    assert not restored.pending_results()
+
+
+def test_source_readers_and_action_receipts_do_not_leak_into_draft_review(setup):
+    store, engine = setup
+    parent = store.create_job('Coordinate draft', 'Communications')
+    for state, text in [({'source_only': True, 'result_kind': 'generated_content'}, 'Source evidence only'),
+                        ({'result_kind': 'action_receipt'}, 'Ticket updated')]:
+        child = store.create_job(text, 'Technology', parent_id=parent['id'])
+        store.complete_result(child['id'], {**state, 'deliverable_file_ids': []}, text, 1)
+    assert finish(store, engine, parent, 'Routine triage', result_kind='triage') is None
+    child = store.create_job('Draft', 'Strategy', parent_id=parent['id'])
+    store.complete_result(child['id'], {'result_kind': 'generated_content', 'deliverable_file_ids': []}, 'Actual draft', 1)
+    store.update(parent['id'], status='queued')
+    review = finish(store, engine, parent, 'Draft completed.', result_kind='triage')
+    assert 'Actual draft' in review['summary']
+    assert 'Source evidence only' not in review['summary']
+    assert 'Ticket updated' not in review['summary']
+
+
+def test_later_receipt_does_not_requeue_reviewed_draft_but_child_revision_does(setup):
+    store, engine = setup
+    parent = store.create_job('Handle conversation', 'Communications')
+    child = store.create_job('Prepare draft', 'Strategy', parent_id=parent['id'])
+    state = {'result_kind': 'generated_content', 'deliverable_file_ids': []}
+    store.complete_result(child['id'], state, 'First draft', 1)
+    review = finish(store, engine, parent, 'Draft ready', result_kind='triage')
+    store.review_result(parent['id'], review['revision'])
+    store.update(parent['id'], status='queued')
+    assert finish(store, engine, parent, 'Message sent', result_kind='action_receipt') is None
+    assert not Store(store.path).pending_results()
+    store.complete_result(child['id'], state, 'Revised draft', 2)
+    store.update(parent['id'], status='queued')
+    revised = finish(store, engine, parent, 'Revised draft ready', result_kind='triage')
+    assert 'Revised draft' in revised['summary']
+    assert 'First draft' not in revised['summary']
+    assert len(Store(store.path).pending_results()) == 1

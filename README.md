@@ -118,6 +118,8 @@ Communication triage evaluates your personal obligations before proposing replie
 
 The review inbox persists across restarts and includes earlier completed work tasks with saved finish metadata. On restart, earlier routine triage and action-only entries are removed from the review queue without changing job history or recording an owner review. Delegated results return through their parent request; automatic KB ignore closures stay in history. Review acknowledgement records that you reviewed the result; external actions retain their separate approvals. Restart the server and refresh the browser after updating.
 
+Parent review items preserve the full text and declared files of completed delegated work, including nested drafts, even when the director finishes with a triage summary. Source-only readers and action receipts do not create review items. Startup repairs pending reviews that omitted delegated drafts, with a fresh review revision; already reviewed results stay acknowledged. Producing a draft does not record owner acceptance or complete its underlying commitment.
+
 Try: “Prepare a short project planning brief with open questions and next steps.” For engineering, register a project first and request a proposed patch with test evidence.
 
 Email and Teams job details support a conversation with the Chief of Staff. **Send direction to COS** can revise a draft or change a handling decision. Sending direction does not send a message. Revised actions require fresh approval. **Remember guidance for similar emails** saves explicit reusable guidance when checked.
