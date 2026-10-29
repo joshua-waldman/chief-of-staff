@@ -33,11 +33,14 @@ def validate_historical_attention(store, job, brief):
         JOIN communication_threads t ON t.thread_id=m.topic_id AND t.source='teams'
         WHERE t.job_id=? AND m.message_id=?''', (job['id'], source_id))
     evidence = json.loads(source['payload']) if source else {}
+    from .teams_content import inspected_image
+    visual = evidence.get('record_kind') == 'message' and inspected_image(store, job['id'], source_id)
     if (evidence.get('record_kind') not in {'message', 'owner_feedback'} or
-            not excerpt or excerpt not in evidence.get('text', '')):
+            not excerpt or (excerpt not in evidence.get('text', '') and not visual)):
         raise ValueError('Historical owner attention requires owner_obligation_source_id '
                          'and owner_obligation_evidence quoting an original message or owner feedback '
-                         'in this topic that establishes an outstanding obligation. A model brief, '
+                         'in this topic that establishes an outstanding obligation. For image evidence, '
+                         'download and view the source image before citing its visible text. A model brief, '
                          'generic result-review guidance or unverified tests is insufficient. '
                          'If only optional review remains, set action_needed and response_needed to no '
                          'and finish; use unknown with specific uncertainties for a real evidence gap.')
@@ -65,6 +68,9 @@ def unresolved_action(store, job):
     row=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
     brief=json.loads(row['body']) if row else {}
     validate_historical_attention(store, job, brief)
+    from .teams_content import empty_historical_gap
+    if empty_historical_gap(store, job, brief):
+        return ''
     if brief.get('action_needed') in {'yes','unknown'}:
         requested=brief.get('requested_action','').strip()
         if requested.lower().rstrip('.') in {'none','none outstanding','no follow-up','no further action','n/a'}:

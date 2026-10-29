@@ -93,7 +93,7 @@ def test_source_loading_limits_email_and_teams_reads_to_latest_five(monitor,monk
         return [] if script=='list_messages.py' else {'body':'Full email'}
     monkeypatch.setattr(integrations,'run_skill',read)
     assert not load_sources(monitor.store,job)['errors']
-    assert calls[0][1]==['--chat-id','example-chat','--limit','5','--json']
+    assert calls[0][1]==['--chat-id','example-chat','--limit','5','--raw','--json']
     assert [args[1] for script,args in calls[1:]]==['mail-9','mail-8','mail-7','mail-6','mail-5']
 
 

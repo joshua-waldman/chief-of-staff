@@ -29,6 +29,9 @@ def cache_source_read(store, job_id, action, args, result):
                 if isinstance(m,dict) and m.get('id') and isinstance(m.get('content'),str):
                     save_source(c,job_id,'teams',str(m['id']),m.get('imdisplayname') or m.get('from',''),'',m.get('time') or m.get('composetime') or m.get('originalarrivaltime') or '',m['content'])
 
+    if action=='read_teams' and isinstance(result,list):
+        store.set_state('teams_raw_read:'+job_id,True)
+
 
 def load_sources(store, job):
     """Read source text on demand for older jobs; never ask the model to reconstruct it."""
@@ -43,7 +46,7 @@ def load_sources(store, job):
         try:
             topic=store.one('''SELECT 1 FROM teams_topics t JOIN communication_threads c
                 ON c.thread_id=t.topic_id AND c.source='teams' WHERE c.job_id=?''',(job_id,))
-            result=run_skill('slai-teams','list_messages.py',['--chat-id',chat_id,'--limit','100' if topic else '5','--json'])
+            result=run_skill('slai-teams','list_messages.py',['--chat-id',chat_id,'--limit','100' if topic else '5','--raw','--json'])
             if not isinstance(result,list):
                 raise ValueError('Missing Teams messages')
             cache_source_read(store,job_id,'read_teams',{'chat_id':chat_id},result)

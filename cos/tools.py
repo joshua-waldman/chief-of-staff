@@ -37,7 +37,7 @@ list_skills {} / read_skill {name}: read instructions before using an installed 
 create_skill {name,description,instructions}: writes a local reusable skill.
 create_organization {name,leader,purpose}: adds an organization.
 fetch_url {url}: retrieve an explicitly allowed research host with validated redirects. Microsoft Learn Graph view/tabs selectors are supported; other queries are rejected. Never send AMD material as URL parameters.
-mail_attachments {id}: download and register email attachments for read_file. teams_attachments {chat_id}: download screenshots for read_file.
+mail_attachments {id}: download and register email attachments for read_file. teams_attachments {chat_id}: download images from this topic's saved source messages for read_file; returns source IDs and explicit access gaps.
 search_mail {query}; read_mail {id}; list_chats {}; read_teams {chat_id}; meeting_artifacts {chat_id}.
 meeting_transcripts {chat_id,date?:YYYY-MM-DD}: use Claude's meeting-recap Stream helper with existing Teams credentials to read transcripts attached to recordings, then try shared transcript files. Defaults to the newest recording date; pass date for a specific meeting occurrence. Returns job-local files for read_file, source links and access diagnostics. A recording or recap metadata is not transcript text. Cannot transcribe video/audio.
 save_meeting_summary {source_file_id,title,summary,evidence}: save a concise meeting summary as active searchable evidence for future email/Teams replies. Source must come from meeting_transcripts in this job; evidence is an exact transcript excerpt (max 1500 characters). Summary (max 2400 characters) includes meeting date, topics, decisions, commitments, open questions and the owner's specific action items with assignee, deadline or unknown, source timestamps and status. Observations never authorize actions.
@@ -104,7 +104,7 @@ def allowed_job_action(job,action):
     state=json.loads(job['messages'])
     source_only=isinstance(state,dict) and state.get('source_only')
     historical=isinstance(state,dict) and state.get('historical_import')
-    historical_actions={'update_brief','finish','read_teams','read_file','list_files','read_action_receipt','search_knowledge','search_commitments'}
+    historical_actions={'update_brief','finish','read_teams','teams_attachments','read_file','list_files','read_action_receipt','search_knowledge','search_commitments'}
     return (allowed_action(job['org'],action) and (not source_only or action in SOURCE_ACTIONS)
             and (not historical or action in historical_actions))
 
@@ -276,6 +276,46 @@ def prepare_changes(job,args):
     return review
 
 class Tools:
+    def teams_images(self,job,args):
+        from .teams_topics import chat_ids
+        from .teams_content import parse
+        job_id=job['id']
+        permitted=chat_ids(self.store,job_id) or re.findall(r'(?m)Chat ID: (\S+)',job['request'])
+        if args['chat_id'] not in permitted:
+            raise ValueError('Use the Teams chat bound to this job; image downloads are scoped to its source messages.')
+        sources=self.store.rows("SELECT message_id,body FROM communication_sources WHERE job_id=? AND source='teams'",(job_id,))
+        coverage=self.store.state('teams_images:'+job_id,{})
+        wanted=[]
+        for source in sources:
+            if not parse(source['body']).images:
+                continue
+            digest=hashlib.sha256(source['body'].encode()).hexdigest()
+            if coverage.get(source['message_id'],{}).get('digest')!=digest:
+                wanted.append({'id':source['message_id'],'content':source['body']})
+        if wanted:
+            target=workspace(job_id)/'downloaded'/uid()[:8]
+            try:
+                result=communication('teams_attachments',{'messages':wanted,'target':str(target)})
+                records={str(r['message_id']):r for r in result['messages']}
+            except Exception:
+                records={}
+            for source in wanted:
+                record=records.get(source['id'],{'saved':[],'errors':['Teams image retrieval failed; image content is unavailable.']})
+                files=[]
+                for saved in record['saved']:
+                    path=Path(saved).resolve()
+                    if not path.is_relative_to(target.resolve()):
+                        raise ValueError('Teams image bridge returned a path outside its download directory.')
+                    files.append({**file_record(self.store,job_id,path),'path':str(path)})
+                errors=record.get('errors',[])
+                if not files and not errors:
+                    errors=['No readable image was returned for the source image reference.']
+                coverage[source['id']]={'digest':hashlib.sha256(source['content'].encode()).hexdigest(),'files':files,'errors':errors}
+            self.store.set_state('teams_images:'+job_id,coverage)
+        scoped={s['message_id']:coverage[s['message_id']] for s in sources if s['message_id'] in coverage}
+        return {'messages':scoped,'files':[f for r in scoped.values() for f in r['files']],
+                'instruction':'Use read_file on every returned image. Image access errors are evidence gaps; do not infer image contents.'}
+
     def __init__(self,store):
         self.store = store
 
@@ -336,7 +376,11 @@ class Tools:
                     if p.stat().st_size > 25*1024*1024:
                         raise ValueError('File exceeds 25 MB input limit.')
                     raw=p.read_bytes()
-                if p.suffix.lower() in {'.png','.jpg','.jpeg','.webp'}:
+                if p.suffix.lower() in {'.png','.jpg','.jpeg','.webp','.gif'}:
+                    if file:
+                        viewed=self.store.state('viewed_images:'+id,[])
+                        if file['id'] not in viewed:
+                            self.store.set_state('viewed_images:'+id,[*viewed,file['id']])
                     return {'image_data':base64.b64encode(raw).decode(),'mime':mimetypes.guess_type(p.name)[0]}
                 # Archived recovery text is read directly without recreating loose files.
                 text=raw.decode('utf-8',errors='replace') if workspace(id)/'context' in p.parents and p.suffix=='.txt' else extract(p)
@@ -486,12 +530,12 @@ class Tools:
                     'file_id':file['file_id'],'url':file['url'],'text':text[:4000],
                     'truncated':len(text)>4000,'next_offset':4000 if len(text)>4000 else None}
         if action in {'mail_attachments','teams_attachments'}:
+            if action=='teams_attachments':
+                return self.teams_images(job,a)
             target=workspace(id)/'downloaded'/uid()[:8]
             target.mkdir(parents=True,exist_ok=True)
             if action=='mail_attachments':
                 result=communication('mail_attachments',{'id':a['id'],'target':str(target)})
-            else:
-                result=run_skill('slai-teams','get_attachments.py',['--chat-id',a['chat_id'],'--download',str(target),'--json'])
             files=[{**file_record(self.store,id,p),'path':str(p)} for p in target.rglob('*') if p.is_file()]
             return {'result':result,'files':files}
         if action=='search_mail':
@@ -504,7 +548,15 @@ class Tools:
         if action=='list_chats':
             return run_skill('slai-teams','list_chats.py',['--json'])
         if action=='read_teams':
-            result=run_skill('slai-teams','list_messages.py',['--chat-id',a['chat_id'],'--limit','100','--json'])
+            from .teams_topics import chat_ids
+            bound=chat_ids(self.store,id) or re.findall(r'(?m)Chat ID: (\S+)',job['request'])
+            if bound and a['chat_id'] not in bound:
+                raise ValueError('Use the Teams chat bound to this job.')
+            try:
+                result=run_skill('slai-teams','list_messages.py',['--chat-id',a['chat_id'],'--limit','100','--raw','--json'])
+            except Exception:
+                self.store.set_state('teams_raw_read:'+id,{'error':'Raw Teams source read failed.'})
+                raise
             from .teams_topics import scoped_messages
             if isinstance(result,list):
                 result=scoped_messages(self.store,id,a['chat_id'],result)
