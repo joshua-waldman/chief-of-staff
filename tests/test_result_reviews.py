@@ -57,6 +57,16 @@ def test_review_names_document_instead_of_communication_job(setup):
     assert store.pending_results()[0]['review_title'] == 'Methodology draft.txt'
 
 
+def test_analysis_heading_names_review_instead_of_cited_source_file():
+    from cos.result_reviews import review_content
+    source = {'id': 'transcript', 'name': 'opaque-transcript.txt'}
+    summary = 'No reply needed.\n\nDelegated work for your review\n\nTechnology · Investigate repository\n\n**Repository findings**\n\nSee [meeting](/api/files/transcript).'
+    review = review_content(summary, [source])
+    assert review['review_title'] == 'Repository findings'
+    assert review['items'][0]['content'].startswith('**Repository findings**')
+    assert review['items'][0]['file_ids'] == ['transcript']
+
+
 def test_saved_inline_review_separates_triage_and_survives_reassessment(setup):
     store, engine = setup
     parent = store.create_job('AVA roadmap thread triage', 'Communications')
@@ -92,14 +102,14 @@ def test_parent_review_resolves_original_child_file_links(setup, monkeypatch):
     assert response.content == b'Review these tasks'
 
 
-def test_child_results_and_intake_closures_do_not_notify_owner(setup):
+def test_child_results_notify_through_parent_and_intake_closures_do_not(setup):
     store, engine = setup
     parent = store.create_job('Coordinate research', 'Technology')
     child = store.create_job('Research one source', 'Technology', parent_id=parent['id'])
     finish(store, engine, child)
     ignored = store.create_job('Incoming notification', 'Communications')
     store.update(ignored['id'], status='completed', result='Ignored by current guidance')
-    assert not Store(store.path).pending_results()
+    assert [r['id'] for r in Store(store.path).pending_results()] == [parent['id']]
     finish(store, engine, parent, 'Combined research')
     assert [r['id'] for r in store.pending_results()] == [parent['id']]
 
@@ -233,7 +243,7 @@ def test_delegated_content_returns_once_but_delegated_receipts_do_not(setup):
     parent = store.create_job('Handle a request from a conversation', 'Communications')
     child = store.create_job('Draft strategy', 'Strategy', parent_id=parent['id'])
     finish(store, engine, child, 'A completed strategy', result_kind='strategy')
-    assert not store.pending_results()
+    assert [r['id'] for r in store.pending_results()] == [parent['id']]
     assert finish(store, engine, parent, 'Here is the delegated strategy')
     other = store.create_job('Perform an operation', 'Communications')
     action_child = store.create_job('Update an external record', 'Strategy', parent_id=other['id'])
@@ -409,3 +419,79 @@ def test_unrelated_triage_completion_keeps_pending_draft_but_cancellation_hides_
     assert store.detail(job['id'])['result_review'] is None
     with pytest.raises(ValueError):
         store.review_result(job['id'], original['revision'])
+
+
+@pytest.mark.parametrize('status', ['waiting_children', 'waiting_input', 'running', 'failed', 'blocked'])
+def test_completed_return_reaches_review_before_director_finishes(setup, status):
+    store, engine = setup
+    parent = store.create_job('Coordinate research', 'Communications')
+    wrapper = store.create_job('Coordinate source findings', 'Technology', parent_id=parent['id'])
+    child = store.create_job('Write repository findings', 'Technology', parent_id=wrapper['id'])
+    store.update(parent['id'], status=status, messages=json.dumps({'messages': []}))
+    store.update(wrapper['id'], status='waiting_children')
+    store.complete_result(child['id'], {'result_kind': 'strategy', 'deliverable_file_ids': []}, '**Repository findings**\n\nCompleted analysis', 1)
+    assert [r['id'] for r in store.pending_results()] == [parent['id']]
+    review = store.result_review(parent['id'])
+    assert 'Completed analysis' in review['summary']
+    assert store.job(parent['id'])['status'] == status
+    assert Store(store.path).result_review(parent['id']) == review
+    store.review_result(parent['id'], review['revision'])
+    assert not Store(store.path).pending_results()
+    assert store.job(parent['id'])['status'] == status
+
+
+def test_startup_recovers_migration_archive_once_but_honors_user_cancellation(setup):
+    store, engine = setup
+    roots = []
+    for user_cancelled in (False, True):
+        parent = store.create_job('Historical meeting review', 'Communications')
+        child = store.create_job('Research repository', 'Technology', parent_id=parent['id'])
+        # Reproduce the old failure without the new child-completion callback.
+        store.update(child['id'], status='completed', result='Repository analysis', messages=json.dumps({'result_kind': 'strategy', 'deliverable_file_ids': []}))
+        store.update(parent['id'], status='cancelled', messages=json.dumps({'result_kind': 'triage', 'deliverable_file_ids': []}))
+        store.event(parent['id'], 'topic_migrated', 'History continued in topic jobs')
+        if user_cancelled:
+            store.event(parent['id'], 'cancelled', 'Cancelled by the user.')
+        roots.append(parent)
+    restored = Store(store.path)
+    assert [r['id'] for r in restored.pending_results()] == [roots[0]['id']]
+    assert restored.job(roots[0]['id'])['status'] == 'completed'
+    assert restored.job(roots[1]['id'])['status'] == 'cancelled'
+    review = restored.result_review(roots[0]['id'])
+    assert Store(store.path).result_review(roots[0]['id']) == review
+    assert len(store.rows("SELECT * FROM events WHERE kind='result_review_repaired'")) == 1
+    restored.review_result(roots[0]['id'], review['revision'])
+    assert not Store(store.path).pending_results()
+
+
+def test_new_child_return_invalidates_old_ack_without_replaying_reviewed_work(setup):
+    store, engine = setup
+    parent = store.create_job('Research two topics', 'Communications')
+    state = {'result_kind': 'strategy', 'deliverable_file_ids': []}
+    first = store.create_job('First topic', 'Technology', parent_id=parent['id'])
+    store.complete_result(first['id'], state, 'First findings', 1)
+    old = store.result_review(parent['id'])
+    second = store.create_job('Second topic', 'Technology', parent_id=parent['id'])
+    store.complete_result(second['id'], state, 'Second findings', 1)
+    latest = store.result_review(parent['id'])
+    assert latest['revision'] != old['revision']
+    with pytest.raises(ValueError):
+        store.review_result(parent['id'], old['revision'])
+    store.review_result(parent['id'], latest['revision'])
+    assert not Store(store.path).pending_results()
+    third = store.create_job('Third topic', 'Technology', parent_id=parent['id'])
+    store.complete_result(third['id'], state, 'Third findings', 1)
+    latest = store.result_review(parent['id'])
+    assert 'Third findings' in latest['summary']
+    assert 'First findings' not in latest['summary']
+    assert 'Second findings' not in latest['summary']
+
+
+@pytest.mark.parametrize('state', [{}, {'source_only': True, 'result_kind': 'strategy', 'deliverable_file_ids': []}, {'result_kind': 'triage', 'deliverable_file_ids': []}, {'result_kind': 'action_receipt', 'deliverable_file_ids': []}])
+def test_recovery_excludes_legacy_triage_and_source_or_operation_receipts(setup, state):
+    store, engine = setup
+    parent = store.create_job('Handle FYI', 'Communications')
+    child = store.create_job('Inspect incoming source', 'Technology', parent_id=parent['id'])
+    store.update(child['id'], status='completed', result='Source inspection finished', messages=json.dumps(state))
+    store.update(parent['id'], status='completed', messages=json.dumps({'result_kind': 'triage', 'deliverable_file_ids': []}))
+    assert not Store(store.path).pending_results()

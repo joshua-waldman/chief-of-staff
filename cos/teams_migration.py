@@ -150,6 +150,10 @@ def migrate(monitor, *, limit=None):
                 # Recheck external mutation outcomes in the same commit.
                 if any(c.execute("WITH RECURSIVE tree(id) AS (SELECT ? UNION ALL SELECT j.id FROM jobs j JOIN tree t ON j.parent_id=t.id) SELECT 1 FROM approvals a JOIN tree t ON t.id=a.job_id WHERE a.status IN ('executing','uncertain')",(jid,)).fetchone() for jid in ids):
                     raise ValueError('An external action outcome still needs verification.')
+                # Collect completed returns before archiving their director.
+                # Topic summaries are triage; the original request owns review.
+                from .result_reviews import reconcile
+                reconcile(c, ids)
                 topic_jobs=[]
                 for tid,g in grouped.items():
                     jid=uid()

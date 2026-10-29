@@ -20,7 +20,10 @@ def review_content(summary, files):
             continue
         linked = [f for f in files if '/api/files/'+f['id'] in body]
         first = body.splitlines()[0].strip().strip('#* _')
-        title = ', '.join(f['name'] for f in linked) or first
+        heading = re.match(r'^(?:#{1,6}\s+([^\n]+)|\*\*([^\n]+?)\*\*)', body)
+        # A generated analysis may cite transcripts and repository evidence.
+        # Its heading identifies the work; those source filenames do not.
+        title = (heading.group(1) or heading.group(2)).strip() if heading else ', '.join(f['name'] for f in linked) or first
         items.append({'title': title[:180], 'kind': 'document' if linked else 'inline',
                       'content': body, 'file_ids': [f['id'] for f in linked]})
         covered.update(f['id'] for f in linked)
@@ -47,6 +50,10 @@ def own_work(connection, job, state):
     if kind is not None:
         return kind in {'strategy', 'generated_content'}
     # Compatibility for saved finishes from before result kinds existed.
+    # Older tool/triage histories lack finish metadata entirely. Organization
+    # alone is not evidence that those investigations produced owner work.
+    if 'deliverable_file_ids' not in state:
+        return False
     selected = set(state.get('deliverable_file_ids', []))
     if selected:
         for row in connection.execute("SELECT result FROM approvals WHERE job_id=? AND status='executed' AND tool IN ('create_document','create_presentation','write_file')", (job['id'],)):
@@ -72,12 +79,12 @@ def delegated_work(connection, job, seen=None, reviewed_before=None):
     seen.add(job['id'])
     if reviewed_before is None:
         reviewed_before = connection.execute("SELECT MAX(created) FROM events WHERE job_id=? AND kind='result_reviewed'", (job['id'],)).fetchone()[0] or ''
-    for child in connection.execute("SELECT * FROM jobs WHERE parent_id=? AND status='completed' ORDER BY created,id", (job['id'],)).fetchall():
+    for child in connection.execute("SELECT * FROM jobs WHERE parent_id=? AND status<>'cancelled' ORDER BY created,id", (job['id'],)).fetchall():
         try:
             state = json.loads(child['messages'])
         except (TypeError, ValueError):
             state = None
-        if child['updated'] > reviewed_before and isinstance(state, dict) and own_work(connection, child, state):
+        if child['status'] == 'completed' and child['updated'] > reviewed_before and isinstance(state, dict) and own_work(connection, child, state):
             yield child, state
         yield from delegated_work(connection, child, seen, reviewed_before)
 
@@ -100,3 +107,72 @@ def review_payload(connection, job, state, summary):
     if sections:
         summary += '\n\nDelegated work for your review\n\n'+'\n\n'.join(sections)
     return summary, files
+
+
+def reconcile(connection, root_ids=None, *, event_kind='result_review_repaired'):
+    """Recover returned work without executing jobs or acknowledging owner review.
+
+    Completed descendants can return while their director is still waiting or
+    processing new messages. Migration archives are recoverable; user cancellations
+    are not. Keep one review on the original root rather than copying work into
+    each topic that mentions it.
+    """
+    from .db import now, uid
+    repaired = []
+    query = 'SELECT * FROM jobs WHERE parent_id IS NULL'
+    args = ()
+    if root_ids is not None:
+        if not root_ids:
+            return repaired
+        query += ' AND id IN ('+','.join('?' for _ in root_ids)+')'
+        args = tuple(root_ids)
+    for job in connection.execute(query, args).fetchall():
+        archived = job['status'] == 'cancelled'
+        if archived:
+            migrated = connection.execute("SELECT 1 FROM events WHERE job_id=? AND kind='topic_migrated'", (job['id'],)).fetchone()
+            cancelled = connection.execute("SELECT 1 FROM events WHERE job_id=? AND kind='cancelled'", (job['id'],)).fetchone()
+            if not migrated or cancelled:
+                continue
+        try:
+            state = json.loads(job['messages'])
+        except (TypeError, ValueError):
+            continue
+        if state == []:
+            state = {}
+        if not isinstance(state, dict):
+            continue
+        previous = connection.execute('SELECT * FROM result_reviews WHERE job_id=?', (job['id'],)).fetchone()
+        children = list(delegated_work(connection, job))
+        # A reviewed own result stays reviewed. New delegated work can still
+        # arrive later and must get its own revision.
+        own = (job['status'] == 'completed' and 'deliverable_file_ids' in state
+               and own_work(connection, job, state) and not (previous and previous['reviewed']))
+        if not children and not own:
+            continue
+        summary = job['result'] if job['status'] == 'completed' else ''
+        saved_files = []
+        if previous and previous['eligible'] and not previous['reviewed']:
+            # Reassessment can replace the job result with unrelated triage;
+            # preserve the actual pending snapshot, including its old files.
+            summary = previous['summary']
+            saved_files = json.loads(previous['file_ids'])
+        if not summary.strip():
+            summary = 'Completed delegated work from this request.'
+        payload_state = state if own else {'deliverable_file_ids': []}
+        summary, files = review_payload(connection, job, payload_state, summary)
+        files = list(dict.fromkeys(saved_files+files))
+        if previous and previous['eligible'] and not previous['reviewed'] and previous['summary'] == summary and json.loads(previous['file_ids']) == files and not archived:
+            continue
+        stamp = now()
+        completed = max([child['updated'] for child, _ in children] + ([job['updated']] if own else []))
+        connection.execute('''INSERT OR REPLACE INTO result_reviews
+            (job_id,revision,summary,file_ids,completed,reviewed,eligible) VALUES(?,?,?,?,?,NULL,1)''',
+            (job['id'], uid(), summary, json.dumps(files), completed))
+        if archived:
+            # Freeze the historical director; restoring a review must never
+            # queue the obsolete chat-wide job or replay its actions.
+            connection.execute("UPDATE jobs SET status='completed',question='' WHERE id=?", (job['id'],))
+        connection.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
+            (job['id'], event_kind, 'Returned completed work to the owner review queue without restarting the job.', stamp))
+        repaired.append(job['id'])
+    return repaired

@@ -329,3 +329,20 @@ def test_older_topic_table_upgrades_and_backfills_retained_sources(tmp_path):
     assert payload['text']=='Approved the budget' and payload['owner'] is True
     assert payload['date']=='2026-10-28'
     assert Store(store.path).one("SELECT payload FROM teams_topic_messages WHERE message_id='m'")['payload']==row['payload']
+
+
+
+def test_migration_collects_unreviewed_child_before_archiving_director(monitor):
+    from cos.teams_migration import migrate
+    job = legacy_job(monitor, status='waiting_input')
+    child = monitor.store.create_job('Research budget', 'Technology', parent_id=job['id'])
+    monitor.store.update(child['id'], status='completed', result='Budget analysis for owner review',
+        messages=json.dumps({'result_kind': 'strategy', 'deliverable_file_ids': []}))
+    assert migrate(monitor)['migrated'] == 1
+    assert monitor.store.job(job['id'])['status'] == 'completed'
+    assert [r['id'] for r in monitor.store.pending_results()] == [job['id']]
+    review = monitor.store.result_review(job['id'])
+    assert 'Budget analysis for owner review' in review['summary']
+    assert Store(monitor.store.path).result_review(job['id']) == review
+    monitor.store.review_result(job['id'], review['revision'])
+    assert not Store(monitor.store.path).pending_results()

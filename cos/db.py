@@ -72,7 +72,7 @@ class Store:
 
             if 'eligible' not in {row['name'] for row in c.execute('PRAGMA table_info(result_reviews)')}:
                 c.execute('ALTER TABLE result_reviews ADD COLUMN eligible INTEGER NOT NULL DEFAULT 1')
-            from .result_reviews import eligible, review_payload
+            from .result_reviews import eligible, reconcile
             # Reconcile the old broad inbox without marking anything owner-reviewed.
             old_results=c.execute('''SELECT j.*,r.job_id AS review_job_id FROM jobs j LEFT JOIN result_reviews r ON r.job_id=j.id
                 WHERE j.status='completed' AND j.parent_id IS NULL AND r.reviewed IS NULL''').fetchall()
@@ -87,18 +87,10 @@ class Store:
                     if previous and previous['eligible'] and previous['completed'] < job['updated']:
                         continue
                     reviewable=eligible(c,job,state)
-                    summary,file_ids=review_payload(c,job,state,job['result'])
                     if job['review_job_id']:
-                        c.execute('UPDATE result_reviews SET eligible=? WHERE job_id=?',(int(reviewable),job['id']))
-                        previous=c.execute('SELECT summary,file_ids FROM result_reviews WHERE job_id=?',(job['id'],)).fetchone()
-                        if reviewable and (previous['summary']!=summary or json.loads(previous['file_ids'])!=file_ids):
-                            c.execute('UPDATE result_reviews SET revision=?,summary=?,file_ids=? WHERE job_id=?',
-                                      (uid(),summary,json.dumps(file_ids),job['id']))
-                            c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
-                                      (job['id'],'result_review_repaired','Restored delegated work and deliverables to the pending owner review.',now()))
-                    elif reviewable:
-                        c.execute('INSERT OR IGNORE INTO result_reviews(job_id,revision,summary,file_ids,completed,reviewed) VALUES(?,?,?,?,?,NULL)',
-                            (job['id'],uid(),summary,json.dumps(file_ids),job['updated']))
+                        if not reviewable:
+                            c.execute('UPDATE result_reviews SET eligible=0 WHERE job_id=?',(job['id'],))
+            reconcile(c)
 
     def connect(self):
         c = sqlite3.connect(self.path, timeout=30)
@@ -194,6 +186,20 @@ class Store:
                 if reviewable or state.get('result_kind')=='action_receipt' or not previous or not previous['eligible'] or previous['reviewed']:
                     c.execute('INSERT OR REPLACE INTO result_reviews(job_id,revision,summary,file_ids,completed,reviewed,eligible) VALUES(?,?,?,?,?,NULL,?)',
                         (id,uid(),review_summary,json.dumps(file_ids),stamp,int(reviewable)))
+            else:
+                # Publish returned work even if the director is waiting for
+                # another child, blocked, or processing newer source activity.
+                from .result_reviews import reconcile
+                root = job
+                seen = {id}
+                while root['parent_id'] and root['parent_id'] not in seen:
+                    seen.add(root['parent_id'])
+                    parent = c.execute('SELECT * FROM jobs WHERE id=?', (root['parent_id'],)).fetchone()
+                    if not parent:
+                        break
+                    root = parent
+                if not root['parent_id']:
+                    reconcile(c, [root['id']], event_kind='result_ready')
 
     def result_review(self,id):
         row=self.one('SELECT * FROM result_reviews WHERE job_id=? AND eligible=1',(id,))
