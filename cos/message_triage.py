@@ -13,6 +13,8 @@ updates, work assigned to others, optional invitations and suggestions need no
 owner action unless the context establishes otherwise. Do not manufacture a
 reply, acknowledgement, investigation, reminder, monitoring task or delegation
 just to be helpful. Account for owner replies, completed work and superseded asks.
+Generic application guidance to review a completed result is optional reading,
+not a new owner obligation. Unverified runtime/tests alone do not assign work.
 For each yes decision cite the outstanding owner obligation and supporting
 evidence in response_reason or action_reason. A request to someone else is no,
 not unknown; reserve unknown for a concrete unresolved question about the owner's

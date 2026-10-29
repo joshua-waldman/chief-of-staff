@@ -64,8 +64,10 @@ def record(store, job_id, state, action, args, result, *, error=False, receipt_i
         state['resolved_errors'] = (state.get('resolved_errors', []) + resolved)[-12:]
         message = ('A tool recovered; other tool failures still need attention.' if failures else
                    'The previous tool failure has been resolved; work is continuing.')
-        clear_status(store, job_id, args.get('status_summary', message) if action == 'update_brief' else message,
-                     next_step=args.get('next_step', 'Continue the task using the saved findings and current tool results.') if action == 'update_brief' else 'Continue the task using the saved findings and current tool results.')
+        # A successful brief update already saved the task's substantive status.
+        # Resolving its validation error must not replace that status with boilerplate.
+        if action != 'update_brief':
+            clear_status(store, job_id, message)
         store.event(job_id, 'tool_recovered', json.dumps({'tool': action, 'resolved': resolved}))
 
 
