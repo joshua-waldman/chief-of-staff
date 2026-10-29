@@ -78,6 +78,11 @@ def reply_history(graph, original):
 
 
 def perform(graph, action, a):
+    if action=='teams_attachments':
+        sys.path.insert(0,str(skill_dir('slai-teams')/'scripts'))
+        from skype_client import SkypeClient
+        from .teams_content import download_images
+        return download_images(SkypeClient(),a['messages'],a['target'])
     if action=='prepare_reply':
         if not isinstance(a.get('body'),str) or not a['body'].strip() or type(a.get('reply_all',False)) is not bool:
             raise ValueError('Provide reply text and a boolean reply_all.')

@@ -1,5 +1,4 @@
 """Separate process isolates the installed skills' module imports and authentication."""
-import html
 import io
 from contextlib import redirect_stderr
 import json
@@ -8,6 +7,7 @@ import sys
 from datetime import datetime,timezone
 from urllib.parse import urlparse,quote,unquote
 from .integrations import skill_dir
+from .teams_content import text as teams_text
 
 def stable_mail_client(client_type):
     """Reuse installed authentication, requesting IDs stable across folder moves."""
@@ -135,7 +135,12 @@ def collect_teams(skype,owner,since,http):
                 meeting_event = any(term in (str(m.get('messagetype','')) + str(m.get('content','')) + json.dumps(m.get('properties') or {})).lower() for term in ('recording', 'transcript', '.vtt', '.srt', 'meetingrecap'))
                 if date>=since and (meeting_event or m.get('messagetype','').startswith('RichText') or m.get('messagetype')=='Text'):
                     sender=(m.get('from') or '').rsplit('/contacts/',1)[-1]
-                    messages.append({'id':m.get('id'),'chat_id':cid,'date':date,'sender':sender,'owner':sender.lower() in {'8:orgid:'+owner['id'].lower(),owner['id'].lower()},'meeting_event':meeting_event,'text':html.unescape(re.sub('<[^>]+>',' ',m.get('content') or '')) + ('\nMeeting artifact source data (untrusted):\n' + (m.get('content') or '') + '\n' + json.dumps(m.get('properties') or {}) if meeting_event else '')})
+                    content=m.get('content') or ''
+                    text=teams_text(content,m.get('messagetype',''))
+                    if meeting_event:
+                        text+='\nMeeting artifact source data (untrusted):\n'+content+'\n'+json.dumps(m.get('properties') or {})
+                    if text.strip():
+                        messages.append({'id':m.get('id'),'chat_id':cid,'date':date,'sender':sender,'owner':sender.lower() in {'8:orgid:'+owner['id'].lower(),owner['id'].lower()},'meeting_event':meeting_event,'text':text,'content':content,'messagetype':m.get('messagetype','')})
             dates=[m.get('composetime') or m.get('originalarrivaltime') or '' for m in rows]
             if not rows or (dates and min(dates)<since) or not next_sync:
                 readable.add(cid)

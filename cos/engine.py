@@ -148,6 +148,9 @@ class Engine:
             brief=json.loads(row['body']) if row else {}
             try:
                 validate_historical_attention(self.store,job,brief)
+                from .teams_content import empty_historical_gap
+                if empty_historical_gap(self.store,job,brief):
+                    raise ValueError('Blank historical evidence alone does not require owner input.')
             except ValueError:
                 progress.reset(state)
                 self.persist(job['id'],state,status='queued',question='')
@@ -562,6 +565,13 @@ class Engine:
                         hint=' For mail/Teams evidence use Communications with source_only:true; this source handoff remains available at the normal depth limit.' if action in {'search_mail','read_mail','mail_attachments','list_chats','read_teams','teams_attachments'} else ''
                         raise ValueError('Action '+action+' is not available to '+job['org']+'. Delegate to one of these registered organizations: '+', '.join(targets)+hint)
                     if triage and action in {'ask_user','finish','delegate','send_email','reply_email','send_teams','calendar_rsvp','delete_email','mark_email_read','mark_teams_read'}:
+                        from .teams_content import pending_images, empty_historical_gap
+                        if (s.get('historical_import') and not self.store.state('teams_raw_read:'+id)
+                                and empty_historical_gap(self.store,job,{'action_needed':'unknown','response_needed':'unknown'})):
+                            raise ValueError('Blank historical Teams sources may be image-only messages. Call read_teams with the bound chat ID once to recover raw image references, then inspect any images before finishing. Record failed reads as evidence gaps.')
+                        images=pending_images(self.store,id)
+                        if images:
+                            raise ValueError('Teams source images remain uninspected. Use teams_attachments with the bound chat ID, then read_file on each downloaded image and update_brief. Record access failures as evidence gaps, not empty content. Message IDs: '+json.dumps(images))
                         row=self.store.one('SELECT body FROM job_briefs WHERE job_id=?',(id,))
                         brief=json.loads(row['body']) if row else {}
                         if not all(brief.get(k) for k in ('context','status_summary','next_step','response_needed','response_reason','action_needed','action_reason')):

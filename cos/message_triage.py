@@ -42,6 +42,12 @@ source and thread ID. Conflicting preferences require review.
 If only an email preview is available, call read_mail to read the full body first.
 Use cached full source text when available. For Teams consider the supplied
 messages together, including owner replies; read_teams only if context is missing.
+Teams images are message content, including messages with no caption. Use
+teams_attachments for this topic and read_file on its downloaded images before
+deciding reply/action needs. Do not infer image contents from alt text, filenames
+or image markers. Record download/access failures as evidence gaps, never as
+empty messages. For blank legacy Teams records, read_teams once to recover raw
+image references before concluding that the original message is empty.
 Then call update_brief immediately with context, status_summary, next_step,
 email_excerpt (a concise useful summary of the body), response_needed and
 action_needed (each yes/no/unknown), response_reason, action_reason,

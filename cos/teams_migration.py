@@ -26,6 +26,11 @@ concrete evidence gap as unknown with uncertainties explaining what is missing;
 do not turn lack of validation into an owner task. During initial
 historical import, only read sources, update the brief and finish with a useful
 topic summary; do not send, mark read, delegate or execute historical requests.
+Image-only messages are substantive source evidence: recover raw image references
+with read_teams for blank legacy sources, use teams_attachments and read_file to
+inspect images, and assess their actual content. Do not infer image content from
+alt text. Record unavailable images as coverage gaps. A truly blank historical
+record alone does not establish an owner task or require asking for its text.
 Do not ask for routine permission to import history. New source activity or
 explicit owner direction resumes the normal workflow with fresh action approvals.
 Original jobs, files and receipts remain available in job history."""
