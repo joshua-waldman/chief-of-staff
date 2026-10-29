@@ -1,5 +1,38 @@
 """Review generated work, not routine conversation triage or action receipts."""
 import json
+import re
+
+
+def review_content(summary, files):
+    """Describe the saved review snapshot, never the conversation's latest state."""
+    context, separator, delegated = summary.partition('\n\nDelegated work for your review\n\n')
+    if not separator and files:
+        items = [{'title': f['name'], 'kind': 'document', 'content': '',
+                  'file_ids': [f['id']]} for f in files]
+        return {'review_title': ', '.join(f['name'] for f in files),
+                'items': items, 'context': summary.strip()}
+    bodies = re.split(r'(?m)^[^\n]+ · [^\n]+\n\n', delegated) if separator else [summary]
+    items = []
+    covered = set()
+    for body in bodies:
+        body = body.strip()
+        if not body or any(item['content'] == body for item in items):
+            continue
+        linked = [f for f in files if '/api/files/'+f['id'] in body]
+        first = body.splitlines()[0].strip().strip('#* _')
+        title = ', '.join(f['name'] for f in linked) or first
+        items.append({'title': title[:180], 'kind': 'document' if linked else 'inline',
+                      'content': body, 'file_ids': [f['id'] for f in linked]})
+        covered.update(f['id'] for f in linked)
+    for file in files:
+        if file['id'] not in covered:
+            items.append({'title': file['name'], 'kind': 'document', 'content': '',
+                          'file_ids': [file['id']]})
+    title = items[0]['title'] if items else 'Saved review content unavailable'
+    if len(items) > 1:
+        title += ' (+'+str(len(items)-1)+' more)'
+    return {'review_title': title, 'items': items,
+            'context': context.strip() if separator else ''}
 
 KINDS = {'strategy', 'generated_content', 'triage', 'action_receipt'}
 OPERATIONS = {'delete_email', 'mark_email_read', 'mark_teams_read', 'calendar_rsvp',

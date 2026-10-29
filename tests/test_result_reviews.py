@@ -46,6 +46,36 @@ def test_finish_queues_response_and_selected_deliverables_durably(setup):
     assert store.job(job['id'])['result'] == 'Finished response'
 
 
+def test_review_names_document_instead_of_communication_job(setup):
+    store, engine = setup
+    job = store.create_job('AVA roadmap thread triage', 'Communications')
+    output = engine.tools.execute(job, 'write_file', {'path': 'Methodology draft.txt', 'content': 'Read this methodology'})
+    review = finish(store, engine, job, 'Draft prepared.', [output['file_id']], 'generated_content')
+    assert review['review_title'] == 'Methodology draft.txt'
+    assert review['items'] == [{'title': 'Methodology draft.txt', 'kind': 'document',
+                               'content': '', 'file_ids': [output['file_id']]}]
+    assert store.pending_results()[0]['review_title'] == 'Methodology draft.txt'
+
+
+def test_saved_inline_review_separates_triage_and_survives_reassessment(setup):
+    store, engine = setup
+    parent = store.create_job('AVA roadmap thread triage', 'Communications')
+    child = store.create_job('Prepare methodology', 'Strategy', parent_id=parent['id'])
+    draft = '**Draft — Yuhuan’s split-domain methodology**\n\nRanked dimensions are user choices.\n\nScoring remains unverified.'
+    finish(store, engine, child, draft, result_kind='generated_content')
+    review = finish(store, engine, parent, 'No new reply or task.', result_kind='triage')
+    assert review['review_title'] == 'Draft — Yuhuan’s split-domain methodology'
+    assert review['context'] == 'No new reply or task.'
+    assert review['items'][0]['content'] == draft
+    assert review['items'][0]['kind'] == 'inline'
+    state = json.loads(store.job(parent['id'])['messages'])
+    store.complete_result(parent['id'], {**state, 'result_kind': 'triage'}, 'Later FYI.', 10)
+    assert store.result_review(parent['id'])['review_title'] == review['review_title']
+    assert store.pending_results()[0]['review_title'] == review['review_title']
+    store.review_result(parent['id'], store.result_review(parent['id'])['revision'])
+    assert not store.pending_results()
+
+
 def test_parent_review_resolves_original_child_file_links(setup, monkeypatch):
     store, engine = setup
     monkeypatch.setattr(server, 'store', store)

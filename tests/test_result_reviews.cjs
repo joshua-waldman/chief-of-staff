@@ -84,3 +84,19 @@ test('saved draft stays visible with reassessment context while parent is active
  assert.match(html,/while COS handles new activity/);
  assert.match(html,/mark-result-reviewed/);
 });
+
+test('review cards name generated content and separate thread handling from the draft',()=>{
+ const ctx=setup();
+ const review={review_title:'Yuhuan methodology <draft>',summary:'No new task.',file_ids:[],completed:'today',
+  context:'No new task.',items:[{title:'Yuhuan methodology <draft>',kind:'inline',content:'Read these ranked choices.',file_ids:[]}]};
+ ctx.returnedResults=[{...review,id:'parent',title:'AVA thread triage',org:'Communications'}];
+ const card=ctx.resultsView();
+ assert.match(card,/<h2>Yuhuan methodology &lt;draft><\/h2>/);
+ assert.match(card,/Read in job details/);
+ assert.ok(!card.includes('No new task.'));
+ const detail=ctx.returnedResultView({files:[],result_review:review});
+ assert.match(detail,/Generated content to read/);
+ assert.match(detail,/Read these ranked choices/);
+ assert.match(detail,/<details><summary>Thread handling context<\/summary>/);
+ assert.match(detail,/does not send the draft or complete its underlying commitment/);
+});
