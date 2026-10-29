@@ -9,7 +9,7 @@ from pathlib import Path
 from .config import settings,DATA,gateway_key
 from .db import uid,now
 from .provider import Gateway,NotConfigured,ContextWindowExceeded,tool_schema,string
-from .context import prepare as prepare_context
+from .context import prepare as prepare_context,topic_request
 from .tools import Tools,CATALOG,COMMON,ORG_ACTIONS,allowed_action,allowed_job_action,workspace,file_record,prepare_changes,selected_files,local_artifact,ARTIFACT_LINK
 from .policy import classify,research_delegation
 from .knowledge import Knowledge
@@ -110,12 +110,30 @@ class Engine:
             self.store.event(old['id'],'continuation','Resumed saved work automatically; the former step limit is now a scheduling time slice.')
         self.recover_rate_failures()
         self.recover_stalled_jobs()
+        self.recover_context_imports()
         self.recover_historical_attention()
         deliver_waiting(self.store)
         from .teams_migration import prepare as prepare_teams_migration
         prepare_teams_migration(self.store)
         self.thread=threading.Thread(target=self.loop,daemon=True)
         self.thread.start()
+
+    def recover_context_imports(self):
+        """Retry the old import-envelope overflow once, without replaying actions."""
+        for job in self.store.rows("SELECT * FROM jobs WHERE status='blocked' AND question LIKE 'Context recovery needs a smaller request or a verified model limit.%'"):
+            state=session(job)
+            if state.get('topic_context_recovery') or state.get('waiting_call') or self.store.one(
+                    "SELECT 1 FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain')",(job['id'],)):
+                continue
+            request=topic_request(self.store,job,state)
+            if request==job['request']:
+                continue
+            for message in state['messages']:
+                if message.get('role')=='user' and message.get('content')==job['request']:
+                    message['content']=request
+            state['topic_context_recovery']=1
+            self.persist(job['id'],state,status='queued',question='')
+            self.store.event(job['id'],'continuation','Automatically resumed context-blocked topic import with paginated primary evidence; saved progress and action receipts are retained.')
 
     def recover_historical_attention(self):
         """Reassess imported follow-ups lacking primary obligation evidence."""
@@ -393,7 +411,7 @@ class Engine:
             triage=(not s.get('source_only') and job['org']=='Communications' and (job['request'].startswith('Triage this incoming') or self.store.one('SELECT 1 FROM communication_threads WHERE job_id=?',(id,))))
             if not messages:
                 context=SYSTEM+'\nYour organization: '+job['org']+'. Application source: '+str(DATA.parent)+'. Project roots: '+json.dumps(settings()['projects'])+'\nWorkspace: '+str(workspace(id))
-                messages.extend([{'role':'system','content':context},{'role':'user','content':job['request']}])
+                messages.extend([{'role':'system','content':context},{'role':'user','content':topic_request(self.store,job,s)}])
                 if s.get('followup'):
                     messages.append({'role':'user','content':s.pop('followup')})
                 for f in self.store.rows('SELECT * FROM files WHERE job_id=?',(id,)):
