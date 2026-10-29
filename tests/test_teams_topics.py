@@ -305,6 +305,7 @@ def test_migration_preserves_unreviewed_returned_drafts(monitor):
 
 
 def test_older_topic_table_upgrades_and_backfills_retained_sources(tmp_path):
+    import sqlite3
     from cos.conversations import save_source
     store=Store(tmp_path/'older-schema.db')
     job=store.create_job('Older topic','Communications')
@@ -315,6 +316,12 @@ def test_older_topic_table_upgrades_and_backfills_retained_sources(tmp_path):
         c.execute('DROP TABLE teams_topic_messages')
         c.execute('CREATE TABLE teams_topic_messages(chat_id TEXT,message_id TEXT,topic_id TEXT NOT NULL,PRIMARY KEY(chat_id,message_id))')
         c.execute("INSERT INTO teams_topic_messages VALUES('chat','m','topic')")
+        c.execute("CREATE TRIGGER fail_backfill BEFORE UPDATE ON teams_topic_messages BEGIN SELECT RAISE(ABORT,'interrupted backfill'); END")
+    with pytest.raises(sqlite3.IntegrityError,match='interrupted backfill'):
+        Store(store.path)
+    with sqlite3.connect(store.path) as c:
+        assert 'payload' not in {r[1] for r in c.execute('PRAGMA table_info(teams_topic_messages)')}
+        c.execute('DROP TRIGGER fail_backfill')
     upgraded=Store(store.path)
     row=upgraded.one("SELECT * FROM teams_topic_messages WHERE message_id='m'")
     assert row['topic_id']=='topic'

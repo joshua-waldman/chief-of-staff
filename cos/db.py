@@ -55,6 +55,7 @@ class Store:
             from .teams_migration import SCHEMA as teams_migration_schema
             c.executescript(teams_migration_schema)
             if 'payload' not in {r['name'] for r in c.execute('PRAGMA table_info(teams_topic_messages)')}:
+                c.execute('BEGIN IMMEDIATE')
                 c.execute("ALTER TABLE teams_topic_messages ADD COLUMN payload TEXT NOT NULL DEFAULT '{}'")
                 for row in c.execute('''SELECT m.chat_id,m.message_id,s.sender,s.received,s.body
                         FROM teams_topic_messages m
