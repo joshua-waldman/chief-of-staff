@@ -302,3 +302,30 @@ def test_migration_preserves_unreviewed_returned_drafts(monitor):
     assert monitor.store.job(job['id'])['status']=='completed'
     assert [r['job_id'] if 'job_id' in r else r['id'] for r in monitor.store.pending_results()]==[job['id']]
     assert 'Saved budget draft for review' in topic_job(monitor,'Budget planning')['request']
+
+
+def test_older_topic_table_upgrades_and_backfills_retained_sources(tmp_path):
+    import sqlite3
+    from cos.conversations import save_source
+    store=Store(tmp_path/'older-schema.db')
+    job=store.create_job('Older topic','Communications')
+    with store.connect() as c:
+        c.execute("INSERT INTO teams_topics VALUES('topic','chat','Budget')")
+        c.execute("INSERT INTO communication_threads VALUES('teams','topic',?)",(job['id'],))
+        save_source(c,job['id'],'teams','m','You','','2026-10-28','Approved the budget')
+        c.execute('DROP TABLE teams_topic_messages')
+        c.execute('CREATE TABLE teams_topic_messages(chat_id TEXT,message_id TEXT,topic_id TEXT NOT NULL,PRIMARY KEY(chat_id,message_id))')
+        c.execute("INSERT INTO teams_topic_messages VALUES('chat','m','topic')")
+        c.execute("CREATE TRIGGER fail_backfill BEFORE UPDATE ON teams_topic_messages BEGIN SELECT RAISE(ABORT,'interrupted backfill'); END")
+    with pytest.raises(sqlite3.IntegrityError,match='interrupted backfill'):
+        Store(store.path)
+    with sqlite3.connect(store.path) as c:
+        assert 'payload' not in {r[1] for r in c.execute('PRAGMA table_info(teams_topic_messages)')}
+        c.execute('DROP TRIGGER fail_backfill')
+    upgraded=Store(store.path)
+    row=upgraded.one("SELECT * FROM teams_topic_messages WHERE message_id='m'")
+    assert row['topic_id']=='topic'
+    payload=json.loads(row['payload'])
+    assert payload['text']=='Approved the budget' and payload['owner'] is True
+    assert payload['date']=='2026-10-28'
+    assert Store(store.path).one("SELECT payload FROM teams_topic_messages WHERE message_id='m'")['payload']==row['payload']
