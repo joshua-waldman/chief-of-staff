@@ -280,3 +280,68 @@ def test_detail_separates_existing_recovery_files_by_directory(env):
         'history-report.txt','checkpoint-report.txt'}
     assert env.rows('SELECT * FROM files WHERE job_id=?',(job['id'],))==before
     assert all(Path(f['path']).exists() for f in files)
+
+
+def test_preflight_releases_last_image_when_required_text_almost_fills_budget(env,monkeypatch):
+    from cos import context
+    from cos.context import image_count
+    monkeypatch.setattr(context,'input_budget',lambda role:30000)
+    job=env.create_job('Inspect this evidence','Technology')
+    directions={'role':'user','content':'Owner constraints: '+('keep '*2800)}
+    state={'messages':[{'role':'system','content':'Approval policy'},directions,
+        {'role':'user','content':[{'type':'text','text':'Retain this owner direction.'},
+            {'type':'image_url','image_url':{'url':'https://example.com/source.png'}}]}]}
+    assert estimate(state['messages'],SCHEMA)>30000
+    assert prepare(Engine(env),job,state,'worker',SCHEMA)
+    assert image_count(state['messages'])==0
+    assert directions in state['messages']
+    assert estimate(state['messages'],SCHEMA)<30000
+    assert 'Retain this owner direction.' in json.dumps(state['messages'])
+    assert 'archived_image_url' in json.dumps(state['messages'])
+
+
+def test_legacy_source_prefix_with_leading_newline_is_compacted_as_evidence(env):
+    from cos.conversations import SOURCE_PREFIX
+    job=env.create_job('Summarize this topic','Communications')
+    source='\n'+SOURCE_PREFIX+'Message ID: source-1\n'+('Source evidence '*12000)
+    owner={'role':'user','content':'Owner correction: preserve the deadline.'}
+    state={'messages':[{'role':'system','content':'Approval policy'},
+        {'role':'user','content':job['request']},{'role':'user','content':source},owner]}
+    assert prepare(Engine(env),job,state,'triage',SCHEMA)
+    assert owner in state['messages']
+    assert estimate(state['messages'],SCHEMA)<input_budget('triage')
+    evidence=next(m for m in state['messages'] if m.get('_cos_source_update'))
+    archived=json.loads(evidence['content'])
+    assert Path(archived['full_content_path']).read_text(encoding='utf-8')==source
+
+
+@pytest.mark.parametrize('guard',['none','pending','executing','uncertain','waiting_call','already_recovered'])
+def test_internal_context_stops_resume_once_preserving_receipts_and_questions(env,guard):
+    job=env.create_job('Continue from saved findings','Communications')
+    state={'messages':[{'role':'user','content':'Preserve my directions.'}],
+           'file_reads':{'source':{'complete':True}},'stalled_steps':4}
+    if guard=='waiting_call':
+        state['waiting_call']='waiting'
+    if guard=='already_recovered':
+        state['context_preflight_recovery']=1
+    status=guard if guard in {'pending','executing','uncertain'} else 'executed'
+    env.write('INSERT INTO approvals(id,job_id,tool,args,status,created,result) VALUES(?,?,?,?,?,?,?)',
+        ('receipt',job['id'],'send_teams','{}',status,'now','{"sent":true}'))
+    question='Context recovery needs a smaller request or a verified model limit. Saved progress.'
+    engine=Engine(env)
+    engine.persist(job['id'],state,status='blocked',question=question)
+    unrelated=env.create_job('Check credentials','Technology')
+    env.update(unrelated['id'],status='blocked',question='Missing credentials')
+    engine.recover_context_preflight()
+    current=env.job(job['id'])
+    assert current['status']==('queued' if guard=='none' else 'blocked')
+    assert current['question']==('' if guard=='none' else question)
+    assert session(current)['file_reads']==state['file_reads']
+    assert session(current)['messages']==state['messages']
+    assert env.one("SELECT status FROM approvals WHERE id='receipt'")['status']==status
+    assert env.job(unrelated['id'])['status']=='blocked'
+    if guard=='none':
+        env.update(job['id'],status='blocked',question=question)
+        engine.recover_context_preflight()
+        assert env.job(job['id'])['status']=='blocked'
+    engine.stop()

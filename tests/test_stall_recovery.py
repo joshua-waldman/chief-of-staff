@@ -272,3 +272,61 @@ def test_brief_loop_escalates_to_delivery_and_creates_real_output(env,monkeypatc
         assert env.one("SELECT 1 FROM events WHERE job_id=? AND body LIKE 'Automatic focused delivery%'",(job['id'],))
     finally:
         engine.stop()
+
+
+def test_mandatory_image_gap_gets_one_focused_retry_even_after_delivery_exhaustion(env):
+    job=stopped(env,'Communications')
+    env.write('INSERT INTO teams_topics VALUES(?,?,?)',('topic','chat','Topic'))
+    env.write('INSERT INTO communication_threads VALUES(?,?,?)',('teams','topic',job['id']))
+    env.write('INSERT INTO communication_sources VALUES(?,?,?,?,?,?,?,?)',
+        (job['id'],'teams','image-source','Sender','','now','<img src="https://example.com/source.png">',1))
+    state=session(env.job(job['id']))
+    state['stall_recovery']={'version':progress.STALL_RECOVERY_VERSION,'active':True,'phase':'deliver','remaining':0,'verification_reads':2}
+    env.update(job['id'],messages=json.dumps(state))
+    engine=Engine(env,Scripted())
+    try:
+        engine.recover_stalled_jobs()
+        current=env.job(job['id'])
+        assert current['status']=='queued' and not current['question']
+        saved=session(current)
+        assert saved['image_coverage_recovery']==1 and 'stall_recovery' not in saved
+        assert saved['file_reads']==state['file_reads']
+        assert 'teams_attachments' in saved['messages'][-1]['content']
+        assert 'image-source' in saved['messages'][-1]['content']
+        assert 'chat' in saved['messages'][-1]['content']
+        saved['stall_recovery']={'version':progress.STALL_RECOVERY_VERSION,'active':True,'phase':'deliver','remaining':0}
+        env.update(job['id'],status='blocked',messages=json.dumps(saved))
+        engine.recover_stalled_jobs()
+        assert env.job(job['id'])['status']=='blocked'
+    finally:
+        engine.stop()
+
+
+def test_image_recovery_for_email_uses_verified_source_receipt(env,monkeypatch):
+    from cos.teams_content import image_chat_ids
+    from cos.tools import Tools
+    from cos import tools
+    job=stopped(env,'Communications')
+    body='<img src="https://example.com/source.png">'
+    env.write('INSERT INTO communication_sources VALUES(?,?,?,?,?,?,?,?)',
+        (job['id'],'teams','source','Sender','','now',body,1))
+    engine=Engine(env,Scripted())
+    try:
+        assert image_chat_ids(env,job)==[]
+        env.write('INSERT INTO approvals(id,job_id,tool,args,status,created,result) VALUES(?,?,?,?,?,?,?)',
+            ('source-read',job['id'],'read_teams',json.dumps({'chat_id':'verified-chat'}),'executed','now',
+             json.dumps([{'id':'source','content':body}])))
+        assert image_chat_ids(env,job)==['verified-chat']
+        state=session(env.job(job['id']))
+        assert engine.recover_image_coverage(job,state)
+        def unavailable(*args):
+            raise RuntimeError('Image unavailable')
+        monkeypatch.setattr(tools,'communication',unavailable)
+        result=Tools(env).teams_images(job,{'chat_id':'verified-chat'})
+        assert result['messages']['source']['errors']
+        from cos.teams_content import pending_images
+        assert pending_images(env,job['id'])==[]
+        env.write("UPDATE communication_sources SET body='changed' WHERE job_id=?",(job['id'],))
+        assert image_chat_ids(env,job)==[]
+    finally:
+        engine.stop()
