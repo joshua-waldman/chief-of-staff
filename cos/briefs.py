@@ -5,6 +5,42 @@ from .db import now
 FIELDS={'action_needed','action_reason','requested_action','action_plan','context','status_summary','next_step','email_from','email_subject','email_received','email_excerpt','email_id','response_needed','response_reason','proposed_to','proposed_subject','proposed_body','uncertainties'}
 FIELDS |= {'triage_category','triage_reason','job_name'}
 FIELDS |= {'time_sensitive','timing_reason','deadline_at'}
+FIELDS |= {'owner_obligation_source_id','owner_obligation_evidence'}
+
+OPTIONAL_REVIEW = {'review the result and any deliverables', 'review the result',
+                   'review the unresolved follow-up',
+                   'answer the question below to continue'}
+
+
+def validate_question(question):
+    if (not isinstance(question, str) or not question.strip() or
+            question.strip().lower().rstrip('.!?') in OPTIONAL_REVIEW):
+        raise ValueError('Identify the specific missing information or owner decision. '
+                         'Optional result review is not a question; finish when no obligation remains.')
+
+
+def validate_historical_attention(store, job, brief):
+    state = json.loads(job['messages'])
+    if not isinstance(state, dict) or not state.get('historical_import'):
+        return
+    if not any(brief.get(k) == 'yes' for k in ('action_needed', 'response_needed')):
+        if any(brief.get(k) == 'unknown' for k in ('action_needed', 'response_needed')):
+            validate_question(brief.get('uncertainties'))
+        return
+    source_id = brief.get('owner_obligation_source_id', '')
+    excerpt = brief.get('owner_obligation_evidence', '').strip()
+    source = store.one('''SELECT m.payload FROM teams_topic_messages m
+        JOIN communication_threads t ON t.thread_id=m.topic_id AND t.source='teams'
+        WHERE t.job_id=? AND m.message_id=?''', (job['id'], source_id))
+    evidence = json.loads(source['payload']) if source else {}
+    if (evidence.get('record_kind') not in {'message', 'owner_feedback'} or
+            not excerpt or excerpt not in evidence.get('text', '')):
+        raise ValueError('Historical owner attention requires owner_obligation_source_id '
+                         'and owner_obligation_evidence quoting an original message or owner feedback '
+                         'in this topic that establishes an outstanding obligation. A model brief, '
+                         'generic result-review guidance or unverified tests is insufficient. '
+                         'If only optional review remains, set action_needed and response_needed to no '
+                         'and finish; use unknown with specific uncertainties for a real evidence gap.')
 
 TIMING_POLICY = """Assess time sensitivity with LLM reasoning for every request requiring
 owner attention, even when no explicit timeline is stated. Before asking for
@@ -28,13 +64,17 @@ fields when an obligation is resolved or superseded.
 def unresolved_action(store, job):
     row=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
     brief=json.loads(row['body']) if row else {}
+    validate_historical_attention(store, job, brief)
     if brief.get('action_needed') in {'yes','unknown'}:
         requested=brief.get('requested_action','').strip()
         if requested.lower().rstrip('.') in {'none','none outstanding','no follow-up','no further action','n/a'}:
             requested=''
         if brief['action_needed']=='unknown':
-            return requested or brief.get('triage_reason') or brief.get('uncertainties') or brief.get('action_reason') or 'Determine whether any owner action remains.'
-        return requested or brief.get('action_reason') or 'Review the unresolved follow-up.'
+            followup = requested or brief.get('uncertainties') or brief.get('triage_reason') or brief.get('action_reason')
+        else:
+            followup = requested or brief.get('action_reason')
+        validate_question(followup)
+        return followup
     return ''
 def update_brief(store,job,a):
     current=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
@@ -66,6 +106,7 @@ def update_brief(store,job,a):
         body[key]=value.strip()
     if body.get('time_sensitive') == 'yes' and not body.get('timing_reason'):
         raise ValueError('Explain the evidence for time-sensitive attention in timing_reason.')
+    validate_historical_attention(store, job, body)
     if job['org'] == 'Communications':
         from .message_triage import category
         if body.get('triage_category') == 'review' and 'triage_category' not in a and {'response_needed','action_needed'}.intersection(a):
@@ -96,7 +137,7 @@ def detail_brief(store,job):
             b[key]=match.group(1)
     b.setdefault('context',b.get('email_subject') or request.split('\n')[0][:300])
     b.setdefault('status_summary',{'waiting_input':'Waiting for your answer','awaiting_approval':'Ready for your approval','running':'Agent is working','waiting_children':'Waiting for delegated work','queued':'Queued for an agent','completed':'Work completed','blocked':'Needs information or setup','failed':'Stopped after an error','cancelled':'Cancelled'}.get(job['status'],job['status']))
-    default_next={'waiting_input':'Answer the question below to continue.','awaiting_approval':'Review the exact action below, then approve or reject.','running':'The agent will return a result or a decision for you.','waiting_children':'The director will resume when sub-agents return.','queued':'An agent will start when capacity is available.','completed':'Review the result and any deliverables.','blocked':'Provide the missing setup or information below.','failed':'Review the error and provide instructions to retry.','cancelled':'No further steps are scheduled.'}
+    default_next={'waiting_input':'Answer the question below to continue.','awaiting_approval':'Review the exact action below, then approve or reject.','running':'The agent will return a result or a decision for you.','waiting_children':'The director will resume when sub-agents return.','queued':'An agent will start when capacity is available.','completed':'The result and any deliverables are available for optional review.','blocked':'Provide the missing setup or information below.','failed':'Review the error and provide instructions to retry.','cancelled':'No further steps are scheduled.'}
     b['next_step']=default_next.get(job['status'],'Review the latest activity.') if job['status'] in {'awaiting_approval','waiting_input','blocked','failed','cancelled'} else b.get('next_step',default_next.get(job['status'],''))
     if job['status'] in {'waiting_capacity','capacity_paused'}:
         b['status_summary']='Progress saved; waiting for model capacity.'

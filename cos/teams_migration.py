@@ -14,7 +14,16 @@ IMPORT_POLICY = """Historical Teams topic import: summarize and reassess only th
 topic's retained evidence. Owner feedback and action records below retain their
 original provenance. Executed actions and completed delegated work must not be
 repeated. A draft or child completion is not owner acceptance. Preserve unresolved
-owner obligations and uncertain outcomes in the brief for review. During initial
+owner obligations and uncertain outcomes in the brief for review. Generic application
+next steps such as 'Review the result and any deliverables' mean optional result
+review, not an outstanding owner obligation. Completed work, unverified tests and
+model-authored briefs/outcomes alone do not establish a new assignment. Before
+setting action_needed or response_needed to yes, cite a retained original message
+or owner feedback using owner_obligation_source_id and owner_obligation_evidence
+(an exact excerpt establishing the outstanding request, assignment or commitment).
+If only optional review remains, set both flags to no and finish. Preserve a
+concrete evidence gap as unknown with uncertainties explaining what is missing;
+do not turn lack of validation into an owner task. During initial
 historical import, only read sources, update the brief and finish with a useful
 topic summary; do not send, mark read, delegate or execute historical requests.
 Do not ask for routine permission to import history. New source activity or
