@@ -131,7 +131,7 @@ def archive_images(store,job_id,messages,keep_latest):
 def source_message(message,request):
     content=message.get('content')
     return (message.get('_cos_source_update') or (message.get('role')=='user' and
-        isinstance(content,str) and content!=request and content.startswith(SOURCE_PREFIX)))
+        isinstance(content,str) and content!=request and content.lstrip('\r\n').startswith(SOURCE_PREFIX)))
 
 
 def action_receipts(store,job_id):
@@ -251,6 +251,11 @@ def prepare(engine,job,state,role,tools,*,force=False):
             end+=1
         del working[index:end]
     after=estimate(working,tools)
+    if after>budget and not force and image_count(working):
+        # The initial preflight must try releasing the last visual input too;
+        # otherwise it raises before the inference retry can request this step.
+        archive_images(store,job['id'],working,keep_latest=0)
+        after=estimate(working,tools)
     if after>budget:
         # Preserve mandatory directions/policy when no safe reduction can fit.
         raise ContextWindowExceeded('Required text instructions still exceed the context budget. Progress is saved at '+checkpoint_path+'. Split the request or configure the verified gateway model limit.')

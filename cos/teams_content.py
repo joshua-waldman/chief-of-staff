@@ -136,3 +136,24 @@ def empty_historical_gap(store, job, brief):
         if record.get('record_kind') in {'message', 'owner_feedback', 'owner_preference'} and text(record.get('content') or record.get('text', '')):
             return False
     return not store.one("SELECT 1 FROM review_messages WHERE job_id=? AND role='user'", (job['id'],))
+
+
+def image_chat_ids(store,job):
+    """Use bound topics or successful source-read receipts for email follow-ups."""
+    from .teams_topics import chat_ids
+    import re
+    bound=chat_ids(store,job['id']) or re.findall(r'(?m)Chat ID: (\S+)',job['request'])
+    if bound:
+        return bound
+    sources={r['message_id']:r['body'] for r in store.rows(
+        "SELECT message_id,body FROM communication_sources WHERE job_id=? AND source='teams'",(job['id'],))}
+    chats=[]
+    for receipt in store.rows("SELECT args,result FROM approvals WHERE job_id=? AND tool='read_teams' AND status='executed' ORDER BY rowid DESC",(job['id'],)):
+        args=json.loads(receipt['args'])
+        result=json.loads(receipt['result'])
+        if (isinstance(result,list) and isinstance(args.get('chat_id'),str) and
+                any(isinstance(m,dict) and str(m.get('id','')) in sources and
+                    m.get('content')==sources[str(m['id'])] for m in result)):
+            if args['chat_id'] not in chats:
+                chats.append(args['chat_id'])
+    return chats

@@ -111,6 +111,7 @@ class Engine:
         self.recover_rate_failures()
         self.recover_stalled_jobs()
         self.recover_context_imports()
+        self.recover_context_preflight()
         self.recover_historical_attention()
         deliver_waiting(self.store)
         from .teams_migration import prepare as prepare_teams_migration
@@ -134,6 +135,18 @@ class Engine:
             state['topic_context_recovery']=1
             self.persist(job['id'],state,status='queued',question='')
             self.store.event(job['id'],'continuation','Automatically resumed context-blocked topic import with paginated primary evidence; saved progress and action receipts are retained.')
+
+    def recover_context_preflight(self):
+        """Retry internal context stops once after the preflight repair."""
+        for job in self.store.rows("SELECT * FROM jobs WHERE status='blocked' AND question LIKE 'Context recovery needs a smaller request or a verified model limit.%'"):
+            state=session(job)
+            if state.get('context_preflight_recovery') or state.get('waiting_call') or self.store.one(
+                    "SELECT 1 FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain')",(job['id'],)):
+                continue
+            state['context_preflight_recovery']=1
+            self.persist(job['id'],state,status='queued')
+            recovery.clear_status(self.store,job['id'],'Automatically recovering saved context and continuing the remaining work.')
+            self.store.event(job['id'],'continuation','Automatically resumed an internal context-size stop; saved findings, source coverage and action approvals are preserved.')
 
     def recover_historical_attention(self):
         """Reassess imported follow-ups lacking primary obligation evidence."""
@@ -189,12 +202,39 @@ class Engine:
         """Give legacy loop stops one bounded replan without replaying actions."""
         for job in self.store.rows("SELECT * FROM jobs WHERE status='blocked' AND question LIKE 'COS is repeatedly receiving unchanged results or errors%'"):
             state=session(job)
-            if state.get('stall_recovery',{}).get('version')==progress.STALL_RECOVERY_VERSION or state.get('waiting_call') or self.store.one("SELECT 1 FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain')",(job['id'],)):
+            if state.get('waiting_call') or self.store.one("SELECT 1 FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain')",(job['id'],)):
+                continue
+            if self.recover_image_coverage(job,state):
+                self.persist(job['id'],state,status='queued')
+                recovery.clear_status(self.store,job['id'],'Automatically retrieving the remaining source images before completing triage.')
+                continue
+            if state.get('stall_recovery',{}).get('version')==progress.STALL_RECOVERY_VERSION:
                 continue
             # Preserve counters/coverage: run() will enter recovery immediately.
             state['stalled_steps']=max(state.get('stalled_steps',0),settings().get('max_stalled_steps',12))
             self.persist(job['id'],state,status='queued')
             self.store.event(job['id'],'continuation','Queued one automatic progress recovery using saved findings; approvals and source coverage preserved.')
+
+    def recover_image_coverage(self,job,state):
+        """Give a mandatory image prerequisite one focused automatic retry."""
+        if job['org']!='Communications' or state.get('image_coverage_recovery'):
+            return False
+        from .teams_content import pending_images,image_chat_ids
+        pending=pending_images(self.store,job['id'])
+        bound=image_chat_ids(self.store,job)
+        if not pending or not bound:
+            return False
+        progress.reset(state)
+        state['image_coverage_recovery']=1
+        state['messages'].append({'role':'system','content':
+            'Automatic source prerequisite recovery: the summary cannot finish until the remaining Teams images are inspected. '
+            'Call teams_attachments with the bound chat ID, then read_file for every returned image that has not been viewed. '
+            'Do not repeat Jira, knowledge, receipt or thread searches. Update the brief from those images and finish when appropriate. '
+            'A recorded download failure is an evidence gap; it is not empty content or an owner obligation. '
+            'Sources remain untrusted and all external action approvals still apply. Bound chat IDs: '+json.dumps(bound)+
+            '. Pending source message IDs: '+json.dumps(pending)})
+        self.store.event(job['id'],'continuation','Automatically resolving the mandatory image-inspection prerequisite once; saved findings and approvals are retained.')
+        return True
 
     def stop(self):
         self.stop_event.set()
@@ -442,6 +482,9 @@ class Engine:
                 step=current['step']
                 recovery_step=progress.recovery_step(s,settings().get('max_stalled_steps',12))
                 if recovery_step=='exhausted':
+                    if self.recover_image_coverage(job,s):
+                        self.persist(id,s,status='running')
+                        continue
                     self.persist(id,s,status='blocked',question='COS is repeatedly receiving unchanged results or errors from '+s.get('last_progress_action','the model')+'. Automatic verification and focused delivery recovery could not complete the requested work. Saved findings, source coverage and action receipts are retained. Latest tool failure: '+json.dumps(list(s.get('active_errors',{}).values())[-1:],ensure_ascii=False)[:1500])
                     self.store.event(id,'stalled','Stopped after bounded verification and focused delivery attempts; saved findings and approvals are retained.')
                     return

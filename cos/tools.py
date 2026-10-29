@@ -277,10 +277,9 @@ def prepare_changes(job,args):
 
 class Tools:
     def teams_images(self,job,args):
-        from .teams_topics import chat_ids
-        from .teams_content import parse
+        from .teams_content import parse,image_chat_ids
         job_id=job['id']
-        permitted=chat_ids(self.store,job_id) or re.findall(r'(?m)Chat ID: (\S+)',job['request'])
+        permitted=image_chat_ids(self.store,job)
         if args['chat_id'] not in permitted:
             raise ValueError('Use the Teams chat bound to this job; image downloads are scoped to its source messages.')
         sources=self.store.rows("SELECT message_id,body FROM communication_sources WHERE job_id=? AND source='teams'",(job_id,))
