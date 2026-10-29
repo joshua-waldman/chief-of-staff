@@ -54,6 +54,17 @@ class Store:
             c.executescript(schedule_schema)
             from .teams_migration import SCHEMA as teams_migration_schema
             c.executescript(teams_migration_schema)
+            if 'payload' not in {r['name'] for r in c.execute('PRAGMA table_info(teams_topic_messages)')}:
+                c.execute("ALTER TABLE teams_topic_messages ADD COLUMN payload TEXT NOT NULL DEFAULT '{}'")
+                for row in c.execute('''SELECT m.chat_id,m.message_id,s.sender,s.received,s.body
+                        FROM teams_topic_messages m
+                        LEFT JOIN communication_threads t ON t.source='teams' AND t.thread_id=m.topic_id
+                        LEFT JOIN communication_sources s ON s.job_id=t.job_id AND s.source='teams' AND s.message_id=m.message_id''').fetchall():
+                    payload={'id':row['message_id'],'chat_id':row['chat_id'],
+                        'text':row['body'] or '', 'date':row['received'] or '',
+                        'sender':row['sender'] or '', 'owner':row['sender']=='You', 'record_kind':'message'}
+                    c.execute('UPDATE teams_topic_messages SET payload=? WHERE chat_id=? AND message_id=?',
+                              (json.dumps(payload),row['chat_id'],row['message_id']))
             orgs = [('Communications','Chief Communications Officer','Monitor and triage communications, propose action delegation for approval, and draft grounded responses.'),('Technology','Chief Technology Officer','Research with traceable evidence.'),('Self-Improvement','Director of Self-Improvement','Improve this application and create skills and organizations.'),('Engineering','Director of Engineering','Implement and validate project changes.'),('Strategy','Chief Strategy Officer','Develop scope, plans, priorities, and acceptance criteria.')]
             c.executemany('INSERT OR IGNORE INTO organizations VALUES(?,?,?,?)', [(*o, now()) for o in orgs])
             c.execute("UPDATE organizations SET purpose=? WHERE name='Communications' AND purpose=?",(orgs[0][2],'Monitor, triage, and draft grounded responses.'))
