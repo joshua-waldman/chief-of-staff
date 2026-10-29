@@ -199,13 +199,28 @@ class Store:
         row=self.one('SELECT * FROM result_reviews WHERE job_id=? AND eligible=1',(id,))
         if row:
             row['file_ids']=json.loads(row['file_ids'])
+            from .tools import is_recovery_file
+            from .result_reviews import review_content
+            ids=set(row['file_ids']) | set(re.findall(r'/api/files/([A-Za-z0-9_-]+)',row['summary']))
+            files=[]
+            for file_id in sorted(ids):
+                file=self.one('SELECT * FROM files WHERE id=?',(file_id,))
+                if file and not is_recovery_file(file['job_id'],file['path']):
+                    files.append(file)
+            row.update(review_content(row['summary'],files))
         return row
 
     def pending_results(self):
-        return self.rows('''SELECT j.id,j.title,j.org,j.project,r.revision,r.completed,
+        rows=self.rows('''SELECT j.id,j.title,j.org,j.project,r.revision,r.completed,
             substr(r.summary,1,600) AS summary FROM result_reviews r JOIN jobs j ON j.id=r.job_id
             WHERE r.eligible=1 AND r.reviewed IS NULL AND j.status<>'cancelled' AND j.parent_id IS NULL
             ORDER BY r.completed DESC,j.id''')
+        for row in rows:
+            review=self.result_review(row['id'])
+            if review:
+                row['review_title']=review['review_title']
+                row['items']=[{key:item[key] for key in ('title','kind','file_ids')} for item in review['items']]
+        return rows
 
     def review_result(self,id,revision):
         with self.lock,self.connect() as c:
