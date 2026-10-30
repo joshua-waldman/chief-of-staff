@@ -14,6 +14,26 @@ def native(action,args):
     return answer
 
 
+def test_latest_returned_report_survives_compacted_history_and_is_primary_evidence(setup):
+    store,engine=setup
+    parent=store.create_job('Synthesize methodology','Strategy')
+    old=store.create_job('Read overview','Technology',parent_id=parent['id'])
+    store.update(old['id'],status='completed',result='Implementation not inspected')
+    child=store.create_job('Inspect implementation','Technology',parent_id=parent['id'])
+    report='Pinned implementation inspected.\n'+'Verified source findings.\n'*250
+    store.update(child['id'],status='completed',result=report)
+    state={'messages':[],'delivery_pending':True}
+    returned=engine.returned_work(parent,state)
+    assert returned[0]['id']==child['id']
+    evidence=store.one('SELECT * FROM files WHERE id=?',(returned[0]['full_result_file_id'],))
+    assert Path(evidence['path']).parent.name=='sources'
+    assert Path(evidence['path']).read_text(encoding='utf-8')==report
+    state['messages']=[{'role':'system','content':'Compacted old conversation: implementation unknown'}]
+    assert engine.returned_work(parent,state)==returned
+    assert len(store.rows('SELECT * FROM files WHERE job_id=?',(parent['id'],)))==2
+    assert not store.pending_results()
+
+
 @pytest.fixture
 def setup(tmp_path,monkeypatch):
     monkeypatch.setattr(tools,'DATA',tmp_path/'data')
