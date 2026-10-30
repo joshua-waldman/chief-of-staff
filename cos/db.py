@@ -151,7 +151,9 @@ class Store:
         j['result_review']=self.result_review(id) if j['status']!='cancelled' else None
         if j['result_review']:
             review=j['result_review']
-            ids=set(review['file_ids']) | set(re.findall(r'/api/files/([A-Za-z0-9_-]+)',review['summary']))
+            ids=set(review['file_ids'])
+            if not review.get('final_output'):
+                ids |= set(re.findall(r'/api/files/([A-Za-z0-9_-]+)',review['summary']))
             # Summaries may retain a child's original URL after a parent handoff.
             review['files']=[]
             for file_id in sorted(ids):
@@ -207,7 +209,17 @@ class Store:
             row['file_ids']=json.loads(row['file_ids'])
             from .tools import is_recovery_file
             from .result_reviews import review_content
-            ids=set(row['file_ids']) | set(re.findall(r'/api/files/([A-Za-z0-9_-]+)',row['summary']))
+            job=self.one('SELECT messages FROM jobs WHERE id=?',(id,))
+            try:
+                state=json.loads(job['messages']) if job else {}
+            except (TypeError,ValueError):
+                state={}
+            final=isinstance(state,dict) and state.get('final_review',False)
+            ids=set(row['file_ids'])
+            if not final:
+                ids |= set(re.findall(r'/api/files/([A-Za-z0-9_-]+)',row['summary']))
+            else:
+                row['final_output']=True
             files=[]
             for file_id in sorted(ids):
                 file=self.one('SELECT * FROM files WHERE id=?',(file_id,))

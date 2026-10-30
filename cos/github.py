@@ -144,3 +144,29 @@ def read_repository(repository, path=None, ref=None):
     return {'repository': repository, 'account': login, 'ref': ref, 'commit': commit,
             'path': source_path, 'source': 'https://github.com/'+repository+'/blob/'+commit+'/'+quote(source_path, safe='/'),
             'sha256': hashlib.sha256(raw).hexdigest(), 'text': text}
+
+
+def repository_tree(repository, ref=None, path='', offset=0, limit=200):
+    repository, ref = repository_target(repository, ref)
+    if (not isinstance(path, str) or '\\' in path or any(p in {'.', '..'} for p in path.split('/'))
+            or path.startswith('/') or any(ord(c)<32 for c in path)):
+        raise ValueError('Use a repository-relative directory prefix without traversal.')
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 500:
+        raise ValueError('Use a nonnegative offset and limit between 1 and 500.')
+    login = _account(repository.split('/')[0])
+    token = _token(login)
+    base = 'repos/'+repository
+    if not ref:
+        ref = _get(base, login, token)['default_branch']
+    commit = _get(base+'/commits/'+quote(ref, safe=''), login, token)['sha']
+    if not isinstance(commit, str) or not re.fullmatch('[0-9a-fA-F]{40,64}', commit):
+        raise ValueError('GitHub did not return a valid commit identity.')
+    tree = _get(base+'/git/trees/'+commit, login, token, {'recursive':'1'})
+    prefix = path.rstrip('/')+'/' if path else ''
+    entries = sorted(({'path':row['path'], 'type':row['type'], 'sha':row['sha']}
+        for row in tree.get('tree', []) if row['path'].startswith(prefix)), key=lambda row:row['path'])
+    return {'repository':repository, 'account':login, 'ref':ref, 'commit':commit,
+        'source':'https://github.com/'+repository+'/tree/'+commit,
+        'entries':entries[offset:offset+limit], 'total_returned_by_github':len(entries),
+        'github_truncated':bool(tree.get('truncated')), 'next_offset':offset+limit if offset+limit<len(entries) else None,
+        'instruction':'Use commit as ref on subsequent tree pages and repository_read calls. A truncated GitHub tree does not establish absence.'}
