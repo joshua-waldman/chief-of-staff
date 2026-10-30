@@ -13,12 +13,13 @@ actions or delegate the same research again. Close remaining source gaps directl
 or through a narrow source_only reader when organization routing requires it.
 For repository methodology reviews, inspect the relevant implementation and tests
 at one pinned commit using repository_tree and repository_read. README and design
-claims alone do not verify the implemented method. Produce one coherent report
-addressing the original ask and meeting questions, with citations and explicit
-limits. Select only final outputs, not transcripts, raw evidence or child notes.
+claims alone do not verify the implemented method. Complete the original requested
+output without inventing a new assignment. For a report or analysis request,
+synthesize one coherent report with citations, explicit limits, and answers to
+the original questions. For other tasks, return their requested final artifacts. Select only final outputs, not transcripts, raw evidence or child notes.
 Call finish with final_output:true and result_kind strategy or generated_content
-after that deliverable exists. The report may be inline in summary or a selected
-document. A no-reply decision does not fulfill a promised report. Do not ask the
+after that deliverable exists. A requested report may be inline in summary or a
+selected document. A no-reply decision does not fulfill a promised report. Do not ask the
 owner to assemble research or confirm routine synthesis.'''
 
 
@@ -101,7 +102,7 @@ def recover(store, *, apply=True):
             previous=c.execute('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],)).fetchone()
             brief=json.loads(previous['body']) if previous else {}
             brief.update(status_summary='COS is completing the requested final deliverable from saved research.',
-                next_step='COS will return the final report for review; intermediate research remains in history.')
+                next_step='COS will return the requested final deliverable for review; intermediate research remains in history.')
             c.execute('INSERT OR REPLACE INTO job_briefs VALUES(?,?,?)',(job['id'],json.dumps(brief),stamp))
             c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
                 (job['id'], 'delivery_resumed', 'Research preserved as inputs; director resumed to produce the requested final deliverable.', stamp))
