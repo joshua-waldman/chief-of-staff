@@ -147,3 +147,26 @@ def test_textual_source_mode_is_not_a_substitute_for_enforced_mode(setup):
     with pytest.raises(ValueError,match='task object field'):
         engine.validate_delegation(parent,{'tasks':[{'org':'Technology','request':'source_only:true. Read the implementation'}]})
     engine.validate_delegation(parent,{'tasks':[{'org':'Technology','source_only':True,'request':'source_only:true. Read the implementation'}]})
+
+
+
+def test_retained_source_verification_returns_partial_inputs_at_bound(setup):
+    from cos.engine import SOURCE_HANDOFF_MODEL_BUDGET
+    store,engine=setup
+    parent,blocked=blocked_reader(store,engine)
+    replacement=store.create_job('Verify only the remaining source gap','Technology',parent_id=parent['id'])
+    store.update(replacement['id'],messages=json.dumps({'messages':[],'research_only':True}))
+    engine.recover_source_handoffs()
+    state=session(store.job(replacement['id']))
+    state['total_model_steps']=state['source_handoff_started_models']+SOURCE_HANDOFF_MODEL_BUDGET
+    store.update(replacement['id'],messages=json.dumps(state))
+    engine.provider=Scripted()  # No inference or repeat source read at the bound.
+    engine.run(replacement['id'])
+    assert store.job(replacement['id'])['status']=='blocked'
+    assert store.rows("SELECT * FROM events WHERE job_id=? AND kind='source_partial_return'",(replacement['id'],))
+    engine.release_parents()
+    assert store.job(parent['id'])['status']=='queued'
+    returned=json.loads(session(store.job(parent['id']))['messages'][-1]['content'])
+    assert all(r['partial'] and not r['source_reader_complete'] for r in returned)
+    assert all(r['files'] for r in returned)
+    assert not store.pending_results()
