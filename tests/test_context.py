@@ -43,7 +43,7 @@ def test_compaction_keeps_newest_result_when_mandatory_memory_exceeds_headroom(e
     child=env.create_job('Read implementation','Technology',parent_id=job['id'])
     env.update(child['id'],status='completed',result='Verified implementation. '*100)
     latest={'role':'tool','tool_call_id':'call-read_file','content':'New source audit: implementation verified.'}
-    state={'messages':[{'role':'system','content':'P'*21500},
+    state={'messages':[{'role':'system','content':'P'*21500,'_cos_memory':True},
         {'role':'user','content':job['request']},
         perform('read_file',{'path':'old'}),
         {'role':'tool','tool_call_id':'call-read_file','content':'old '*4000},
@@ -54,6 +54,8 @@ def test_compaction_keeps_newest_result_when_mandatory_memory_exceeds_headroom(e
     assert any(m.get('tool_calls') and 'new' in json.dumps(m) for m in state['messages'])
     carry=next(json.loads(m['content']) for m in state['messages'] if m.get('_cos_checkpoint'))
     assert len(carry['children'][0]['result'])==240
+    assert carry['file_read_progress']=={'provided_in':'current system memory'}
+    assert carry['tool_recovery']=={'provided_in':'current system memory'}
     checkpoint=json.loads(Path(state['checkpoint_path']).read_text(encoding='utf-8'))
     assert len(checkpoint['children'][0]['result'])==1200
 

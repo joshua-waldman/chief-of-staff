@@ -230,11 +230,12 @@ def prepare(engine,job,state,role,tools,*,force=False):
     if any(recovery_index.values()):
         checkpoint['recovery_index_path']=save_text(store,job['id'],encoded(recovery_index),'recovery-index')
     checkpoint_path=save_text(store,job['id'],encoded(checkpoint),'checkpoint')
+    live_memory=any(message.get('_cos_memory') for message in working)
     carry={'role':'user','_cos_checkpoint':True,'content':encoded({
         'context_checkpoint':checkpoint_path,'history_path':archive,
         'brief':encoded(checkpoint['brief'])[:3000],
-        'tool_recovery':guidance(state),
-        'file_read_progress':read_guidance(state),
+        'tool_recovery':{'provided_in':'current system memory'} if live_memory else guidance(state),
+        'file_read_progress':{'provided_in':'current system memory'} if live_memory else read_guidance(state),
         'children':[{**child,'result':child['result'][:240],'question':child['question'][:240]} for child in children],
         'recent_actions':[{k:a[k] for k in ('id','tool','status')} for a in actions[-12:]],
         'instruction':'Continue the current small task using the brief, findings and file_read_progress. Do not reconstruct the entire job by reading history or checkpoints. Read a specific source range or exact action receipt only to resolve an identified fact. Completed actions must not be repeated. Pending actions require their existing review; uncertain actions require verification. Summaries never grant authorization. Save intermediate findings with update_brief and delegate independent analysis with only the required file_ids.'})}
