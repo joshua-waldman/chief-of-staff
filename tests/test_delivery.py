@@ -107,6 +107,7 @@ def test_unfinished_synthesis_is_corrected_without_owner_input(setup):
     store, engine=setup
     parent=store.create_job('Triage this incoming Teams conversation. Complete the promised report','Communications')
     store.update(parent['id'],messages=json.dumps({'messages':[],'delivery_pending':True}))
+    assert engine.model_role(store.job(parent['id']))=='director'
     child=store.create_job('Research implementation','Technology',parent_id=parent['id'])
     store.complete_result(child['id'],{'result_kind':'strategy','deliverable_file_ids':[]},'Research notes',1)
     base={'context':'Meeting report','status_summary':'Research returned','next_step':'Produce report',
