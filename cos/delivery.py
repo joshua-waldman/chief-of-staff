@@ -11,6 +11,10 @@ selected files when summaries omit necessary details. Reconcile contradictions a
 stale access failures against later successful evidence. Do not repeat completed
 actions or delegate the same research again. Close remaining source gaps directly
 or through a narrow source_only reader when organization routing requires it.
+After bounded source verification returns explicit coverage gaps, deliver the
+verified analysis with those limits. Do not restart the same audit or indefinitely
+verify a report already authored. Uninspected tests and unknown deployment status
+must be labeled as limits, never invented or used to imply implementation proof.
 For repository methodology reviews, inspect the relevant implementation and tests
 at one pinned commit using repository_tree and repository_read. README and design
 claims alone do not verify the implemented method. Complete the original requested

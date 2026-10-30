@@ -34,6 +34,33 @@ def test_latest_returned_report_survives_compacted_history_and_is_primary_eviden
     assert not store.pending_results()
 
 
+def test_returned_synthesis_has_bounded_verification_even_when_new_pages_arrive(setup):
+    from cos import progress
+    store,engine=setup
+    parent=store.create_job('Synthesize methodology','Strategy')
+    child=store.create_job('Inspect source','Technology',parent_id=parent['id'])
+    store.update(child['id'],status='completed',result='Verified audit with explicit gaps')
+    state={'delivery_pending':True,'total_model_steps':23}
+    engine.focus_returned_synthesis(parent,state)
+    assert not state.get('stall_recovery')
+    state['total_model_steps']=24
+    engine.focus_returned_synthesis(parent,state)
+    attempt=state['stall_recovery']
+    assert attempt['phase']=='deliver' and attempt['remaining']==8
+    progress.limit_recovery_read(state,'read_file')
+    progress.observe(state,'read_file',{'path':'source.txt'},{'text':'new source page','sha256':'new'})
+    attempt['remaining']=7
+    engine.focus_returned_synthesis(parent,state)
+    assert attempt['active'] and attempt['verification_reads']==1 and attempt['remaining']==7
+    progress.limit_recovery_read(state,'read_file')
+    with pytest.raises(ValueError,match='verification budget exhausted'):
+        progress.limit_recovery_read(state,'read_file')
+    attempt['remaining']=0
+    engine.focus_returned_synthesis(parent,state)
+    assert progress.recovery_step(state,12)=='exhausted'
+    assert not store.pending_results()
+
+
 @pytest.fixture
 def setup(tmp_path,monkeypatch):
     monkeypatch.setattr(tools,'DATA',tmp_path/'data')

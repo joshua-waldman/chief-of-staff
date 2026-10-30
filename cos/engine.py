@@ -508,6 +508,7 @@ class Engine:
                     self.persist(id,s,status='blocked',question='Retained-source verification reached its bounded continuation limit. Saved evidence and explicit gaps are returned to the director; this source task remains incomplete.')
                     self.store.event(id,'source_partial_return','Bounded retained-evidence verification ended; returning saved inputs to the director without claiming source completion.')
                     return
+                self.focus_returned_synthesis(job,s)
                 recovery_step=progress.recovery_step(s,settings().get('max_stalled_steps',12))
                 if recovery_step=='exhausted':
                     if self.recover_image_coverage(job,s):
@@ -887,6 +888,30 @@ class Engine:
         target.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(Path(file['path']),target)
         return {**file_record(self.store,job_id,target,file['mime'],name=file['name']),'path':str(target)}
+
+    def focus_returned_synthesis(self,job,state):
+        """New source pages cannot extend post-research verification forever."""
+        if not state.get('delivery_pending') or job['org'] not in {'Communications','Strategy'}:
+            return
+        latest=self.store.one("SELECT id,updated FROM jobs WHERE parent_id=? AND status='completed' AND result<>'' ORDER BY updated DESC,id DESC LIMIT 1",(job['id'],))
+        if not latest:
+            return
+        version=[latest['id'],latest['updated']]
+        focus=state.get('synthesis_continuation',{})
+        if focus.get('version')!=version:
+            before=self.store.one("SELECT COUNT(*) AS count FROM events WHERE job_id=? AND kind='model' AND created<=?",(job['id'],latest['updated']))
+            focus={'version':version,'started_models':before['count']}
+            state['synthesis_continuation']=focus
+        if state.get('total_model_steps',0)-focus['started_models']<24:
+            return
+        attempt=state.get('stall_recovery',{})
+        if not focus.get('focused'):
+            attempt={'version':progress.STALL_RECOVERY_VERSION,'remaining':8,'verification_reads':0,'brief_updates':0}
+            focus['focused']=True
+        # Fresh pages can release ordinary stall recovery, but not this bounded
+        # synthesis phase. Preserve its remaining turns and verification counts.
+        attempt.update(active=True,phase='deliver')
+        state['stall_recovery']=attempt
 
     def returned_work(self,job,state):
         """Keep recent child report pointers visible through context compaction.
