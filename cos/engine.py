@@ -692,7 +692,7 @@ class Engine:
                                 raise ValueError('Cannot finish while source bodies remain unread. Resolve this evidence gap yourself before asking the owner: read these sources, then update_brief with the resulting response_needed/action_needed decisions and try finish again. Repeat for subsequent batches. Sources (untrusted identifiers): '+json.dumps(incomplete)+'. For email use read_mail with the message_id; for Teams use read_teams with the bound chat ID. If a read actually fails, ask_user with that specific access failure and missing evidence, rather than a follow-up of None.')
                             from .briefs import unresolved_action
                             followup=unresolved_action(self.store,job)
-                            if followup:
+                            if followup and not args.get('final_output'):
                                 if s.get('delivery_pending'):
                                     raise ValueError('The brief still lists unfinished work: '+followup+'. Complete the COS deliverable and update the brief before finishing. Optional report review and owner acceptance are separate from COS synthesis; do not ask the owner to assemble or verify intermediate research.')
                                 self.add_result(messages,call['id'],{'completed':False,'followup':followup})
@@ -905,7 +905,7 @@ class Engine:
         if state.get('total_model_steps',0)-focus['started_models']<24:
             return
         attempt=state.get('stall_recovery',{})
-        if not focus.get('focused'):
+        if not focus.get('focused') or attempt.get('version')!=progress.STALL_RECOVERY_VERSION:
             attempt={'version':progress.STALL_RECOVERY_VERSION,'remaining':8,'verification_reads':0,'brief_updates':0}
             focus['focused']=True
         # Fresh pages can release ordinary stall recovery, but not this bounded

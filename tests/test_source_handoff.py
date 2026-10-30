@@ -59,6 +59,9 @@ def test_returned_synthesis_has_bounded_verification_even_when_new_pages_arrive(
     engine.focus_returned_synthesis(parent,state)
     assert progress.recovery_step(state,12)=='exhausted'
     assert not store.pending_results()
+    progress.reset(state)  # An explicit owner retry can start another bounded attempt.
+    engine.focus_returned_synthesis(parent,state)
+    assert state['stall_recovery']['remaining']==8
 
 
 @pytest.fixture

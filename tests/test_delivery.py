@@ -103,7 +103,7 @@ def test_recovery_honors_review_and_pending_external_actions(setup):
 
 
 
-def test_unfinished_synthesis_is_corrected_without_owner_input(setup):
+def test_final_report_can_publish_while_owner_commitment_remains_open(setup):
     store, engine=setup
     parent=store.create_job('Triage this incoming Teams conversation. Complete the promised report','Communications')
     store.update(parent['id'],messages=json.dumps({'messages':[],'delivery_pending':True}))
@@ -120,11 +120,11 @@ def test_unfinished_synthesis_is_corrected_without_owner_input(setup):
         def complete(self,messages,role='worker',tools=None):
             self.roles.append(role)
             return super().complete(messages,role,tools)
-    engine.provider=DirectorScripted(perform('finish',final),
-        perform('update_brief',{**base,'action_needed':'no','action_reason':'Report produced; optional reading remains','requested_action':'','next_step':'Read the completed report'}),
-        perform('finish',final))
+    engine.provider=DirectorScripted(perform('finish',final))
     engine.run(parent['id'])
     assert store.job(parent['id'])['status']=='completed'
     assert set(engine.provider.roles)=={'director'}
     assert not store.rows("SELECT * FROM events WHERE job_id=? AND kind='question'",(parent['id'],))
     assert len(store.result_review(parent['id'])['items'])==1
+    brief=json.loads(store.one('SELECT body FROM job_briefs WHERE job_id=?',(parent['id'],))['body'])
+    assert brief['action_needed']=='yes' and brief['requested_action']=='Complete methodology report'
