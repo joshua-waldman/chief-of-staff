@@ -1,6 +1,7 @@
 """Review generated work, not routine conversation triage or action receipts."""
 import json
 import re
+import hashlib
 
 
 def review_content(summary, files):
@@ -71,12 +72,22 @@ def own_work(connection, job, state):
     return False
 
 
-def delegated_work(connection, job, seen=None, reviewed_before=None):
+def work_version(job, state):
+    return hashlib.sha256(json.dumps([job['result'],state.get('deliverable_file_ids',[])],sort_keys=True).encode()).hexdigest()
+
+
+def delegated_work(connection, job, seen=None, reviewed_before=None, delivered_versions=None):
     """Keep completed descendant work reachable through one parent review."""
     seen = set(seen or ())
     if job['id'] in seen:
         return
     seen.add(job['id'])
+    if delivered_versions is None:
+        try:
+            root_state=json.loads(job['messages'])
+        except (TypeError,ValueError):
+            root_state={}
+        delivered_versions=root_state.get('delivered_versions',{}) if isinstance(root_state,dict) else {}
     if reviewed_before is None:
         reviewed_before = connection.execute("SELECT MAX(created) FROM events WHERE job_id=? AND kind='result_reviewed'", (job['id'],)).fetchone()[0] or ''
     for child in connection.execute("SELECT * FROM jobs WHERE parent_id=? AND status<>'cancelled' ORDER BY created,id", (job['id'],)).fetchall():
@@ -84,18 +95,22 @@ def delegated_work(connection, job, seen=None, reviewed_before=None):
             state = json.loads(child['messages'])
         except (TypeError, ValueError):
             state = None
-        if child['status'] == 'completed' and child['updated'] > reviewed_before and isinstance(state, dict) and own_work(connection, child, state):
+        if child['status'] == 'completed' and child['updated'] > reviewed_before and isinstance(state, dict) and own_work(connection, child, state) and delivered_versions.get(child['id']) != work_version(child,state):
             yield child, state
-        yield from delegated_work(connection, child, seen, reviewed_before)
+        yield from delegated_work(connection, child, seen, reviewed_before, delivered_versions)
 
 
 def eligible(connection, job, state, seen=None):
+    if state.get('delivery_pending'):
+        return False
     return own_work(connection, job, state) or next(delegated_work(connection, job, seen), None) is not None
 
 
 def review_payload(connection, job, state, summary):
     """Snapshot actual drafts and declared files, even if a director omits them."""
     files = list(dict.fromkeys(state.get('deliverable_file_ids', [])))
+    if state.get('final_output'):
+        return summary, files
     sections = []
     for child, child_state in delegated_work(connection, job):
         text = child['result'].strip()
@@ -140,6 +155,8 @@ def reconcile(connection, root_ids=None, *, event_kind='result_review_repaired')
         if state == []:
             state = {}
         if not isinstance(state, dict):
+            continue
+        if state.get('delivery_pending') or state.get('final_output'):
             continue
         previous = connection.execute('SELECT * FROM result_reviews WHERE job_id=?', (job['id'],)).fetchone()
         children = list(delegated_work(connection, job))

@@ -122,7 +122,7 @@ def test_parallel_delegation_and_parent_resume(store):
     assert all(store.job(c['id'])['status']=='completed' for c in children)
     engine.release_parents()
     assert store.job(parent['id'])['status']=='queued'
-    engine.provider=Scripted(perform('finish',{'summary':'Both results synthesized'}))
+    engine.provider=Scripted(perform('finish',{'summary':'Both results synthesized','result_kind':'strategy','final_output':True}))
     assert run(engine,parent)['status']=='completed'
     assert 'Child work done' in store.job(parent['id'])['messages']
 

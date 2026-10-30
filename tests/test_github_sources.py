@@ -148,3 +148,36 @@ def test_new_source_routing_does_not_resume_demo_job(store):
     engine = Engine(store, Scripted())
     engine.recover_research_approvals()
     assert store.job(job['id']) == before
+
+
+
+def test_repository_tree_pins_ref_pages_and_reports_incomplete_github_coverage(routed, monkeypatch):
+    monkeypatch.setattr(github, '_token', lambda login:'private-token')
+    calls=[]
+    def get(endpoint, login, token, params=None):
+        calls.append((endpoint,login,params))
+        if '/commits/' in endpoint: return {'sha':SHA}
+        return {'truncated':True,'tree':[
+            {'path':'src/rank.py','type':'blob','sha':'b'*40},
+            {'path':'tests/test_rank.py','type':'blob','sha':'c'*40}]}
+    monkeypatch.setattr(github,'_get',get)
+    result=github.repository_tree(LINK,limit=1)
+    assert result['commit']==SHA and result['next_offset']==1
+    assert result['github_truncated'] is True
+    assert result['entries'][0]['path']=='src/rank.py'
+    assert calls[0][0].endswith('feature%2FAVA-13322%2FDimension-Suggestion')
+    assert calls[1]==('repos/AMD-DID/ava-mcp-server-http/git/trees/'+SHA,'work-login',{'recursive':'1'})
+    assert 'private-token' not in json.dumps(result)
+    last=github.repository_tree(LINK,offset=1,limit=1)
+    assert last['entries'][0]['path']=='tests/test_rank.py' and last['next_offset'] is None
+    with pytest.raises(ValueError): github.repository_tree(LINK,path='../secret')
+    with pytest.raises(ValueError): github.repository_tree(LINK,limit=501)
+
+
+def test_repository_tree_is_allowed_for_routed_source_readers(store, monkeypatch):
+    job=store.create_job('Inspect algorithm source','Technology')
+    store.update(job['id'],messages=json.dumps({'messages':[],'source_only':True}))
+    job=store.job(job['id'])
+    assert allowed_job_action(job,'repository_tree')
+    monkeypatch.setattr(github,'repository_tree',lambda *args: {'commit':SHA,'entries':[]})
+    assert Tools(store).execute(job,'repository_tree',{'repository':LINK})['commit']==SHA

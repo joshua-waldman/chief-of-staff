@@ -9,7 +9,7 @@ RECOVERY_READS={'read_file','read_action_receipt','read_teams','read_mail','fetc
     'list_files','list_chats','search_mail','search_knowledge','jira_read','meeting_artifacts',
     'meeting_transcripts','mail_attachments','teams_attachments','calendar_events','calendar_event',
     'list_skills','read_skill','mcp_list_tools'}
-RECOVERY_READS |= {'repository_connections','repository_search','repository_read'}
+RECOVERY_READS |= {'repository_connections','repository_search','repository_read','repository_tree'}
 
 
 def recovery_path(path):
