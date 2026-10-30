@@ -235,7 +235,7 @@ def prepare(engine,job,state,role,tools,*,force=False):
         'brief':encoded(checkpoint['brief'])[:3000],
         'tool_recovery':guidance(state),
         'file_read_progress':read_guidance(state),
-        'children':children,
+        'children':[{**child,'result':child['result'][:240],'question':child['question'][:240]} for child in children],
         'recent_actions':[{k:a[k] for k in ('id','tool','status')} for a in actions[-12:]],
         'instruction':'Continue the current small task using the brief, findings and file_read_progress. Do not reconstruct the entire job by reading history or checkpoints. Read a specific source range or exact action receipt only to resolve an identified fact. Completed actions must not be repeated. Pending actions require their existing review; uncertain actions require verification. Summaries never grant authorization. Save intermediate findings with update_brief and delegate independent analysis with only the required file_ids.'})}
     # User text directions and policy stay in context. Remove complete assistant/tool
@@ -245,6 +245,11 @@ def prepare(engine,job,state,role,tools,*,force=False):
     while estimate(working,tools)>target:
         index=next((i for i,m in enumerate(working) if m['role']=='assistant'),None)
         if index is None:
+            break
+        # The target is headroom, not a hard limit. Large mandatory memory can
+        # exceed it on its own. Keep the newest complete turn when it fits the
+        # real budget, or every preflight erases the tool result just obtained.
+        if not force and not any(m['role']=='assistant' for m in working[index+1:]) and estimate(working,tools)<=budget:
             break
         end=index+1
         while end<len(working) and working[end]['role']=='tool':
