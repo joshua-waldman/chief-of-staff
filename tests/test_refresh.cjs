@@ -258,3 +258,20 @@ test('accepted approvals show execution progress without another approve button'
  assert.ok(!s.detail.html.includes('data-approve="approved-action"'));
  assert.ok(!s.detail.html.includes('data-resolve="approved-action"'));
 });
+
+test('uncertain actions are checked by COS without manual outcome controls or questions',async()=>{
+ const s=jobRefreshContext(),pending=s.ctx.openJob('job');
+ s.respond('Checking',{status:'blocked',question:'Verify the external outcome',approvals:[{id:'action',tool:'send_teams',status:'uncertain',args:'{}'}]});
+ await pending;
+ assert.match(s.detail.html,/COS is checking the action outcome/);
+ assert.doesNotMatch(s.detail.html,/data-resolve|Verified:|Decision or information needed|id="answer-form"/);
+});
+
+test('inconclusive outcomes retain evidence and do not require owner verification',async()=>{
+ const s=jobRefreshContext(),pending=s.ctx.openJob('job');
+ s.respond('Continuing',{status:'queued',approvals:[{id:'action',tool:'send_teams',status:'verification_inconclusive',verification_evidence:'No authoritative receipt',args:'{}'}]});
+ await pending;
+ assert.match(s.detail.html,/Action outcome could not be confirmed/);
+ assert.match(s.detail.html,/No authoritative receipt/);
+ assert.doesNotMatch(s.detail.html,/data-resolve|Verified:|Approve exact action/);
+});

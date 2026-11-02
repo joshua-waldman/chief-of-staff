@@ -319,20 +319,7 @@ async def approve(id,request:Request):
 
 @app.post('/api/approvals/{id}/resolve')
 async def resolve(id,request:Request):
-    payload=await request.json()
-    def operation():
-        body=payload
-        a=store.one('SELECT * FROM approvals WHERE id=?',(id,))
-        if not a or a['status']!='uncertain' or body.get('outcome') not in {'executed','not_executed'}:
-            raise ValueError('Choose a verified outcome for an uncertain action.')
-        j=store.job(a['job_id'])
-        s=session(j)
-        engine.add_result(s['messages'],s.pop('waiting_call'),{'verified_by_user':body['outcome'],'instruction':'Do not repeat the action.' if body['outcome']=='executed' else 'The user verified it did not execute; request a fresh approval before retrying.'})
-        store.write('UPDATE approvals SET status=? WHERE id=?',('verified_'+body['outcome'],id))
-        engine.persist(j['id'],s,status='queued',question='')
-        store.event(j['id'],'verified','User verified action outcome: '+body['outcome'])
-        return {'ok':True}
-    return await run_in_threadpool(operation)
+    raise HTTPException(410,'COS checks action outcomes automatically. Manual outcome assertions are no longer accepted.')
 
 @app.get('/api/files/{id}')
 def download(id):

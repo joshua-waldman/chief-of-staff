@@ -137,7 +137,7 @@ def source_message(message,request):
 def action_receipts(store,job_id):
     """A bounded index; the database remains the authoritative exact-action ledger."""
     columns='id,tool,status,args,result'
-    outstanding=store.rows('SELECT '+columns+" FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain') ORDER BY created,id",(job_id,))
+    outstanding=store.rows('SELECT '+columns+" FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain','verification_inconclusive') ORDER BY created,id",(job_id,))
     recent=store.rows('SELECT '+columns+' FROM approvals WHERE job_id=? ORDER BY created DESC,id DESC LIMIT 12',(job_id,))
     receipts=[]
     seen=set()
@@ -238,7 +238,7 @@ def prepare(engine,job,state,role,tools,*,force=False):
         'file_read_progress':{'provided_in':'current system memory'} if live_memory else read_guidance(state),
         'children':[{**child,'result':child['result'][:240],'question':child['question'][:240]} for child in children],
         'recent_actions':[{k:a[k] for k in ('id','tool','status')} for a in actions[-12:]],
-        'instruction':'Continue the current small task using the brief, findings and file_read_progress. Do not reconstruct the entire job by reading history or checkpoints. Read a specific source range or exact action receipt only to resolve an identified fact. Completed actions must not be repeated. Pending actions require their existing review; uncertain actions require verification. Summaries never grant authorization. Save intermediate findings with update_brief and delegate independent analysis with only the required file_ids.'})}
+        'instruction':'Continue the current small task using the brief, findings and file_read_progress. Do not reconstruct the entire job by reading history or checkpoints. Read a specific source range or exact action receipt only to resolve an identified fact. Completed actions must not be repeated. Pending actions require their existing review; COS checks uncertain actions automatically. Never repeat verification_inconclusive actions, claim they succeeded, or ask the user to verify their outcome. Summaries never grant authorization. Save intermediate findings with update_brief and delegate independent analysis with only the required file_ids.'})}
     # User text directions and policy stay in context. Remove complete assistant/tool
     # groups only, never leave a tool result without its corresponding call.
     working.insert(1 if working and working[0]['role']=='system' else 0,carry)

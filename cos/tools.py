@@ -273,8 +273,14 @@ def prepare_changes(job,args):
         if len(before)>2*1024*1024 or src.stat().st_size>2*1024*1024:
             raise ValueError('Apply changes supports text files under 2 MB.')
         diff=''.join(difflib.unified_diff(before.decode('utf-8').splitlines(keepends=True),src.read_text(encoding='utf-8').splitlines(keepends=True),fromfile=str(target),tofile=str(src)))
-        review.append({**item,'diff':diff})
+        review.append({**item,'diff':diff,'source_sha256':hashlib.sha256(src.read_bytes()).hexdigest()})
     return review
+
+def validate_mcp_arguments(action, args):
+    if not isinstance(args.get('server'),str) or not args['server'].strip() or (action=='mcp_call' and (not isinstance(args.get('tool'),str) or not args['tool'].strip())):
+        from .local_checks import ActionNotExecuted
+        raise ActionNotExecuted('Supply a concrete MCP server and tool name. No remote operation was started.')
+
 
 class Tools:
     def teams_images(self,job,args):
@@ -328,6 +334,9 @@ class Tools:
             receipt=self.store.one('SELECT id,tool,args,status,result FROM approvals WHERE job_id=? AND id=?',(id,a['id']))
             if not receipt:
                 raise ValueError('Action receipt does not belong to this job.')
+            verification=self.store.one('SELECT evidence,attempts,checked FROM action_verifications WHERE action_id=?',(a['id'],))
+            if verification and verification['evidence']:
+                receipt['verification']={**verification,'evidence':json.loads(verification['evidence'])}
             text=json.dumps(receipt,ensure_ascii=False)
             offset=a.get('offset',0)
             limit=a.get('limit',4000)
@@ -395,9 +404,12 @@ class Tools:
                     'next_offset':end if len(text)>end else None,
                     'source':str(p),'sha256':hashlib.sha256(raw).hexdigest()}
         if action=='apply_changes':
-            review=prepare_changes(job,a)
-            if a.get('_review_diffs') != review:
-                raise ValueError('Staged content changed since approval; generate a new review.')
+            try:
+                review=prepare_changes(job,a)
+                if a.get('_review_diffs') != review:
+                    raise ValueError('Staged content changed since approval; generate a new review.')
+            except (ValueError,KeyError,TypeError,OSError) as error:
+                raise ActionNotExecuted(str(error)) from error
             for item in review:
                 src=resolve_path(id,item['source'])
                 target=resolve_path(id,item['target'])
@@ -639,6 +651,7 @@ class Tools:
                     raise ValueError('Unsupported Confluence operation')
             return run_skill('slai-atlassian','atlassian.py',args)
         if action in {'mcp_list_tools','mcp_call'}:
+            validate_mcp_arguments(action,a)
             return call_mcp(a['server'],a.get('tool') if action=='mcp_call' else None,a.get('arguments'))
         if action=='run_python':
             from .pure_runner import validate

@@ -51,6 +51,76 @@ def ident(value):
     return quote(value,safe='')
 
 
+def verify_action(graph, payload):
+    """Fixed read-only probes. A missing message never proves a send failed."""
+    from datetime import datetime
+    tool, args = payload['tool'], payload['arguments']
+    unknown = {'outcome': 'unknown', 'evidence': 'Available source data does not establish the action outcome.'}
+    if tool == 'mark_email_read':
+        message = graph.get('/me/messages/'+ident(args['id']), params={'$select': 'id,isRead'})
+        if message.get('isRead') is True:
+            return {'outcome': 'executed', 'evidence': {'message_id': message['id'], 'isRead': True}}
+        return unknown
+    if tool == 'delete_email':
+        message = graph.get('/me/messages/'+ident(args['id']), params={'$select':'id,parentFolderId'})
+        folder = graph.get('/me/mailFolders/deleteditems', params={'$select':'id'})
+        if folder.get('id') and message.get('parentFolderId') == folder['id']:
+            return {'outcome':'executed', 'evidence':{'message_id':message['id'], 'parentFolderId':folder['id']}}
+        return unknown
+    started = payload.get('started')
+    if not started:
+        return unknown
+    start = datetime.fromisoformat(started.replace('Z', '+00:00'))
+    if tool == 'send_teams':
+        sys.path.insert(0,str(skill_dir('slai-teams')/'scripts'))
+        from skype_client import SkypeClient
+        from .teams_content import text as teams_text
+        owner = graph.get('/me', params={'$select':'id'})
+        rows, _ = SkypeClient().list_messages(args['chat_id'], page_size=100)
+        for message in rows:
+            sender = (message.get('from') or '').rsplit('/contacts/',1)[-1].casefold()
+            date = message.get('composetime') or message.get('originalarrivaltime')
+            if (message.get('id') and sender in {owner['id'].casefold(), '8:orgid:'+owner['id'].casefold()} and
+                    date and datetime.fromisoformat(date.replace('Z','+00:00')) >= start and
+                    teams_text(message.get('content',''),message.get('messagetype','')).strip() == args['body'].strip()):
+                return {'outcome':'executed', 'evidence':{'chat_id':args['chat_id'], 'message_id':message['id'], 'date':date}}
+        return unknown
+    if tool == 'calendar_rsvp':
+        message = graph.get('/me/events/'+ident(args['id']), params={'$select': 'id,responseStatus'})
+        response = message.get('responseStatus', {})
+        expected = {'accept':'accepted','decline':'declined','tentative':'tentativelyAccepted'}.get(args.get('response'))
+        # A response state alone cannot prove a notification was sent.
+        if args.get('send_response', True) is False and response.get('response') == expected and response.get('time') and datetime.fromisoformat(response['time'].replace('Z','+00:00')) >= start:
+            return {'outcome':'executed', 'evidence': {'event_id':message['id'], 'responseStatus':response}}
+        return unknown
+    if tool not in {'send_email', 'reply_email'}:
+        return unknown
+    conversation = None
+    if tool == 'reply_email':
+        original = graph.get('/me/messages/'+ident(args['id']), params={'$select':'conversationId'})
+        conversation = original.get('conversationId')
+        if not conversation:
+            return unknown
+    page = graph.get('/me/mailFolders/sentitems/messages', params={
+        '$filter': 'sentDateTime ge '+start.isoformat(), '$top':'50',
+        '$select':'id,conversationId,subject,body,sentDateTime,toRecipients,ccRecipients,bccRecipients'})
+    def intended(value):
+        if isinstance(value, list):
+            return {str(x).strip().casefold() for x in value}
+        return {x.strip().casefold() for x in re.split('[,;]', value or '') if x.strip()}
+    for message in page.get('value', []):
+        body = message.get('body', {})
+        if conversation and message.get('conversationId') != conversation:
+            continue
+        if (not message.get('id') or message.get('subject') != args.get('subject') or
+                str(body.get('contentType', '')).casefold() != 'text' or body.get('content') != args.get('body') or
+                not message.get('sentDateTime') or datetime.fromisoformat(message['sentDateTime'].replace('Z','+00:00')) < start):
+            continue
+        if all({x['emailAddress']['address'].strip().casefold() for x in message.get(field+'Recipients', [])} == intended(args.get(field)) for field in ('to','cc','bcc')):
+            return {'outcome':'executed', 'evidence': {'sent_message_id':message['id'], 'sentDateTime':message['sentDateTime']}}
+    return unknown
+
+
 def reply_history(graph, original):
     """Include accessible conversation messages even when the latest omits quotes."""
     messages=[original]
@@ -78,6 +148,8 @@ def reply_history(graph, original):
 
 
 def perform(graph, action, a):
+    if action=='verify_action':
+        return verify_action(graph,a)
     if action=='teams_attachments':
         sys.path.insert(0,str(skill_dir('slai-teams')/'scripts'))
         from skype_client import SkypeClient
