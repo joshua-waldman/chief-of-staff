@@ -154,11 +154,12 @@ function handle(fn){return async e=>{
  const button=e?.submitter||(e?.currentTarget?.tagName==='BUTTON'?e.currentTarget:null);
  if(button?.disabled){e.preventDefault?.();return}
  const label=button?.textContent;
- if(button){button.disabled=true;button.textContent='Working…';button.setAttribute('aria-busy','true')}
+ const replaceLabel=button?.childElementCount===0;
+ if(button){button.disabled=true;if(replaceLabel)button.textContent='Working…';button.setAttribute('aria-busy','true')}
  handle.active=(handle.active||0)+1;
  try{await fn(e)}catch(error){toast(error.message,true)}finally{
   handle.active--;
-  if(button){button.disabled=false;if(button.textContent==='Working…')button.textContent=label;button.removeAttribute('aria-busy')}
+  if(button){button.disabled=false;if(replaceLabel&&button.textContent==='Working…')button.textContent=label;button.removeAttribute('aria-busy')}
  }
 }}
 function bind(){

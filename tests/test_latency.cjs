@@ -31,7 +31,7 @@ test('buttons show progress immediately, suppress repeated clicks, and recover a
  const ctx={toast:message=>errors.push(message)};
  vm.createContext(ctx);
  vm.runInContext(source.slice(source.indexOf('function handle('),source.indexOf('function bind(){')),ctx);
- const button={tagName:'BUTTON',textContent:'Approve',disabled:false,setAttribute(key,value){this[key]=value},removeAttribute(key){delete this[key]}};
+ const button={tagName:'BUTTON',childElementCount:0,textContent:'Approve',disabled:false,setAttribute(key,value){this[key]=value},removeAttribute(key){delete this[key]}};
  let calls=0;
  const callback=ctx.handle(async()=>{calls++;await action.promise;throw Error('Action failed')});
  const first=callback({currentTarget:button});
@@ -59,4 +59,33 @@ test('a failed earlier poll cannot suppress the refresh after a successful actio
  await failed;await new Promise(resolve=>setImmediate(resolve));
  assert.equal(s.requests.length,6);
  s.respond(3);await action;
+});
+
+test('navigation keeps nested counters alive during and after asynchronous actions',async()=>{
+ for(const id of ['results-count','attention-count']){
+  const action=deferred(),errors=[],counter={id,textContent:'21'};
+  let children=[{textContent:'Ready for review'},counter];
+  const button={tagName:'BUTTON',disabled:false,
+   get childElementCount(){return children.length},
+   get textContent(){return children.map(child=>child.textContent).join('')},
+   set textContent(value){children=[{textContent:value}]},
+   setAttribute(key,value){this[key]=value},removeAttribute(key){delete this[key]}};
+  const ctx={toast:message=>errors.push(message)};
+  vm.createContext(ctx);
+  vm.runInContext(source.slice(source.indexOf('function handle('),source.indexOf('function bind(){')),ctx);
+  const click=ctx.handle(async()=>{
+   children.find(child=>child.id===id).textContent='22';
+   await action.promise;
+   children.find(child=>child.id===id).textContent='23';
+  })({currentTarget:button});
+  assert.equal(button.disabled,true);
+  assert.equal(children.find(child=>child.id===id),counter);
+  assert.equal(counter.textContent,'22');
+  action.resolve();await click;
+  assert.deepEqual(errors,[]);
+  assert.equal(children.find(child=>child.id===id),counter);
+  assert.equal(counter.textContent,'23');
+  assert.equal(button.disabled,false);
+  assert.equal(button['aria-busy'],undefined);
+ }
 });
