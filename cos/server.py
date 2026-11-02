@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import FileResponse,HTMLResponse,JSONResponse,StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from .config import ROOT,DATA,settings,save_settings,gateway_key,store_key
 from .db import Store,uid,now
 from .engine import Engine,session
@@ -74,10 +75,10 @@ async def request_trace(request,call_next):
         try:
             response=await call_next(request)
         except Exception as error:
-            emit('http.failed',{'method':request.method,**failure(error)})
+            await run_in_threadpool(emit,'http.failed',{'method':request.method,**failure(error)})
             raise
         route=request.scope.get('route')
-        emit('http.completed',{'method':request.method,'route':getattr(route,'path','<unmatched>'),'status':response.status_code,'duration_ms':round((time.monotonic()-started)*1000)})
+        await run_in_threadpool(emit,'http.completed',{'method':request.method,'route':getattr(route,'path','<unmatched>'),'status':response.status_code,'duration_ms':round((time.monotonic()-started)*1000)})
         response.headers['X-Request-ID']=request_id
         return response
 
@@ -93,7 +94,7 @@ def index():
 
 @app.get('/api/status')
 def status():
-    jobs=store.rows('SELECT id,parent_id,status,org FROM jobs')
+    jobs=store.rows('SELECT parent_id,status FROM jobs')
     config=settings()
     with engine.lock:
         active=len(engine.active)
@@ -112,8 +113,11 @@ def pending_results():
 
 @app.post('/api/jobs/{id}/result-review')
 async def result_review(id,request:Request):
-    body=await request.json()
-    return store.review_result(id,body.get('revision'))
+    payload=await request.json()
+    def operation():
+        body=payload
+        return store.review_result(id,body.get('revision'))
+    return await run_in_threadpool(operation)
 
 @app.get('/api/commitments')
 def commitment_list(q:str='',status:str='active',owner:str='',scope:str='',offset:int=0,limit:int=25):
@@ -127,8 +131,11 @@ def commitment_detail(id):
 
 @app.post('/api/commitments/{id}')
 async def commitment_review(id,request:Request):
-    from .commitments import Commitments
-    return Commitments(store).review(id,await request.json())
+    payload=await request.json()
+    def operation():
+        from .commitments import Commitments
+        return Commitments(store).review(id,payload)
+    return await run_in_threadpool(operation)
 
 @app.get('/api/schedules')
 def schedule_list():
@@ -138,23 +145,30 @@ def schedule_list():
 
 @app.post('/api/schedules')
 async def schedule_create(request:Request):
-    from .schedules import Schedules
-    return Schedules(store).save(await request.json())
+    payload=await request.json()
+    def operation():
+        from .schedules import Schedules
+        return Schedules(store).save(payload)
+    return await run_in_threadpool(operation)
 
 
 @app.post('/api/schedules/{id}')
 async def schedule_change(id,request:Request):
-    from .schedules import Schedules
-    body=await request.json()
-    if not isinstance(body,dict):
-        raise ValueError('Schedule must be an object.')
-    schedules=Schedules(store)
-    return schedules.change(id,body) if 'action' in body else schedules.save(body,id)
+    payload=await request.json()
+    def operation():
+        from .schedules import Schedules
+        body=payload
+        if not isinstance(body,dict):
+            raise ValueError('Schedule must be an object.')
+        schedules=Schedules(store)
+        return schedules.change(id,body) if 'action' in body else schedules.save(body,id)
+    return await run_in_threadpool(operation)
 
 
 @app.get('/api/jobs')
-def jobs():
-    rows=store.rows('''SELECT j.id,j.parent_id,j.title,j.org,j.project,j.status,j.created,j.updated,j.result,j.question,b.body AS brief_body
+def jobs(compact:bool=False):
+    extra='' if compact else ',j.result,j.question'
+    rows=store.rows(f'''SELECT j.id,j.parent_id,j.title,j.org,j.project,j.status,j.created,j.updated{extra},b.body AS brief_body
         FROM jobs j LEFT JOIN job_briefs b ON b.job_id=j.id ORDER BY j.created DESC LIMIT 1000''')
     from .message_triage import category
     from .job_names import add_display_names
@@ -182,8 +196,8 @@ def organization_agents():
     return agents
 
 @app.get('/api/jobs/{id}')
-def job(id):
-    result=store.detail(id)
+def job(id,compact:bool=False):
+    result=store.detail(id,compact=compact)
     if not result:
         raise HTTPException(404,'Job not found')
     from .message_triage import read_targets
@@ -192,11 +206,23 @@ def job(id):
     add_display_names(store,[result,*result['children']])
     return result
 
+@app.get('/api/jobs/{id}/events')
+def job_events(id,before:int=0,limit:int=100):
+    if not store.one('SELECT 1 FROM jobs WHERE id=?',(id,)):
+        raise HTTPException(404,'Job not found')
+    limit=max(1,min(limit,200))
+    rows=store.rows("SELECT * FROM events WHERE job_id=? AND kind<>'model' AND (?=0 OR id<?) ORDER BY id DESC LIMIT ?",(id,before,before,limit+1))
+    return {'events':list(reversed(rows[:limit])),'has_more':len(rows)>limit}
+
+
 @app.post('/api/jobs/{id}/mark-read')
 async def mark_summary_read(id,request:Request):
-    from .message_triage import request_read
-    body=await request.json()
-    return request_read(store,id,body.get('tool'),body.get('target_id'))
+    payload=await request.json()
+    def operation():
+        from .message_triage import request_read
+        body=payload
+        return request_read(store,id,body.get('tool'),body.get('target_id'))
+    return await run_in_threadpool(operation)
 
 @app.get('/api/jobs/{id}/diagnostics')
 def diagnostics(id):
@@ -216,49 +242,58 @@ def communication_source(id):
 
 @app.post('/api/jobs')
 async def create_job(request:Request):
-    body=await request.json()
-    text=body.get('request','').strip()
-    if not text or len(text)>100000:
-        raise ValueError('Enter a request of up to 100,000 characters.')
-    project=body.get('project','')
-    if project and project not in settings()['projects']:
-        raise ValueError('Unknown project')
-    files=body.get('files',[])
-    if len(files)>10:
-        raise ValueError('Attach at most ten files.')
-    decoded=[]
-    for f in files:
-        data=base64.b64decode(f['data'],validate=True)
-        if len(data)>25*1024*1024:
-            raise ValueError('Each attachment must be under 25 MB.')
-        decoded.append((safe_name(f['name']),data))
-    if sum(len(x[1]) for x in decoded)>50*1024*1024:
-        raise ValueError('Attachments must total under 50 MB.')
-    # Keep the new job invisible to workers until all inputs are attached.
-    with engine.lock:
-        j=store.create_job(text,project=project)
-        store.update(j['id'],status='preparing')
-        for name,data in decoded:
-            p=workspace(j['id'])/'inputs'/(uid()[:8]+'-'+name)
-            p.parent.mkdir(parents=True,exist_ok=True)
-            p.write_bytes(data)
-            file_record(store,j['id'],p)
-        store.update(j['id'],status='queued')
-    return store.detail(j['id'])
+    payload=await request.json()
+    def operation():
+        body=payload
+        text=body.get('request','').strip()
+        if not text or len(text)>100000:
+            raise ValueError('Enter a request of up to 100,000 characters.')
+        project=body.get('project','')
+        if project and project not in settings()['projects']:
+            raise ValueError('Unknown project')
+        files=body.get('files',[])
+        if len(files)>10:
+            raise ValueError('Attach at most ten files.')
+        decoded=[]
+        for f in files:
+            data=base64.b64decode(f['data'],validate=True)
+            if len(data)>25*1024*1024:
+                raise ValueError('Each attachment must be under 25 MB.')
+            decoded.append((safe_name(f['name']),data))
+        if sum(len(x[1]) for x in decoded)>50*1024*1024:
+            raise ValueError('Attachments must total under 50 MB.')
+        # Keep the new job invisible to workers until all inputs are attached.
+        with engine.lock:
+            j=store.create_job(text,project=project)
+            store.update(j['id'],status='preparing')
+            for name,data in decoded:
+                p=workspace(j['id'])/'inputs'/(uid()[:8]+'-'+name)
+                p.parent.mkdir(parents=True,exist_ok=True)
+                p.write_bytes(data)
+                file_record(store,j['id'],p)
+            store.update(j['id'],status='queued')
+        return store.detail(j['id'])
+    return await run_in_threadpool(operation)
 
 @app.post('/api/jobs/{id}/answer')
 async def answer(id,request:Request):
-    body=await request.json()
-    if not body.get('answer','').strip():
-        raise ValueError('Enter your response')
-    engine.answer(id,body['answer'])
-    return {'ok':True}
+    payload=await request.json()
+    def operation():
+        body=payload
+        if not body.get('answer','').strip():
+            raise ValueError('Enter your response')
+        engine.answer(id,body['answer'])
+        return {'ok':True}
+    return await run_in_threadpool(operation)
 
 @app.post('/api/jobs/{id}/review')
 async def review_job(id,request:Request):
-    from .reviews import submit
-    body=await request.json()
-    return submit(engine,id,body.get('message',''),body.get('remember',False),body.get('guidance',''),body.get('applies_to',''),body.get('draft'),body.get('remember_target','general'))
+    payload=await request.json()
+    def operation():
+        from .reviews import submit
+        body=payload
+        return submit(engine,id,body.get('message',''),body.get('remember',False),body.get('guidance',''),body.get('applies_to',''),body.get('draft'),body.get('remember_target','general'))
+    return await run_in_threadpool(operation)
 
 @app.post('/api/jobs/{id}/retry-capacity')
 def retry_capacity(id):
@@ -284,17 +319,20 @@ async def approve(id,request:Request):
 
 @app.post('/api/approvals/{id}/resolve')
 async def resolve(id,request:Request):
-    body=await request.json()
-    a=store.one('SELECT * FROM approvals WHERE id=?',(id,))
-    if not a or a['status']!='uncertain' or body.get('outcome') not in {'executed','not_executed'}:
-        raise ValueError('Choose a verified outcome for an uncertain action.')
-    j=store.job(a['job_id'])
-    s=session(j)
-    engine.add_result(s['messages'],s.pop('waiting_call'),{'verified_by_user':body['outcome'],'instruction':'Do not repeat the action.' if body['outcome']=='executed' else 'The user verified it did not execute; request a fresh approval before retrying.'})
-    store.write('UPDATE approvals SET status=? WHERE id=?',('verified_'+body['outcome'],id))
-    engine.persist(j['id'],s,status='queued',question='')
-    store.event(j['id'],'verified','User verified action outcome: '+body['outcome'])
-    return {'ok':True}
+    payload=await request.json()
+    def operation():
+        body=payload
+        a=store.one('SELECT * FROM approvals WHERE id=?',(id,))
+        if not a or a['status']!='uncertain' or body.get('outcome') not in {'executed','not_executed'}:
+            raise ValueError('Choose a verified outcome for an uncertain action.')
+        j=store.job(a['job_id'])
+        s=session(j)
+        engine.add_result(s['messages'],s.pop('waiting_call'),{'verified_by_user':body['outcome'],'instruction':'Do not repeat the action.' if body['outcome']=='executed' else 'The user verified it did not execute; request a fresh approval before retrying.'})
+        store.write('UPDATE approvals SET status=? WHERE id=?',('verified_'+body['outcome'],id))
+        engine.persist(j['id'],s,status='queued',question='')
+        store.event(j['id'],'verified','User verified action outcome: '+body['outcome'])
+        return {'ok':True}
+    return await run_in_threadpool(operation)
 
 @app.get('/api/files/{id}')
 def download(id):
@@ -324,18 +362,24 @@ def connections():
 
 @app.post('/api/settings')
 async def update_settings(request:Request):
-    changes=await request.json()
-    # Serialize the pause with worker submission so nothing new starts after
-    # the disconnect request has been acknowledged.
-    with engine.lock:
-        s=save_settings(changes)
-    return s
+    payload=await request.json()
+    def operation():
+        changes=payload
+        # Serialize the pause with worker submission so nothing new starts after
+        # the disconnect request has been acknowledged.
+        with engine.lock:
+            s=save_settings(changes)
+        return s
+    return await run_in_threadpool(operation)
 
 @app.post('/api/gateway/key')
 async def set_key(request:Request):
-    body=await request.json()
-    store_key(body['key'])
-    return {'ok':True}
+    payload=await request.json()
+    def operation():
+        body=payload
+        store_key(body['key'])
+        return {'ok':True}
+    return await run_in_threadpool(operation)
 
 @app.post('/api/gateway/test')
 def test_gateway():
@@ -384,28 +428,34 @@ def knowledge_list(q:str='',scope:str='',status:str='all'):
 
 @app.post('/api/knowledge')
 async def knowledge_create(request:Request):
-    from .knowledge import Knowledge
-    return Knowledge(store).save(await request.json(),user=True)
+    payload=await request.json()
+    def operation():
+        from .knowledge import Knowledge
+        return Knowledge(store).save(payload,user=True)
+    return await run_in_threadpool(operation)
 
 @app.post('/api/knowledge/{id}')
 async def knowledge_change(id,request:Request):
-    from .knowledge import Knowledge
-    body=await request.json()
-    k=Knowledge(store)
-    if not store.one("SELECT id FROM knowledge WHERE id=? AND status<>'forgotten'",(id,)):
-        raise HTTPException(404,'Knowledge entry not found')
-    action=body.get('action')
-    if action=='accept':
-        k.accept(id)
-    elif action=='forget':
-        k.forget(id)
-    elif action=='feedback':
-        k.feedback(id,body.get('helpful'))
-    elif action=='edit':
-        return k.save(body['entry'],user=True,id=id)
-    else:
-        raise ValueError('Invalid knowledge action.')
-    return {'ok':True}
+    payload=await request.json()
+    def operation():
+        from .knowledge import Knowledge
+        body=payload
+        k=Knowledge(store)
+        if not store.one("SELECT id FROM knowledge WHERE id=? AND status<>'forgotten'",(id,)):
+            raise HTTPException(404,'Knowledge entry not found')
+        action=body.get('action')
+        if action=='accept':
+            k.accept(id)
+        elif action=='forget':
+            k.forget(id)
+        elif action=='feedback':
+            k.feedback(id,body.get('helpful'))
+        elif action=='edit':
+            return k.save(body['entry'],user=True,id=id)
+        else:
+            raise ValueError('Invalid knowledge action.')
+        return {'ok':True}
+    return await run_in_threadpool(operation)
 
 
 @app.get('/api/atlassian')
