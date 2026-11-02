@@ -312,9 +312,9 @@ async def approve(id,request:Request):
     body=await request.json()
     if type(body.get('approved')) is not bool:
         raise ValueError('An explicit approval decision is required')
-    # Run blocking external actions off the event loop.
+    # Acknowledge the committed decision without waiting for external execution.
     import asyncio
-    await asyncio.to_thread(engine.decide,id,body['approved'],body.get('edited'))
+    await asyncio.to_thread(engine.decide,id,body['approved'],body.get('edited'),wait=False)
     return {'ok':True}
 
 @app.post('/api/approvals/{id}/resolve')

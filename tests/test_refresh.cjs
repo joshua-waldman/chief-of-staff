@@ -247,3 +247,14 @@ test('opening another job shows loading immediately and discards the older respo
  assert.equal(s.writes(),writes);
  assert.equal(s.ctx.selected,'fast');
 });
+
+
+test('accepted approvals show execution progress without another approve button',async()=>{
+ const s=jobRefreshContext(),pending=s.ctx.openJob('job',{background:true});
+ s.respond('Approved action',{status:'awaiting_approval',approvals:[{id:'approved-action',status:'executing',tool:'run_command'}]});
+ await pending;
+ assert.match(s.detail.html,/Approved action in progress/);
+ assert.match(s.detail.html,/run_command is running/);
+ assert.ok(!s.detail.html.includes('data-approve="approved-action"'));
+ assert.ok(!s.detail.html.includes('data-resolve="approved-action"'));
+});
