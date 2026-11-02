@@ -46,7 +46,7 @@ def classify(tool,args,org=None,research_only=False):
     if tool in ALWAYS:
         return Decision('high',True,'Approval is required for sends, Confluence, publishing, merging, deployment, deletion, and unrestricted host commands.')
     if tool == 'mcp_call':
-        return Decision('high',True,'Imported MCP operations require review until their behavior is verified.')
+        return Decision('high',True,'Review the exact imported operation before it runs.')
     if tool == 'jira_write':
         if args.get('operation') not in {'comment','edit','create'}:
             return Decision('high',True,'Non-routine Jira operation.')

@@ -42,7 +42,7 @@ def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None
         if job['status'] not in {'awaiting_approval','waiting_input','blocked','failed','completed'}:
             raise ValueError('Wait for the current agent step to finish before sending more direction.')
         if c.execute("SELECT 1 FROM approvals WHERE job_id=? AND status IN ('executing','uncertain')",(id,)).fetchone():
-            raise ValueError('Resolve the in-flight or uncertain action before revising this job.')
+            raise ValueError('COS is executing or automatically checking this action. Follow-up is available when that finishes.')
         raw=json.loads(job['messages'])
         s=raw if isinstance(raw,dict) else {'messages':raw}
         if job['status']=='awaiting_approval' and s.get('waiting_action'):

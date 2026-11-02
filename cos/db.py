@@ -39,6 +39,8 @@ class Store:
             CREATE INDEX IF NOT EXISTS events_job_id ON events(job_id,id);
             CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY,job_id TEXT,tool TEXT,args TEXT,risk TEXT,reason TEXT,status TEXT,created TEXT,result TEXT DEFAULT '');
             CREATE INDEX IF NOT EXISTS approvals_job_status ON approvals(job_id,status,created);
+            CREATE INDEX IF NOT EXISTS approvals_status ON approvals(status,created);
+            CREATE TABLE IF NOT EXISTS action_verifications(action_id TEXT PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 0,next_check TEXT NOT NULL DEFAULT '',started TEXT NOT NULL DEFAULT '',evidence TEXT NOT NULL DEFAULT '',checked TEXT NOT NULL DEFAULT '');
             CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,job_id TEXT,name TEXT,path TEXT,mime TEXT,created TEXT);
             CREATE INDEX IF NOT EXISTS files_job ON files(job_id);
             CREATE TABLE IF NOT EXISTS seen(source TEXT,item_id TEXT,created TEXT,PRIMARY KEY(source,item_id));
@@ -151,8 +153,8 @@ class Store:
             j['events']=list(reversed(self.rows("SELECT * FROM events WHERE job_id=? AND kind<>'model' ORDER BY id DESC LIMIT 30",(id,))))
         else:
             j['events'] = self.rows('SELECT * FROM events WHERE job_id=? ORDER BY id',(id,))
-        approval_filter=" AND status IN ('pending','executing','uncertain')" if compact else ''
-        j['approvals'] = self.rows('SELECT * FROM approvals WHERE job_id=?'+approval_filter+' ORDER BY created',(id,))
+        approval_filter=" AND status IN ('pending','executing','uncertain','verification_inconclusive')" if compact else ''
+        j['approvals'] = self.rows('SELECT a.*,v.evidence AS verification_evidence FROM approvals a LEFT JOIN action_verifications v ON v.action_id=a.id WHERE job_id=?'+approval_filter+' ORDER BY created',(id,))
         j['files'] = self.rows('SELECT * FROM files WHERE job_id=?',(id,))
         from .tools import is_recovery_file
         archived=self.state('recovery_archive:'+id,{}).get('members',{})
