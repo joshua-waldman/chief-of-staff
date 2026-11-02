@@ -149,8 +149,18 @@ function connectionView(){if(!con)return intro('Your tools. Connected.','Loading
  '<section class="panel"><h2>Imported Claude MCP servers</h2><p class="small">Enable reviewed servers to launch them locally. Imported tool calls require approval.</p><ul class="list">'+con.mcp.map(m=>'<li><label><input class="mcp-toggle" type="checkbox" value="'+esc(m.name)+'" '+(m.enabled?'checked':'')+'> '+esc(m.name)+'</label><small>'+esc(m.transport)+'</small></li>').join('')+'</ul></section>'+
  '<section class="panel"><h2>Research hosts</h2><div class="field"><label for="hosts">Exact allowed HTTPS hostnames, one per line</label><textarea id="hosts">'+esc(state.settings.research_hosts.join('\n'))+'</textarea><small>Retrieval sends no source documents or credentials. Redirect destinations must be allowed public HTTPS hosts. Microsoft Learn Graph view and tabs selectors are supported; other queries are blocked.</small></div></section>'+btn('Save configuration','type="submit"')+'</form>'+
  '<section class="panel"><h2>Installed skills</h2><div class="tags">'+con.skills.map(s=>'<span class="tag">'+esc(s.name)+'</span>').join('')+'</div></section><section class="panel"><h2>Execution environment</h2><p class="small">'+(con.sandbox.available?'Docker detected. Sandbox execution has no network or host credentials.':'Docker is not installed. Unrestricted host execution requires approval; isolated execution needs Docker.')+'</p></section>'}
-function bindRows(){document.querySelectorAll('[data-job]').forEach(b=>{b.onclick=e=>{if(!e.target.closest('details'))openJob(b.dataset.job)};b.onkeydown=e=>{if(e.key==='Enter'&&!e.target.closest('details'))openJob(b.dataset.job)}})}
-function handle(fn){return async e=>{try{await fn(e)}catch(error){toast(error.message,true)}}}
+function bindRows(){document.querySelectorAll('[data-job]').forEach(b=>{b.onclick=handle(e=>{if(!e.target.closest('details'))return openJob(b.dataset.job)});b.onkeydown=handle(e=>{if(e.key==='Enter'&&!e.target.closest('details'))return openJob(b.dataset.job)})})}
+function handle(fn){return async e=>{
+ const button=e?.submitter||(e?.currentTarget?.tagName==='BUTTON'?e.currentTarget:null);
+ if(button?.disabled){e.preventDefault?.();return}
+ const label=button?.textContent;
+ if(button){button.disabled=true;button.textContent='Working…';button.setAttribute('aria-busy','true')}
+ handle.active=(handle.active||0)+1;
+ try{await fn(e)}catch(error){toast(error.message,true)}finally{
+  handle.active--;
+  if(button){button.disabled=false;if(button.textContent==='Working…')button.textContent=label;button.removeAttribute('aria-busy')}
+ }
+}}
 function bind(){
  bindSchedules();
  bindCommitments();
@@ -158,16 +168,16 @@ function bind(){
  if($('#setup-atlassian'))$('#setup-atlassian').onclick=handle(async()=>{await api('atlassian/setup',{});toast('Complete setup in the local PowerShell window, then test the connection here.')});
  if($('#test-atlassian'))$('#test-atlassian').onclick=handle(async()=>{$('#atlassian-result').textContent='Checking Jira and Confluence…';const r=await api('atlassian/test',{});atlassian=await api('atlassian');$('#atlassian-result').textContent=r.output;toast(r.ok?'Atlassian connection passed':'Atlassian needs setup',!r.ok)});
 
- bindRows();document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>navigate(b.dataset.go));
+ bindRows();document.querySelectorAll('[data-go]').forEach(b=>b.onclick=handle(()=>navigate(b.dataset.go)));
  if($('#search')){const f=()=>{$('#table').innerHTML=table(jobs.filter(j=>(view!=='attention'||attention(j))&&queueMatches(j,$('#search').value,$('#filter').value,$('#triage-filter').value)));bindRows()};$('#search').oninput=f;$('#filter').onchange=f;$('#triage-filter').onchange=f}
  if($('#request-form')){$('#attachments').onchange=()=>$('#file-chips').textContent=[...$('#attachments').files].map(f=>f.name).join(' · ');$('#request-form').onsubmit=handle(submit)}
- document.querySelectorAll('[data-test]').forEach(b=>b.onclick=handle(async()=>{const j=await api('jobs',{request:tests[+b.dataset.test].request});await refresh();await openJob(j.id)}));
+ document.querySelectorAll('[data-test]').forEach(b=>b.onclick=handle(async()=>{const j=await api('jobs',{request:tests[+b.dataset.test].request});await Promise.all([openJob(j.id),refresh()])}));
  if($('#key-form'))$('#key-form').onsubmit=handle(async e=>{e.preventDefault();await api('gateway/key',{key:$('#gateway-key').value});$('#gateway-key').value='';toast('Key saved securely');con=await api('connections');await refresh(true)});
  if($('#test-gateway'))$('#test-gateway').onclick=handle(async()=>{$('#gateway-result').textContent='Testing AMD connection…';try{const r=await api('gateway/test',{});$('#gateway-result').textContent='Connected · '+r.model+' · '+r.response}catch(e){$('#gateway-result').textContent=e.message}});
  if($('#start-auth'))$('#start-auth').onclick=handle(async()=>{await api('auth/start',{});toast('Sign-in started. Follow the instructions in this panel.')});
  if($('#settings-form'))$('#settings-form').onsubmit=handle(async e=>{e.preventDefault();const models=Object.fromEntries(Object.keys(state.settings.models).map(r=>[r,$('#model-'+r).value.trim()]));const projects=Object.fromEntries(Object.keys(state.settings.projects).map((n,i)=>[n,$('#project-'+i).value]));await api('settings',{models,projects,engineering_workflows:JSON.parse($('#engineering-workflows').value),github_accounts:JSON.parse($('#github-accounts').value),parallel_agents:+$('#parallel').value,model_parallel_requests:+$('#model-parallel').value,max_steps:+$('#steps').value,monitor_enabled:$('#monitor').checked,timing_assessment_enabled:$('#timing-assessment').checked,poll_seconds:+$('#interval').value,command_prefix:$('#prefix').value.trim(),mcp_enabled:[...document.querySelectorAll('.mcp-toggle:checked')].map(x=>x.value),research_hosts:$('#hosts').value.split('\n').map(x=>x.trim()).filter(Boolean)});toast('Configuration saved');con=await api('connections');await refresh(true)});
 }
-async function submit(e){e.preventDefault();$('#submit').disabled=true;try{const files=await Promise.all([...$('#attachments').files].map(f=>new Promise((resolve,reject)=>{if(f.size>25*1024*1024)return reject(Error('Each attachment must be under 25 MB'));const r=new FileReader();r.onload=()=>resolve({name:f.name,data:r.result.split(',')[1]});r.onerror=reject;r.readAsDataURL(f)})));const j=await api('jobs',{request:$('#request').value,project:$('#project').value,files});$('#request').value='';$('#attachments').value='';toast('Request received by your Chief of Staff');await refresh(true);await openJob(j.id)}finally{if($('#submit'))$('#submit').disabled=false}}
+async function submit(e){e.preventDefault();$('#submit').disabled=true;try{const files=await Promise.all([...$('#attachments').files].map(f=>new Promise((resolve,reject)=>{if(f.size>25*1024*1024)return reject(Error('Each attachment must be under 25 MB'));const r=new FileReader();r.onload=()=>resolve({name:f.name,data:r.result.split(',')[1]});r.onerror=reject;r.readAsDataURL(f)})));const j=await api('jobs',{request:$('#request').value,project:$('#project').value,files});$('#request').value='';$('#attachments').value='';toast('Request received by your Chief of Staff');await Promise.all([openJob(j.id),refresh(true)])}finally{if($('#submit'))$('#submit').disabled=false}}
 const sourceLoads=new Set(),sourceErrors=new Map();
 async function loadSource(id){
  if(sourceLoads.has(id))return;
@@ -207,10 +217,21 @@ function jobFilesView(files){
   (recovery.length?'<details id="recovery-files"><summary>Internal recovery files ('+recovery.length+')</summary><p class="small">Saved history, checkpoints, and archived content support job recovery. Older files may still be referenced by newer checkpoints. Older snapshots are kept losslessly in recovery-archive.zip; existing paths and download links continue to work.</p>'+links(recovery)+'</details>':'');
 }
 async function openJob(id,{background=false}={}){
- const j=await api('jobs/'+id);
+ const wasOpening=!background&&(selected!==id||!$('#job-dialog').open);
+ const generation=background?(openJob.generation||0):(openJob.generation=(openJob.generation||0)+1);
+ if(!background&&selected!==id){
+  selected=id;$('#detail').innerHTML='<p role="status">Loading job…</p>';
+  if(!$('#job-dialog').open)$('#job-dialog').showModal();
+ }
+ let j;
+ try{j=await api('jobs/'+id+'?compact=true')}catch(error){
+  if(!background&&generation===openJob.generation)$('#detail').innerHTML='<p role="alert">'+esc(error.message)+'</p>';
+  throw error;
+ }
+ if(generation!==(openJob.generation||0)||selected!==id)return;
  // Read the live view after the request: the user may have scrolled or closed it while waiting.
- if(background&&(selected!==id||!$('#job-dialog').open||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)||document.querySelector('#detail button[disabled]')))return;
- const same=selected===id,opening=!same||!$('#job-dialog').open;
+ if(background&&($('#activity-details')?.open||selected!==id||!$('#job-dialog').open||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)||document.querySelector('#detail button[disabled]')))return;
+ const same=selected===id,opening=wasOpening||!same||!$('#job-dialog').open;
  const snapshot=opening?null:captureView($('#job-dialog'));
  const b=j.brief||{},html='<div class="eyebrow">'+esc(j.org)+'</div><h2 class="detail-title">'+esc(j.display_name||b.job_name||'Job details')+'</h2><div class="detail-meta">'+badge(j.status)+timingBadge(j)+'<span class="small">'+esc(j.project||'Workspace')+' · '+date(j.created)+'</span></div><details><summary class="small">Original request</summary><div class="code">'+esc(j.request)+'</div></details>'+
  returnedResultView(j)+'<section class="panel job-brief"><h3>At a glance</h3>'+(j.org==='Communications'?readable('Message decision',triageLabel(b.triage_category))+readable('Why this decision',b.triage_reason||b.action_reason||b.response_reason)+readable('Quick summary',b.email_excerpt):'')+readable('Time sensitivity',itemTiming(j)?.label||({no:'Routine',unknown:'Timing unclear'})[b.time_sensitive]||'Not yet assessed')+readable('Timing rationale',itemTiming(j)?.reason||b.timing_reason||'Timing assessment is pending; urgency is not yet known.')+readable('Context',b.context)+readable('Current status',b.status_summary)+readable('Next step',b.next_step)+'</section>'+(j.org==='Communications'?sourceView(j):'')+
@@ -226,32 +247,46 @@ async function openJob(id,{background=false}={}){
  (j.result&&!j.result_review?'<section class="panel"><h3>Result</h3><p class="result">'+esc(j.result)+'</p></section>':'')+
  jobFilesView(j.files)+
  (j.children.length?'<h3>Delegated work</h3>'+j.children.map(c=>'<div class="child" data-child="'+c.id+'">'+badge(c.status)+' '+esc(c.org)+' · '+esc(c.display_name||c.title)+'</div>').join(''):'')+
- '<p><a class="file-link" href="/api/jobs/'+j.id+'/diagnostics" download>Download diagnostics & provenance</a></p><details id="activity-details"><summary>Full activity timeline ('+j.events.filter(e=>e.kind!=="model").length+' events)</summary><div class="section-title"><h3>Activity timeline</h3>'+btn('Refresh','id="refresh-job"','link-btn')+'</div><div class="timeline">'+j.events.filter(e=>e.kind!=='model').map(e=>'<div class="event"><div class="event-head">'+esc(e.kind.toUpperCase())+'<time>'+date(e.created)+'</time></div><div id="event-body-'+e.id+'" class="event-body">'+esc(e.body)+'</div></div>').join('')+'</div></details>'+
+ '<p><a class="file-link" href="/api/jobs/'+j.id+'/diagnostics" download>Download diagnostics & provenance</a></p><details id="activity-details"><summary>Full activity timeline ('+(j.event_count??j.events.filter(e=>e.kind!=="model").length)+' events)</summary><div class="section-title"><h3>Activity timeline</h3>'+btn('Refresh','id="refresh-job"','link-btn')+'</div>'+((j.event_count||0)>j.events.length?btn('Load older activity','id="older-activity"','secondary'):'')+'<div class="timeline">'+j.events.filter(e=>e.kind!=='model').map(e=>'<div class="event"><div class="event-head">'+esc(e.kind.toUpperCase())+'<time>'+date(e.created)+'</time></div><div id="event-body-'+e.id+'" class="event-body">'+esc(e.body)+'</div></div>').join('')+'</div></details>'+
  (!['completed','cancelled'].includes(j.status)?btn('Cancel job and sub-agents','id="cancel-job"','danger'):'');
  if(!opening&&$('#detail')._renderedHTML===html)return;
  selected=id;$('#detail').innerHTML=html;$('#detail')._renderedHTML=html;
- if(!$('#job-dialog').open)$('#job-dialog').showModal();if(snapshot)restoreView($('#job-dialog'),snapshot);else $('#job-dialog').scrollTop=0;$('#refresh-job').onclick=()=>openJob(id);
- if($('#answer-form'))$('#answer-form').onsubmit=handle(async e=>{e.preventDefault();await api('jobs/'+id+'/answer',{answer:$('#answer').value});await openJob(id);await refresh()});
- document.querySelectorAll('[data-child]').forEach(b=>b.onclick=()=>openJob(b.dataset.child));
- document.querySelectorAll('[data-approve],[data-reject]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{const aid=b.dataset.approve||b.dataset.reject,body=$('#body-'+aid);await api('approvals/'+aid,{approved:!!b.dataset.approve,...(body?{edited:{body:body.value}}:{})});await openJob(id);await refresh()}finally{b.disabled=false}}));
- document.querySelectorAll('[data-resolve]').forEach(b=>b.onclick=handle(async()=>{await api('approvals/'+b.dataset.resolve+'/resolve',{outcome:b.dataset.outcome});await openJob(id);await refresh()}));
+ if(!$('#job-dialog').open)$('#job-dialog').showModal();if(snapshot)restoreView($('#job-dialog'),snapshot);else $('#job-dialog').scrollTop=0;$('#refresh-job').onclick=handle(()=>openJob(id));
+ if($('#older-activity'))$('#older-activity').onclick=handle(async()=>{
+  const page=await api('jobs/'+id+'/events?before='+(j.events[0]?.id||0));
+  if(selected!==id||generation!==(openJob.generation||0)||!$('#older-activity'))return;
+  const timeline=$('#activity-details .timeline');
+  timeline.insertAdjacentHTML('afterbegin',page.events.map(e=>'<div class="event"><div class="event-head">'+esc(e.kind.toUpperCase())+'<time>'+date(e.created)+'</time></div><div id="event-body-'+e.id+'" class="event-body">'+esc(e.body)+'</div></div>').join(''));
+  j.events=[...page.events,...j.events];
+  if(!page.has_more)$('#older-activity').remove();
+ });
+ if($('#answer-form'))$('#answer-form').onsubmit=handle(async e=>{e.preventDefault();await api('jobs/'+id+'/answer',{answer:$('#answer').value});toast('Response received');await Promise.all([openJob(id),refresh(true)])});
+ document.querySelectorAll('[data-child]').forEach(b=>b.onclick=handle(()=>openJob(b.dataset.child)));
+ document.querySelectorAll('[data-approve],[data-reject]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{const aid=b.dataset.approve||b.dataset.reject,body=$('#body-'+aid);await api('approvals/'+aid,{approved:!!b.dataset.approve,...(body?{edited:{body:body.value}}:{})});toast('Approval decision recorded');await Promise.all([openJob(id),refresh(true)])}finally{b.disabled=false}}));
+ document.querySelectorAll('[data-resolve]').forEach(b=>b.onclick=handle(async()=>{await api('approvals/'+b.dataset.resolve+'/resolve',{outcome:b.dataset.outcome});await Promise.all([openJob(id),refresh(true)])}));
  bindReview(id);
  if($('#mark-result-reviewed'))$('#mark-result-reviewed').onclick=handle(async()=>{
   const button=$('#mark-result-reviewed');button.disabled=true;
-  try{await api('jobs/'+id+'/result-review',{revision:j.result_review.revision});await openJob(id);await refresh();toast('Result marked reviewed');}finally{button.disabled=false;}
+  try{await api('jobs/'+id+'/result-review',{revision:j.result_review.revision});toast('Result marked reviewed');await Promise.all([openJob(id),refresh(true)]);}finally{button.disabled=false;}
  });
- document.querySelectorAll('[data-summary-read]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{await api('jobs/'+id+'/mark-read',{tool:b.dataset.readTool,target_id:b.dataset.summaryRead});await openJob(id);await refresh()}finally{b.disabled=false}}));
- if($('#load-source'))$('#load-source').onclick=()=>loadSource(id);
+ document.querySelectorAll('[data-summary-read]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{await api('jobs/'+id+'/mark-read',{tool:b.dataset.readTool,target_id:b.dataset.summaryRead});await Promise.all([openJob(id),refresh(true)])}finally{b.disabled=false}}));
+ if($('#load-source'))$('#load-source').onclick=handle(()=>loadSource(id));
  document.querySelectorAll('[data-collapse-source]').forEach(button=>button.onclick=collapseSourceConversation);
  if(opening&&j.org==='Communications'&&(!(j.source_messages||[]).length||(j.source_messages||[]).some(m=>!m.complete)))loadSource(id);
- if($('#retry-capacity'))$('#retry-capacity').onclick=handle(async()=>{await api('jobs/'+id+'/retry-capacity',{});await openJob(id);await refresh()});
- if($('#cancel-job'))$('#cancel-job').onclick=handle(async()=>{await api('jobs/'+id+'/cancel',{});await openJob(id);await refresh()});
+ if($('#retry-capacity'))$('#retry-capacity').onclick=handle(async()=>{await api('jobs/'+id+'/retry-capacity',{});await Promise.all([openJob(id),refresh(true)])});
+ if($('#cancel-job'))$('#cancel-job').onclick=handle(async()=>{await api('jobs/'+id+'/cancel',{});toast('Job cancelled');await Promise.all([openJob(id),refresh(true)])});
 }
 async function navigate(next){view=next;if(view==='schedules')await loadSchedules();if(view==='commitments')await loadCommitments();if(view==='connections'){con=await api('connections');atlassian=await api('atlassian');}if(view==='acceptance')tests=await api('acceptance');if(view==='knowledge')memories=await api('knowledge');if(view==='organizations')organizationAgents=await api('organization-agents');render()}
-async function refresh(force=false){const [nextState,nextJobs,nextResults,nextAgents]=await Promise.all([api('status'),api('jobs'),api('results'),view==='organizations'?api('organization-agents'):Promise.resolve(null)]);state=nextState;renderQueueControl();jobs=nextJobs;notifyResults(nextResults);returnedResults=nextResults;$('#results-count').textContent=returnedResults.length;if(nextAgents!==null)organizationAgents=nextAgents;if(view==='knowledge'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))memories=await api('knowledge');if(view==='schedules')await loadSchedules();if(view==='commitments'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))await loadCommitments();if(force||!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))render()}
+async function refresh(force=false){
+ while(refresh.pending){try{await refresh.pending}catch(error){if(!force)throw error}if(!force)return}
+ const pending=(async()=>{const [nextState,nextJobs,nextResults,nextAgents]=await Promise.all([api('status'),api('jobs?compact=true'),api('results'),view==='organizations'?api('organization-agents'):Promise.resolve(null)]);state=nextState;renderQueueControl();jobs=nextJobs;notifyResults(nextResults);returnedResults=nextResults;$('#results-count').textContent=returnedResults.length;if(nextAgents!==null)organizationAgents=nextAgents;if(view==='knowledge'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))memories=await api('knowledge');if(view==='schedules')await loadSchedules();if(view==='commitments'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))await loadCommitments();if(force||!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))render()})();
+ refresh.pending=pending;
+ try{await pending}finally{if(refresh.pending===pending)refresh.pending=null}
+}
+
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=handle(()=>navigate(b.dataset.view)));$('#close-dialog').onclick=()=>{$('#job-dialog').close();selected=null};$('#job-dialog').addEventListener('close',()=>selected=null);
 refresh().catch(e=>toast(e.message,true));
-setInterval(async()=>{if(busy)return;busy=true;try{await refresh();if(view==='connections'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){con=await api('connections');render()}if(selected&&$('#job-dialog').open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)&&!document.querySelector('#detail button[disabled]'))await openJob(selected,{background:true})}catch(e){}finally{busy=false}},4000);
+setInterval(async()=>{if(busy||handle.active||document.hidden)return;busy=true;try{await Promise.all([refresh(),selected&&$('#job-dialog').open&&!$('#activity-details')?.open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)&&!document.querySelector('#detail button[disabled]')?openJob(selected,{background:true}):Promise.resolve()]);if(view==='connections'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){con=await api('connections');render()}}catch(e){}finally{busy=false}},4000);
 
 function captureView(root){
  if(!root)return null;
@@ -304,7 +339,7 @@ function reviewView(j){
 function bindReview(id){
  if($('#result-feedback-form'))$('#result-feedback-form').onsubmit=handle(async e=>{
   e.preventDefault();const form=$('#result-feedback-form'),fields=form.querySelector('fieldset');fields.disabled=true;
-  try{await api('jobs/'+id+'/review',{message:$('#result-feedback').value});await openJob(id);await refresh();toast('Direction received; revised work will return for review');}finally{fields.disabled=false;}
+  try{await api('jobs/'+id+'/review',{message:$('#result-feedback').value});await Promise.all([openJob(id),refresh(true)]);toast('Direction received; revised work will return for review');}finally{fields.disabled=false;}
  });
  if(!$('#review-form'))return;
  const sync=()=>{const checked=$('#review-remember').checked;$('#review-rule-fields').hidden=!checked;$('#review-applies').required=checked};
@@ -316,7 +351,7 @@ function bindReview(id){
    const result=await api('jobs/'+id+'/review',{message:$('#review-message').value,remember:$('#review-remember').checked,remember_target:$('#review-target').value,guidance:$('#review-guidance').value,applies_to:$('#review-applies').value,...(draft?{draft:draft.value}:{})});
    $('#review-form').reset();sync();
    toast(result.memory_id?'Direction received and guidance remembered':'Direction received; the Chief of Staff will respond');
-   await openJob(id);await refresh();
+   await Promise.all([openJob(id),refresh(true)]);
   }finally{if($('#send-review'))$('#send-review').disabled=false}
  });
 }

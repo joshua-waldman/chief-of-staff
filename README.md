@@ -407,3 +407,14 @@ If a restricted source reader blocks or fails after collecting evidence, COS ret
 A replacement reader verifying retained evidence has a bounded 24-model-turn continuation. If it cannot return findings within that phase, it stays incomplete and its retained inputs and gaps return to the director automatically. This bound does not complete the owner task or publish a draft; it prevents another unbounded source-verification loop from starving final synthesis.
 
 Communications and Strategy synthesis also has a bounded verification phase after completed delegated work returns. After 24 model turns, COS allows two final verification reads and eight delivery turns. New source pages cannot reset this phase. COS must author and explicitly finish the requested output, with any remaining coverage limits, or stop visibly without publishing an incomplete review. Recent returned reports remain primary evidence through context compaction; the newest complete tool turn is preserved when it fits the actual context limit.
+
+
+Button actions show progress immediately while the server records or executes the
+request. Database and file operations run off the HTTP event loop so a waiting
+write does not freeze unrelated requests. Routine refreshes use compact job
+responses and pause while the browser tab is hidden. Job details initially show
+the latest 30 activity events; **Load older activity** retrieves earlier events in
+pages without discarding the stored history. Background detail refresh pauses
+while the activity timeline is open so loaded history stays in place; use its
+**Refresh** button for the latest events. Restart the server and refresh the browser
+after installing this update. Database query indexes are added on startup.

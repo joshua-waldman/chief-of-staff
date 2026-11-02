@@ -3,6 +3,7 @@ import re
 import sqlite3
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from .config import DATA
 
@@ -31,10 +32,15 @@ class Store:
             CREATE TABLE IF NOT EXISTS result_reviews(job_id TEXT PRIMARY KEY,revision TEXT NOT NULL,summary TEXT NOT NULL,file_ids TEXT NOT NULL,completed TEXT NOT NULL,reviewed TEXT);
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,parent_id TEXT,title TEXT,request TEXT,org TEXT,project TEXT,status TEXT,created TEXT,updated TEXT,result TEXT DEFAULT '',question TEXT DEFAULT '',messages TEXT DEFAULT '[]',step INTEGER DEFAULT 0);
             CREATE INDEX IF NOT EXISTS jobs_parent_status ON jobs(parent_id,status,created,id);
+            CREATE INDEX IF NOT EXISTS jobs_created ON jobs(created DESC);
+            CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,kind TEXT,body TEXT,created TEXT);
             CREATE INDEX IF NOT EXISTS events_job_kind ON events(job_id,kind,created);
+            CREATE INDEX IF NOT EXISTS events_job_id ON events(job_id,id);
             CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY,job_id TEXT,tool TEXT,args TEXT,risk TEXT,reason TEXT,status TEXT,created TEXT,result TEXT DEFAULT '');
+            CREATE INDEX IF NOT EXISTS approvals_job_status ON approvals(job_id,status,created);
             CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,job_id TEXT,name TEXT,path TEXT,mime TEXT,created TEXT);
+            CREATE INDEX IF NOT EXISTS files_job ON files(job_id);
             CREATE TABLE IF NOT EXISTS seen(source TEXT,item_id TEXT,created TEXT,PRIMARY KEY(source,item_id));
             CREATE TABLE IF NOT EXISTS communication_threads(source TEXT,thread_id TEXT,job_id TEXT,PRIMARY KEY(source,thread_id));
             CREATE TABLE IF NOT EXISTS teams_topics(topic_id TEXT PRIMARY KEY,chat_id TEXT NOT NULL,title TEXT NOT NULL);
@@ -92,10 +98,15 @@ class Store:
                             c.execute('UPDATE result_reviews SET eligible=0 WHERE job_id=?',(job['id'],))
             reconcile(c)
 
+    @contextmanager
     def connect(self):
         c = sqlite3.connect(self.path, timeout=30)
         c.row_factory = sqlite3.Row
-        return c
+        try:
+            with c:
+                yield c
+        finally:
+            c.close()
 
     def rows(self, sql, args=()):
         with self.connect() as c:
@@ -130,12 +141,18 @@ class Store:
     def event(self,id,kind,body):
         self.write('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',(id,kind,body,now()))
 
-    def detail(self,id):
-        j = self.job(id)
+    def detail(self,id,compact=False):
+        columns='id,parent_id,title,request,org,project,status,created,updated,result,question,step' if compact else '*'
+        j = self.one('SELECT '+columns+' FROM jobs WHERE id=?',(id,))
         if not j:
             return None
-        j['events'] = self.rows('SELECT * FROM events WHERE job_id=? ORDER BY id',(id,))
-        j['approvals'] = self.rows('SELECT * FROM approvals WHERE job_id=? ORDER BY created',(id,))
+        if compact:
+            j['event_count']=self.one("SELECT COUNT(*) n FROM events WHERE job_id=? AND kind<>'model'",(id,))['n']
+            j['events']=list(reversed(self.rows("SELECT * FROM events WHERE job_id=? AND kind<>'model' ORDER BY id DESC LIMIT 30",(id,))))
+        else:
+            j['events'] = self.rows('SELECT * FROM events WHERE job_id=? ORDER BY id',(id,))
+        approval_filter=" AND status IN ('pending','executing','uncertain')" if compact else ''
+        j['approvals'] = self.rows('SELECT * FROM approvals WHERE job_id=?'+approval_filter+' ORDER BY created',(id,))
         j['files'] = self.rows('SELECT * FROM files WHERE job_id=?',(id,))
         from .tools import is_recovery_file
         archived=self.state('recovery_archive:'+id,{}).get('members',{})
@@ -144,7 +161,8 @@ class Store:
         j['archived_recovery_count']=len(archived)
         for file in j['files']:
             file['purpose']='recovery' if is_recovery_file(id,file['path']) else 'deliverable'
-        j['children'] = self.rows('SELECT * FROM jobs WHERE parent_id=? ORDER BY created',(id,))
+        columns='id,parent_id,title,org,project,status,created,updated' if compact else '*'
+        j['children'] = self.rows('SELECT '+columns+' FROM jobs WHERE parent_id=? ORDER BY created',(id,))
         from .briefs import detail_brief
         j['brief']=detail_brief(self,j)
         j['review_messages']=self.rows('SELECT * FROM review_messages WHERE job_id=? ORDER BY id',(id,))
@@ -162,7 +180,10 @@ class Store:
                     review['files'].append({**file,'purpose':'deliverable'})
         j['source_messages']=self.rows('SELECT * FROM communication_sources WHERE job_id=? ORDER BY received,message_id',(id,))
         from .capacity import Capacity
-        raw=json.loads(j['messages'])
+        raw={}
+        if not compact or j['status'] in {'waiting_capacity','capacity_paused'}:
+            messages=j.get('messages') if not compact else self.one('SELECT messages FROM jobs WHERE id=?',(id,))['messages']
+            raw=json.loads(messages)
         saved=raw.get('capacity',{}) if isinstance(raw,dict) else {}
         if saved and j['status'] in {'waiting_capacity','capacity_paused'}:
             j['capacity']={**saved,**Capacity(self).get(saved['model'])}
@@ -209,12 +230,10 @@ class Store:
             row['file_ids']=json.loads(row['file_ids'])
             from .tools import is_recovery_file
             from .result_reviews import review_content
-            job=self.one('SELECT messages FROM jobs WHERE id=?',(id,))
-            try:
-                state=json.loads(job['messages']) if job else {}
-            except (TypeError,ValueError):
-                state={}
-            final=isinstance(state,dict) and state.get('final_review',False)
+            # Fetch only the flag needed here, rather than transferring and
+            # parsing the entire saved model history for every review-list poll.
+            job=self.one("SELECT CASE WHEN json_valid(messages) THEN json_extract(messages,'$.final_review') ELSE 0 END AS final_review FROM jobs WHERE id=?",(id,))
+            final=bool(job and job['final_review'])
             ids=set(row['file_ids'])
             if not final:
                 ids |= set(re.findall(r'/api/files/([A-Za-z0-9_-]+)',row['summary']))

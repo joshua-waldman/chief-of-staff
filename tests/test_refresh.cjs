@@ -76,7 +76,7 @@ function jobRefreshContext(){
  const dialog={open:true,scrollTop:100};
  const detail={set innerHTML(value){writes++;this.html=value;dialog.scrollTop=0}};
  const refreshButton={};
- const ctx={selected:'job',document:{activeElement:null,querySelector:()=>null,querySelectorAll:()=>[]},
+ const ctx={handle:fn=>fn,selected:'job',document:{activeElement:null,querySelector:()=>null,querySelectorAll:()=>[]},
   $:s=>({'#job-dialog':dialog,'#detail':detail,'#refresh-job':refreshButton}[s]||null),
   api:()=>new Promise(resolve=>resolveRequest=resolve),
   captureView:root=>({y:root.scrollTop}),restoreView:(root,saved)=>root.scrollTop=saved.y,
@@ -144,7 +144,7 @@ test('monitor failure is visible, escaped, and clears on recovery',()=>{
 test('resolved job questions disappear from current status while error history remains',async()=>{
  const nodes={'#detail':{innerHTML:''},'#job-dialog':{open:false,showModal(){this.open=true}},'#refresh-job':{}};
  const job={id:'research',org:'Technology',title:'Research',status:'running',project:'',created:'now',request:'Research',brief:{status_summary:'Continuing'},question:'Old access error',approvals:[],files:[],children:[],events:[{id:1,kind:'tool_error',body:'Old access error',created:'then'}]};
- const ctx={selected:null,api:async()=>job,$:s=>nodes[s]||null,esc:x=>String(x??''),badge:x=>x,date:x=>x,readable:()=>'',btn:()=>'',reviewView:()=>'',returnedResultView:()=>'',bindReview:()=>{},document:{querySelectorAll:()=>[]}};
+ const ctx={handle:fn=>fn,selected:null,api:async()=>job,$:s=>nodes[s]||null,esc:x=>String(x??''),badge:x=>x,date:x=>x,readable:()=>'',btn:()=>'',reviewView:()=>'',returnedResultView:()=>'',bindReview:()=>{},document:{querySelectorAll:()=>[]}};
  vm.createContext(ctx);
  vm.runInContext(source.slice(source.indexOf('function itemTiming('),source.indexOf('function table(')),ctx);
  const start=source.indexOf('async function openJob(');
@@ -229,4 +229,21 @@ test('job details display inferred time sensitivity without a deadline',async()=
  assert.match(s.detail.html,/Time sensitive/);
  assert.match(s.detail.html,/Timing rationale: Assessment: dependent team is blocked/);
  assert.ok(!s.detail.html.includes('Overdue'));
+});
+
+
+test('opening another job shows loading immediately and discards the older response',async()=>{
+ const s=jobRefreshContext(),responses={};
+ s.ctx.api=path=>new Promise(resolve=>responses[path]=resolve);
+ const slow=s.ctx.openJob('slow');
+ assert.match(s.detail.html,/Loading job/);
+ assert.equal(s.ctx.selected,'slow');
+ const fast=s.ctx.openJob('fast');
+ const job=id=>({id,display_name:id,org:'Engineering',status:'completed',approvals:[],files:[],children:[],events:[]});
+ responses['jobs/fast?compact=true'](job('fast'));await fast;
+ assert.match(s.detail.html,/fast/);
+ const writes=s.writes();
+ responses['jobs/slow?compact=true'](job('slow'));await slow;
+ assert.equal(s.writes(),writes);
+ assert.equal(s.ctx.selected,'fast');
 });
