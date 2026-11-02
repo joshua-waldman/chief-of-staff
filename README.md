@@ -58,7 +58,7 @@ Double-click **Start-ChiefOfStaff.cmd**, or run:
 .\Start-ChiefOfStaff.ps1
 ```
 
-The launcher creates `.venv` and installs dependencies if that environment does not exist. Then open [http://127.0.0.1:8765](http://127.0.0.1:8765). Leave the launcher running; Ctrl+C stops it. If PowerShell blocks the script, use your organization's approved script execution policy or start the installed interpreter directly:
+The launcher creates `.venv` and installs dependencies if that environment does not exist. It installs a per-user Windows scheduled task and starts the app hidden in the background. Then open [http://127.0.0.1:8765](http://127.0.0.1:8765). Closing Codex, the browser, or the launcher window does not stop the app. The task starts at Windows sign-in, has no runtime limit, continues on battery, and restarts the server five seconds after an exit. Windows retries the supervisor after a failure. No administrator account or stored password is required. If PowerShell blocks the script, use your organization's approved script execution policy or start the installed interpreter directly:
 
 ```powershell
 .\.venv\Scripts\python.exe run.py
@@ -66,7 +66,9 @@ The launcher creates `.venv` and installs dependencies if that environment does 
 
 To choose another port, use `run.py --port 8766` or `Start-ChiefOfStaff.ps1 -Port 8766`, then open that port in your browser.
 
-Deployment means running this app on your own Windows machine. The server binds to `127.0.0.1`; it is a single-user local application. For an always-on desktop, create a Windows Task Scheduler task under your own Windows account, with the application folder as **Start in** and `.venv\Scripts\python.exe run.py` as the program and argument. That account must have access to its own credentials and integration scripts. Only run one server per data directory.
+Deployment means running this app on your own Windows machine. The server binds to `127.0.0.1`; it is a single-user local application. The scheduled task runs under your signed-in Windows account so it can access your credentials and integrations. It runs while you are signed in, including when the desktop is locked; sleep suspends processing and sign-out stops it. It resumes after wake or starts again at the next sign-in. Only run one server per data directory.
+
+Use `Start-ChiefOfStaff.ps1 -Stop` before updates or to stop the background task until the next sign-in. Run the launcher again to start it immediately. For development, stop the task first and use `Start-ChiefOfStaff.ps1 -Foreground`; Ctrl+C stops that foreground instance. Server logs are saved in `data/launcher/`, retaining the current and previous run. To remove automatic startup permanently, stop the app and delete your `ChiefOfStaff-<Windows user SID>` task in Task Scheduler. Re-running the normal launcher registers it again. A changed port takes effect after stopping the existing task and launching again with `-Port`.
 
 ## Connect services
 
