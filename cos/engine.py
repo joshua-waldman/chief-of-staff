@@ -69,6 +69,7 @@ class Engine:
         self.queue_intake=QueueIntake(store,self.provider)
         self.stop_event=threading.Event()
         self.pool=ThreadPoolExecutor(max_workers=12,thread_name_prefix='cos-agent')
+        self.approval_pool=ThreadPoolExecutor(max_workers=4,thread_name_prefix='cos-approval')
         self.active=set()
         self.lock=threading.RLock()
 
@@ -256,6 +257,7 @@ class Engine:
     def stop(self):
         self.stop_event.set()
         self.pool.shutdown(wait=False,cancel_futures=True)
+        self.approval_pool.shutdown(wait=False)
 
     def recover_local_actions(self):
         """Retire only provably unstarted legacy commands or newly autonomous checks."""
@@ -1131,7 +1133,7 @@ class Engine:
         self.store.event(id,'user',text)
 
     @approval_call
-    def decide(self,aid,approved,edited_args=None):
+    def decide(self,aid,approved,edited_args=None,*,wait=True):
         approval=self.store.one('SELECT * FROM approvals WHERE id=?',(aid,))
         if not approval:
             raise ValueError('Approval not found')
@@ -1155,6 +1157,33 @@ class Engine:
                 self.store.write("UPDATE approvals SET status='pending' WHERE id=?",(aid,))
                 raise ValueError('Keep the quoted conversation history intact. Use review direction to request a new preview.')
             self.store.write('UPDATE approvals SET args=? WHERE id=?',(json.dumps(args),aid))
+        if approved and not wait:
+            try:
+                self.approval_pool.submit(self._background_decision,aid,approved,job,args)
+            except RuntimeError as error:
+                self.store.write("UPDATE approvals SET status='pending' WHERE id=? AND status='executing'",(aid,))
+                raise ValueError('The action was not started; the server is stopping. Try again after restart.') from error
+            return
+        return self._complete_decision(aid,approved,job,args)
+
+    @approval_call
+    def _background_decision(self,aid,approved,job,args):
+        try:
+            self._complete_decision(aid,approved,job,args)
+        except Exception as error:
+            # Unexpected bookkeeping failures must remain visible and never replay
+            # an external mutation whose outcome might already be committed.
+            self.store.write("UPDATE approvals SET status='uncertain',result=? WHERE id=? AND status='executing'",(str(error)[:5000],aid))
+            if self.store.job(job['id'])['status']!='cancelled':
+                self.store.update(job['id'],status='blocked',question='Approved action needs review after a background failure. Check its receipt before retrying. '+str(error)[:1500])
+            self.store.event(job['id'],'approval_error','Background approval failed: '+str(error)[:1500])
+            raise
+
+    def _complete_decision(self,aid,approved,job,args):
+        approval=self.store.one('SELECT * FROM approvals WHERE id=?',(aid,))
+        if self.store.job(job['id'])['status']=='cancelled':
+            self.store.write("UPDATE approvals SET status='failed_not_executed',result=? WHERE id=? AND status='executing'",(json.dumps({'not_executed':True,'reason':'Job cancelled before execution.'}),aid))
+            return
         if approved:
             try:
                 if approval['tool']=='delegate':
