@@ -29,6 +29,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS review_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,role TEXT,body TEXT,created TEXT);
             CREATE INDEX IF NOT EXISTS review_job ON review_messages(job_id,id);
             CREATE TABLE IF NOT EXISTS job_briefs(job_id TEXT PRIMARY KEY,body TEXT,updated TEXT);
+            CREATE TABLE IF NOT EXISTS job_names(job_id TEXT PRIMARY KEY,name TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS result_reviews(job_id TEXT PRIMARY KEY,revision TEXT NOT NULL,summary TEXT NOT NULL,file_ids TEXT NOT NULL,completed TEXT NOT NULL,reviewed TEXT);
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,parent_id TEXT,title TEXT,request TEXT,org TEXT,project TEXT,status TEXT,created TEXT,updated TEXT,result TEXT DEFAULT '',question TEXT DEFAULT '',messages TEXT DEFAULT '[]',step INTEGER DEFAULT 0);
             CREATE INDEX IF NOT EXISTS jobs_parent_status ON jobs(parent_id,status,created,id);

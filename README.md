@@ -357,6 +357,12 @@ does not send messages, schedule meetings, create tickets or approve delegated w
 
 ## Source map
 
+Open a job and select **Rename** to save your own name (up to 120 characters).
+Your name appears in request lists, job details, and delegated work, and persists
+across agent updates and restarts. **Use automatic name** restores the generated
+label. Renaming leaves the original request and job execution unchanged. Restart
+the server and refresh the browser after installing this update.
+
 - `cos/server.py`: local API, sessions, attachments, and connections.
 - `cos/engine.py`: durable orchestration, delegation, and approvals.
 - `cos/provider.py`: gateway requests and model routing.
