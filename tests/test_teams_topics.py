@@ -165,7 +165,8 @@ def test_routing_previews_keep_full_original_messages(monitor):
     assert monitor.store.detail(job['id'])['source_messages'][0]['body'] == original
 
 
-def test_model_outage_retains_checkpoint_and_does_not_merge_chat(monitor, monkeypatch):
+@pytest.mark.parametrize('capacity', [None, {'busy': True}, {'paused': True}, {'retry_at': 9999999999}])
+def test_model_outage_retains_checkpoint_and_does_not_merge_chat(monitor, monkeypatch, capacity):
     from types import SimpleNamespace
     import cos.monitor as module
     stamp = '2026-10-22T00:00:00+00:00'
@@ -176,15 +177,31 @@ def test_model_outage_retains_checkpoint_and_does_not_merge_chat(monitor, monkey
             if args[-1]=='teams' else [], 'emails':[], 'conversations':1})))
     class Unavailable:
         def complete(self, *args, **kwargs):
+            if capacity is not None:
+                from cos.capacity import CapacityDelayed
+                raise CapacityDelayed('test-model', capacity)
             raise RuntimeError('Unavailable')
     monitor.teams_topics.provider = Unavailable()
     monitor.tick()
     assert monitor.store.state('monitor_checkpoint_teams') == stamp
     assert monitor.store.state('monitor_status')['attention_required']
     assert not monitor.store.rows('SELECT * FROM seen')
+    source = monitor.store.state('monitor_status')['sources']['teams']
+    if capacity is not None:
+        assert source['error_code'] == ('capacity_paused' if capacity.get('paused') else 'capacity_wait')
+        assert source['model'] == 'test-model'
+        assert 'Saved checkpoints are unchanged' in source['error']
+        if not capacity.get('paused'):
+            assert 'no Microsoft sign-in is needed' in source['error']
+    else:
+        assert 'error_code' not in source
     monitor.teams_topics.provider = SemanticProvider()
     monitor.tick()
     assert monitor.store.state('monitor_checkpoint_teams') != stamp
+    status = monitor.store.state('monitor_status')
+    assert not status['attention_required']
+    assert 'error' not in status
+    assert 'error_code' not in status['sources']['teams']
     assert len(monitor.store.rows('SELECT * FROM jobs')) == 1
 
 
