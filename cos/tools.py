@@ -49,7 +49,7 @@ browser_read {url}: read a dynamic page in an isolated Edge profile and save a s
 mcp_list_tools {server}; mcp_call {server,tool,arguments:object}: calls an enabled imported MCP server; approval required for each imported tool call.
 run_python {path}: run pure Python functions/unittest without approval. Only re, math, unicodedata, unittest and validated local imports. Network, file writes, subprocesses and introspection are blocked; other code needs Docker or reviewed host execution.
 run_sandbox {command:[text],image?:text}: run code autonomously in Docker with no network, no host credentials, and only this job's workspace mounted. Requires Docker.
-run_command {command:[text],cwd?:workspace-relative or absolute source/project directory}: host execution requires approval, except Self-Improvement Python pytest/unittest discovery checks and independently approved automatic reviews of Engineering checks. Other host commands still require exact approval. For those checks the server selects its own Python interpreter; use cwd for application source or this job workspace. Failures before launch are returned for correction without owner verification.
+run_command {command:[text],cwd?:workspace-relative or absolute source/project directory}: host execution requires approval, except Self-Improvement Python pytest/unittest discovery checks and independently approved automatic reviews of Engineering checks. Workspace Python artifact scripts can receive automatic review of their complete source and local dependencies, followed by guarded execution of the reviewed contents. Other host commands still require exact approval. For those checks the server selects its own Python interpreter; use cwd for application source or this job workspace. Failures before launch are returned for correction without owner verification.
 install_dependencies {packages:[text]}: installs binary wheels into job-local dependencies. Known common packages are autonomous; unknown packages require review. No changes to the server environment.
 """
 # Explicit organizations constrain context and tool privileges.
@@ -667,7 +667,7 @@ class Tools:
         if action=='run_sandbox':
             docker=shutil.which('docker')
             if not docker:
-                raise ValueError('Docker is not installed. Use run_command to request approval for host execution.')
+                raise ValueError('Docker is not installed. Use run_command for automatic review of a workspace Python artifact script; other host execution requires exact approval.')
             image=a.get('image','python:3.11-slim')
             if image not in {'python:3.11-slim','node:22-slim'}:
                 raise ValueError('Use the approved Python or Node sandbox image.')
@@ -678,6 +678,9 @@ class Tools:
             finally:
                 subprocess.run([docker,'rm','-f',name],capture_output=True,timeout=20,**background_options())
             return {'exit_code':r.returncode,'stdout':r.stdout[-24000:],'stderr':r.stderr[-12000:]}
+        if action=='run_command' and a.get('_workspace_script_review'):
+            from .reviewed_scripts import execute as execute_reviewed_script
+            return execute_reviewed_script(self.store,job,a,run_host)
         if action in {'run_command','install_dependencies'}:
             try:
                 if action=='install_dependencies' and any(not isinstance(x,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+(?:[<>=!~]+[A-Za-z0-9.*+-]+(?:,[<>=!~]+[A-Za-z0-9.*+-]+)*)?',x) for x in a['packages']):
