@@ -58,7 +58,7 @@ def test_command(command):
 
 def test_path(value):
     path = PureWindowsPath(value.split('::', 1)[0])
-    return not path.is_absolute() and not path.drive and '..' not in path.parts and bool(path.parts) and path.parts[0] in {'tests', 'staged', '.'}
+    return not path.is_absolute() and not path.drive and '..' not in path.parts and bool(path.parts) and path.parts[0] in {'tests', 'stage', 'staged', '.'}
 
 
 def autonomous_check(org, action, args):

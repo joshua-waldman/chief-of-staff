@@ -49,7 +49,7 @@ browser_read {url}: read a dynamic page in an isolated Edge profile and save a s
 mcp_list_tools {server}; mcp_call {server,tool,arguments:object}: calls an enabled imported MCP server; approval required for each imported tool call.
 run_python {path}: run pure Python functions/unittest without approval. Only re, math, unicodedata, unittest and validated local imports. Network, file writes, subprocesses and introspection are blocked; other code needs Docker or reviewed host execution.
 run_sandbox {command:[text],image?:text}: run code autonomously in Docker with no network, no host credentials, and only this job's workspace mounted. Requires Docker.
-run_command {command:[text],cwd?:workspace-relative or absolute source/project directory}: host execution requires approval, except Self-Improvement Python pytest/unittest discovery checks. For those checks the server selects its own Python interpreter; use cwd for application source or this job workspace. Failures before launch are returned for correction without owner verification.
+run_command {command:[text],cwd?:workspace-relative or absolute source/project directory}: host execution requires approval, except Self-Improvement Python pytest/unittest discovery checks and independently approved automatic reviews of Engineering checks. Other host commands still require exact approval. For those checks the server selects its own Python interpreter; use cwd for application source or this job workspace. Failures before launch are returned for correction without owner verification.
 install_dependencies {packages:[text]}: installs binary wheels into job-local dependencies. Known common packages are autonomous; unknown packages require review. No changes to the server environment.
 """
 # Explicit organizations constrain context and tool privileges.
@@ -686,6 +686,10 @@ class Tools:
                 if not isinstance(command,list) or not command or not all(isinstance(x,str) for x in command):
                     raise ValueError('Command must be an argument array.')
                 cwd=resolve_path(id,a.get('cwd','.'),action!='run_command')
+                if action=='run_command':
+                    from .local_checks import test_command
+                    if test_command(command):
+                        command=[sys.executable,*command[1:]]
                 if autonomous_check(job['org'],action,a):
                     if cwd!=ROOT.resolve() and not cwd.is_relative_to(workspace(id).resolve()):
                         raise ValueError('Autonomous checks must run in application source or this job workspace.')
