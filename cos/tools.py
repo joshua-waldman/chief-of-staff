@@ -86,7 +86,7 @@ delete_email {id}; mark_email_read {id}; mark_teams_read {chat_id}: exact-action
 create_feature_branch {name,ticket?}: preview and create a branch in the job's registered project after approval, or autonomously in application source for Self-Improvement. Uses configured branch_prefix and require_ticket; never resets or switches an existing branch.
 reply_email {id,body,reply_all?:false}: server prepares a plain-text preview including original quoted history and actual recipients before approval. Keep the quoted history intact when editing. Plain text preserves content and ordering; original HTML styling and inline images are not reproduced.
 jira_write create additionally accepts parent? (exact issue key). The server checks create metadata and parent hierarchy; project workflow defaults are editable in Connections. Use jira_read jira-createmeta to inspect required fields.
-suggest_knowledge additionally accepts target?:{source:email|teams,thread_id}: bind thread-specific guidance to exact source IDs. Do not infer a binding from keywords or titles.
+suggest_knowledge additionally accepts target?:{source:email|teams,thread_id} OR {source:email|teams,sender_id}: bind guidance to one exact conversation or source sender. Sender IDs must be addresses or stable Teams contact IDs, never display names. Bound guidance applies only to that identity; other participants retain normal triage. Do not infer a binding from keywords or titles.
 '''
 SECRET_NAMES = {'.env','.credentials.json','token.json','credentials.json','config.local.json'}
 BLOCKED_PARTS = {'.git','.ssh','.aws','.codex','.claude','node_modules','.venv','__pycache__'}

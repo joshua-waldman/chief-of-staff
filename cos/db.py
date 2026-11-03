@@ -57,6 +57,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT);
             CREATE TABLE IF NOT EXISTS organizations(name TEXT PRIMARY KEY,leader TEXT,purpose TEXT,created TEXT);
             ''')
+            from .guidance_targets import SCHEMA as guidance_schema
+            c.executescript(guidance_schema)
             from .commitments import SCHEMA as commitment_schema
             c.executescript(commitment_schema)
             from .schedules import SCHEMA as schedule_schema
@@ -196,6 +198,9 @@ class Store:
                 if file and not is_recovery_file(file['job_id'],file['path']):
                     review['files'].append({**file,'purpose':'deliverable'})
         j['source_messages']=self.rows('SELECT * FROM communication_sources WHERE job_id=? ORDER BY received,message_id',(id,))
+        from .guidance_targets import candidates
+        with self.connect() as c:
+            j['sender_candidates']=candidates(c,id)
         from .capacity import Capacity
         raw={}
         if not compact or j['status'] in {'waiting_capacity','capacity_paused'}:
