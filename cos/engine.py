@@ -58,9 +58,12 @@ def session(job):
     return raw if isinstance(raw,dict) else {'messages':raw}
 
 class Engine:
-    def __init__(self,store,provider=None):
+    def __init__(self,store,provider=None,*,review_provider=None):
         self.store=store
         self.provider=provider or Gateway(store)
+        # A separate call/context; custom providers must explicitly supply their
+        # reviewer so test doubles and offline integrations never call a network.
+        self.review_provider=review_provider if review_provider is not None else (Gateway(store) if provider is None else None)
         self.capacity=Capacity(store)
         from .schedules import Schedules
         self.schedules=Schedules(store)
@@ -750,6 +753,10 @@ class Engine:
                     decision=classify(action,args,org=job['org'],research_only=s.get('research_only',False))
                     from .action_verification import guard as guard_uncertain_action
                     guard_uncertain_action(self.store,id,action,args)
+                    from .automatic_review import review as review_action
+                    decision=review_action(self.store,job,action,args,s,decision,self.review_provider)
+                    if self.store.job(id)['status']=='cancelled':
+                        return
                     aid=uid()
                     emit('policy.decided',{'action_id':aid,'tool':action,'risk':decision.risk,'approval_required':decision.approval,'reason':decision.reason})
                     s['waiting_call']=call['id']

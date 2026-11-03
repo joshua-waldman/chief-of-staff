@@ -432,3 +432,28 @@ Delegation accepts an optional `required_tools` list for each task. COS checks t
 ### Sender-scoped guidance
 
 Owner feedback can explicitly remember guidance for one source sender across conversations. Choose a recorded identity in the review form; COS previews its source, label, and exact email address or Teams contact ID. Sender scope is separate from conversation scope, and is editable in Knowledge base. Display names, quoted headers, and message bodies never establish sender identity. Existing rules and pending suggestions keep their current scope. Older jobs without a stable identity require source refresh before sender scope is available. Sender bindings preserve the guidance text, conditions and exceptions; they do not authorize sends or deletes. Mixed-sender email batches always fall back to normal triage when a sender rule is cited.
+
+
+### Automatic local action review
+
+`approval_mode` defaults to `auto_review`. Known Self-Improvement checks run
+without interruption, including tests under `tests/`, `stage/`, and `staged/`.
+For Engineering jobs, an independent gateway call reviews recognized Python
+pytest/unittest checks, feature branch creation, and staged patches against the
+persisted owner request, authenticated review feedback, and exact action. It has
+no execution tools and receives no worker conversation or retrieved knowledge.
+Only this job workspace and its registered project qualify. Patch previews and
+existing hash, feature-branch, organization, and unresolved-outcome checks still
+apply. Recognized Python tests use the server interpreter. This is host execution,
+not a sandbox. Automatic decisions appear in job history and action receipts.
+
+Unclear, malformed, oversized or unavailable reviews fall back to the existing
+exact-action approval UI. Research-only and source-only restrictions remain in
+force. External sends, Confluence writes, publishing, merges, deployments,
+deletion, imported MCP operations and unrecognized host commands still require
+approval. Incoming messages and attachments cannot grant authorization.
+In Connections, choose **Approve local work for me** or **Ask for approval**.
+Setting `approval_mode` to `manual` disables this additional reviewer; the existing routine-action allowances remain active. Restart the server
+to load updated code. Startup retires provably unstarted pending Self-Improvement
+test approvals, including the previously unrecognized `stage/` command, and queues
+the job to continue. Executed or uncertain actions are never replayed by this rule.
