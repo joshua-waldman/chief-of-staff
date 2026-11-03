@@ -495,3 +495,64 @@ def test_recovery_excludes_legacy_triage_and_source_or_operation_receipts(setup,
     store.update(child['id'], status='completed', result='Source inspection finished', messages=json.dumps(state))
     store.update(parent['id'], status='completed', messages=json.dumps({'result_kind': 'triage', 'deliverable_file_ids': []}))
     assert not Store(store.path).pending_results()
+
+
+@pytest.mark.parametrize('heading', ['## Email triage: FYI', '**Teams topic triage**',
+                                    '### ABC-123 Jira update', '## AD password expiry reminder'])
+def test_mislabeled_automatic_triage_never_enters_review(setup, heading):
+    store, engine = setup
+    job = store.create_job('Triage this incoming email', 'Communications')
+    summary = heading + '\n\nRead the message. Owner action remains recorded in the brief.'
+    store.complete_result(job['id'], {'result_kind': 'strategy', 'final_output': True,
+                                     'deliverable_file_ids': []}, summary, 1)
+    assert not store.pending_results()
+    assert store.job(job['id'])['result'] == summary
+    assert not Store(store.path).pending_results()
+
+
+def test_startup_removes_mislabeled_saved_triage_without_reviewing_or_changing_job(setup):
+    store, engine = setup
+    job = store.create_job('Triage this incoming Teams conversation', 'Communications')
+    state = {'result_kind': 'strategy', 'final_output': True, 'deliverable_file_ids': []}
+    store.complete_result(job['id'], state, '## Teams topic triage\n\nNo reply needed.', 1)
+    # Reproduce an old eligible snapshot while the conversation has moved on.
+    store.write('UPDATE result_reviews SET eligible=1 WHERE job_id=?', (job['id'],))
+    store.update(job['id'], status='running', result='New source activity')
+    before = store.job(job['id'])
+    restored = Store(store.path)
+    assert not restored.pending_results()
+    saved = restored.one('SELECT * FROM result_reviews WHERE job_id=?', (job['id'],))
+    assert saved['eligible'] == 0 and saved['reviewed'] is None
+    assert restored.job(job['id']) == before
+    assert not restored.rows("SELECT * FROM events WHERE kind='result_reviewed'")
+
+
+@pytest.mark.parametrize('mode', ['owner_request', 'draft', 'file', 'body_only'])
+def test_triage_guard_preserves_requested_outputs(setup, mode):
+    store, engine = setup
+    request = 'Explain our triage process' if mode == 'owner_request' else 'Triage this incoming email'
+    job = store.create_job(request, 'Communications')
+    summary = '## Triage process analysis\n\nSubstantive requested output.'
+    state = {'result_kind': 'strategy', 'final_output': True, 'deliverable_file_ids': []}
+    if mode == 'draft':
+        state['result_kind'] = 'generated_content'
+    elif mode == 'file':
+        file = engine.tools.execute(job, 'write_file', {'path': 'report.txt', 'content': 'Report'})
+        state['deliverable_file_ids'] = [file['file_id']]
+    elif mode == 'body_only':
+        summary = '## Research report\n\nThe source mentions email triage.'
+    store.complete_result(job['id'], state, summary, 1)
+    original = store.result_review(job['id'])
+    assert original
+    assert Store(store.path).result_review(job['id']) == original
+
+
+
+def test_mislabeled_delegated_triage_does_not_create_parent_review(setup):
+    store, engine = setup
+    parent = store.create_job('Triage this incoming Teams conversation', 'Communications')
+    child = store.create_job('Triage this incoming email', 'Communications', parent_id=parent['id'])
+    store.complete_result(child['id'], {'result_kind': 'strategy', 'deliverable_file_ids': []},
+                          '## Email triage\n\nNo follow-up.', 1)
+    assert not store.pending_results()
+    assert not Store(store.path).pending_results()

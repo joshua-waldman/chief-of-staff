@@ -81,7 +81,21 @@ class Store:
 
             if 'eligible' not in {row['name'] for row in c.execute('PRAGMA table_info(result_reviews)')}:
                 c.execute('ALTER TABLE result_reviews ADD COLUMN eligible INTEGER NOT NULL DEFAULT 1')
-            from .result_reviews import eligible, reconcile
+            from .result_reviews import eligible, reconcile, routine_triage
+            # Inspect the saved snapshot, not a later conversation result. Never
+            # acknowledge review or alter obligations when removing triage noise.
+            for saved in c.execute('''SELECT j.*,r.summary AS review_summary,r.file_ids AS review_files
+                    FROM result_reviews r JOIN jobs j ON j.id=r.job_id
+                    WHERE r.eligible=1 AND r.reviewed IS NULL''').fetchall():
+                try:
+                    state=json.loads(saved['messages'])
+                    if not isinstance(state,dict):
+                        continue
+                    snapshot={**state,'deliverable_file_ids':json.loads(saved['review_files'])}
+                    if routine_triage(c,saved,snapshot,saved['review_summary']):
+                        c.execute('UPDATE result_reviews SET eligible=0 WHERE job_id=?',(saved['id'],))
+                except (ValueError,TypeError):
+                    continue
             # Reconcile the old broad inbox without marking anything owner-reviewed.
             old_results=c.execute('''SELECT j.*,r.job_id AS review_job_id FROM jobs j LEFT JOIN result_reviews r ON r.job_id=j.id
                 WHERE j.status='completed' AND j.parent_id IS NULL AND r.reviewed IS NULL''').fetchall()
@@ -206,7 +220,7 @@ class Store:
             if not job['parent_id']:
                 from .result_reviews import eligible, review_payload
                 review_summary,file_ids=review_payload(c,job,state,summary)
-                reviewable=eligible(c,job,state)
+                reviewable=eligible(c,{**dict(job),'result':summary},state)
                 previous=c.execute('SELECT eligible,reviewed FROM result_reviews WHERE job_id=?',(id,)).fetchone()
                 # Unrelated triage must not replace returned work still awaiting review.
                 if reviewable or state.get('result_kind')=='action_receipt' or not previous or not previous['eligible'] or previous['reviewed']:
