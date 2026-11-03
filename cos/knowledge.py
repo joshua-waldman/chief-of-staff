@@ -4,6 +4,7 @@ import math
 import re
 from collections import Counter
 from .db import uid, now
+from .guidance_targets import targets, validate_target, save_target, candidates, applies
 
 KINDS = {'preference','profile','project','lesson','task'}
 TEAMS_INVITATION_PASSCODE = re.compile(
@@ -39,11 +40,9 @@ class Knowledge:
         old=self.store.one('SELECT * FROM knowledge WHERE id=?',(id,)) if id else None
         target=a.get('target')
         if target is None and old:
-            saved=self.store.one('SELECT source,thread_id FROM knowledge_targets WHERE knowledge_id=?',(id,))
-            target=saved or {}
-        target=target or {}
-        if not isinstance(target,dict) or set(target)-{'source','thread_id'} or (target and (target.get('source') not in {'email','teams'} or not isinstance(target.get('thread_id'),str) or not target['thread_id'].strip() or len(target['thread_id'])>4096)):
-            raise ValueError('Choose email or teams and an exact conversation ID, or an empty target for general guidance.')
+            with self.store.connect() as c:
+                target=targets(c).get(id,{})
+        target=validate_target({} if target is None else target)
         if id and not old:
             raise ValueError('Knowledge entry not found.')
         if not user and not job:
@@ -61,9 +60,7 @@ class Knowledge:
                 return dict(c.execute('SELECT * FROM knowledge WHERE id=?',(duplicate['id'],)).fetchone())
             c.execute('INSERT OR REPLACE INTO knowledge VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (id,kind,title,content,scope,status,source,source_job,old['created'] if old else now(),now(),0,0,fingerprint))
-            c.execute('DELETE FROM knowledge_targets WHERE knowledge_id=?',(id,))
-            if target:
-                c.execute('INSERT INTO knowledge_targets VALUES(?,?,?)',(id,target['source'],target['thread_id']))
+            save_target(c,id,target)
         return self.store.one('SELECT * FROM knowledge WHERE id=?',(id,))
 
     def accept(self,id):
@@ -95,9 +92,11 @@ class Knowledge:
             scope=''
         terms=Counter(words(query))
         rows=self.store.rows("SELECT * FROM knowledge WHERE status='active' ORDER BY updated DESC")
-        targets={r['knowledge_id']:{'source':r['source'],'thread_id':r['thread_id']} for r in self.store.rows('SELECT * FROM knowledge_targets')}
+        with self.store.connect() as c:
+            bindings=targets(c)
+            identities={(r['source'],r['sender_id']) for r in candidates(c,job['id'])} if job else set()
         conversations={(r['source'],r['thread_id']) for r in self.store.rows('SELECT source,thread_id FROM communication_threads WHERE job_id=?',(job['id'],))} if job else set()
-        rows=[{**r,'target':targets.get(r['id'],{})} for r in rows if include_targeted or r['id'] not in targets or (targets[r['id']]['source'],targets[r['id']]['thread_id']) in conversations]
+        rows=[{**r,'target':bindings.get(r['id'],{})} for r in rows if include_targeted or applies(bindings.get(r['id'],{}),conversations,identities)]
         corpus=[Counter(words(r['title']+' '+r['content'])) for r in rows]
         df=Counter(t for c in corpus for t in c)
         ranked=[]

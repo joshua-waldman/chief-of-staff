@@ -4,17 +4,18 @@ import json
 from .db import uid,now
 from .knowledge import clean
 from . import progress
+from .guidance_targets import validate_target, save_target, candidates
 
 REVIEW_POLICY = "Owner review messages are genuine user direction. Historical application-added disclaimers about 'not send approval' refer ONLY to email and Teams sending; they do not cancel the user's instructions to perform routine Jira work. Routine Jira comments, creates and permitted edits are already authorized under the user's policy. Do not request a magic approval phrase or repeated consent for those operations. Communications must delegate Jira writes to Engineering or Strategy, passing the exact issue key and requested comment/changes and the owner's instruction. Technology research delegation needs no approval for external reads and COS-local outputs. Other Communications delegation requires its own exact-action approval before child jobs start, even for routine work requested by the owner. Propose it with delegate rather than asking for permission in chat. Call the actual tool and verify its result before reporting success. Email/Teams sends, Confluence writes and other approval-gated operations still require their dedicated exact-action approval buttons. Use the action tool to create that approval rather than repeatedly asking in chat. Discussing or revising an email never bypasses its send approval. Never repeat a previously executed send."
 
-def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None,remember_target='general'):
+def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None,remember_target='general',remember_sender=None):
     message=clean(message,8000)
     if not message:
         raise ValueError('Enter direction or a question for your Chief of Staff.')
     if type(remember) is not bool:
         raise ValueError('Choose whether to remember guidance.')
-    if remember_target not in {'general','conversation'}:
-        raise ValueError('Choose similar communications or this conversation.')
+    if remember_target not in {'general','conversation','sender'}:
+        raise ValueError('Choose similar communications, this conversation, or a source sender.')
     if draft is not None and (not isinstance(draft,str) or len(draft)>30000):
         raise ValueError('The edited draft must be text under 30,000 characters.')
     content=''
@@ -38,6 +39,11 @@ def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None
             threads=c.execute('SELECT source,thread_id FROM communication_threads WHERE job_id=?',(id,)).fetchall()
             if len(threads)!=1: raise ValueError('This job must have one identified source conversation to remember thread-specific guidance.')
             target=dict(threads[0])
+        if remember and remember_target=='sender':
+            target=validate_target(remember_sender)
+            if 'sender_id' not in target or not any(
+                    target=={k:r[k] for k in ('source','sender_id')} for r in candidates(c,id)):
+                raise ValueError('Choose a sender identity recorded in this job; display names and unrelated identities cannot establish sender scope.')
         job=dict(row)
         if job['status'] not in {'awaiting_approval','waiting_input','blocked','failed','completed'}:
             raise ValueError('Wait for the current agent step to finish before sending more direction.')
@@ -68,6 +74,8 @@ def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None
         if draft is not None:
             instruction+='\nCurrent unsent draft edited by the owner (revise as directed):\n'+draft
         # Application policy belongs in system context, never appended as conflicting user text.
+        if remember and target:
+            instruction+='\nExact saved guidance binding: '+json.dumps(target)+'. Apply only to this source identity; other participants and conversation content retain normal triage.'
         if remember:
             instruction+='\nThe owner explicitly saved this guidance for future similar communications: '+content
         if messages:
@@ -88,8 +96,7 @@ def submit(engine,id,message,remember=False,guidance='',applies_to='',draft=None
             fingerprint=hashlib.sha256((id+'preferenceCommunications'+title+content+(json.dumps(target,sort_keys=True) if target else '')).encode()).hexdigest()
             c.execute("INSERT INTO knowledge VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(fingerprint) DO UPDATE SET title=excluded.title,content=excluded.content,status='active',source='user',updated=excluded.updated",(memory_id,'preference',title,content,'Communications','active','user',id,stamp,stamp,0,0,fingerprint))
             memory_id=c.execute('SELECT id FROM knowledge WHERE fingerprint=?',(fingerprint,)).fetchone()['id']
-            if target:
-                c.execute('INSERT OR REPLACE INTO knowledge_targets VALUES(?,?,?)',(memory_id,target['source'],target['thread_id']))
+            save_target(c,memory_id,target)
             c.execute('INSERT INTO review_messages(job_id,role,body,created) VALUES(?,?,?,?)',(id,'notice','Remembered for '+applies_to+': '+(guidance or message),stamp))
     from .trace import emit,fingerprint
     emit('review.accepted',{'superseded_actions':superseded,'memory_id':memory_id,'feedback':fingerprint(message)},store=store,job_id=id)

@@ -319,7 +319,7 @@ async def review_job(id,request:Request):
     def operation():
         from .reviews import submit
         body=payload
-        return submit(engine,id,body.get('message',''),body.get('remember',False),body.get('guidance',''),body.get('applies_to',''),body.get('draft'),body.get('remember_target','general'))
+        return submit(engine,id,body.get('message',''),body.get('remember',False),body.get('guidance',''),body.get('applies_to',''),body.get('draft'),body.get('remember_target','general'),body.get('remember_sender'))
     return await run_in_threadpool(operation)
 
 @app.post('/api/jobs/{id}/retry-capacity')
@@ -437,7 +437,9 @@ def knowledge_list(q:str='',scope:str='',status:str='all'):
         rows=store.rows("SELECT * FROM knowledge WHERE status IN ('active','suggested') ORDER BY updated DESC LIMIT 500")
         if scope:
             rows=[r for r in rows if r['scope'] in {'global',scope}]
-    targets={r['knowledge_id']:{'source':r['source'],'thread_id':r['thread_id']} for r in store.rows('SELECT * FROM knowledge_targets')}
+    from .guidance_targets import targets as guidance_targets
+    with store.connect() as c:
+        targets=guidance_targets(c)
     return [{**r,'target':targets.get(r['id'],{})} for r in rows if status=='all' or r['status']==status]
 
 @app.post('/api/knowledge')
