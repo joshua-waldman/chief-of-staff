@@ -457,3 +457,29 @@ Setting `approval_mode` to `manual` disables this additional reviewer; the exist
 to load updated code. Startup retires provably unstarted pending Self-Improvement
 test approvals, including the previously unrecognized `stage/` command, and queues
 the job to continue. Executed or uncertain actions are never replayed by this rule.
+
+
+Workspace Python artifact builders (for example `python build_workbook.py`) now
+qualify for automatic source review. COS supplies the full script, recursively
+resolved local Python imports, and installed library identities to the reviewer.
+The supported installed artifact libraries are openpyxl, python-docx,
+python-pptx and pypdf, along with a limited set of standard libraries. Arguments are included in review and passed as data to the captured script. Dynamic
+execution, opaque imports, interpreter switches other than
+`-B`/`-u`, oversized sources and reflective code retain manual approval.
+
+An allowed script runs with the server interpreter in isolated mode, using
+captured source for the entry point and local imports. Changed sources, imports,
+command, working directory or library identities require fresh review. A
+server-owned bundle digest protects captured code at launch. Runtime audit guards
+limit writes and reads to the job workspace and an isolated temporary directory
+(plus read-only Python/library files),
+block credential/reserved files, executable outputs, network calls, subprocesses,
+links and permission changes, and register generated artifacts. These are Python
+runtime guards, not an OS sandbox. Server-installed libraries remain trusted.
+Research-only jobs can create guarded COS-local artifacts; source-only and
+historical readers cannot execute scripts. External action gates still apply.
+
+On restart, unstarted pending workspace-script actions with the older generic
+host-command approval reason are superseded and queued for fresh automatic review.
+Review denials and uncertain or previously executed actions are retained. No
+pending approval is treated as evidence that the script executed.

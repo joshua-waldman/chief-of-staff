@@ -281,15 +281,25 @@ class Engine:
                 error=action['result'] or ''
                 known_failure=action['tool']=='run_command' and action['status']=='uncertain' and (error.startswith('[WinError 2] The system cannot find the file specified') or error=='Path is outside the job workspace and registered projects.')
                 pending_local=action['status']=='pending' and job['org']=='Self-Improvement' and (autonomous_check(job['org'],action['tool'],args) or action['tool'] in {'apply_changes','create_feature_branch'})
-                if not (known_failure or pending_local):
-                    continue
                 s=session(job)
+                from .automatic_review import eligible as review_eligible
+                from .reviewed_scripts import candidate as script_candidate
+                pending_script=(action['status']=='pending' and action['tool']=='run_command'
+                                and settings().get('approval_mode')=='auto_review'
+                                and script_candidate(args.get('command'))
+                                and review_eligible(job,action['tool'],args,s)
+                                and not (action['reason'] or '').startswith('Automatic review'))
+                if not (known_failure or pending_local or pending_script):
+                    continue
                 if s.get('waiting_action')!=action['id'] or not s.get('waiting_call'):
                     continue
                 if c.execute("SELECT 1 FROM approvals WHERE job_id=? AND id<>? AND status IN ('pending','executing','uncertain')",(job['id'],action['id'])).fetchone():
                     continue
                 result={'not_executed':True,'error':error if known_failure else 'Local action approval superseded by autonomous Self-Improvement policy.',
                         'instruction':'Correct the local command and continue. Local Self-Improvement tests use the server Python interpreter automatically. Never infer that tests passed.'}
+                if pending_script:
+                    result={'not_executed':True,'error':'Workspace script approval superseded by automatic source review.',
+                            'instruction':'Repropose the workspace Python script with run_command. COS will review its source and local dependencies and execute only reviewed contents with workspace file guards. Do not ask for routine permission. No script has executed yet.'}
                 self.add_result(s['messages'],s.pop('waiting_call'),result)
                 s.pop('waiting_action',None)
                 progress.reset(s)
@@ -750,6 +760,8 @@ class Engine:
                     if action in {'mcp_call','mcp_list_tools'}:
                         from .tools import validate_mcp_arguments
                         validate_mcp_arguments(action,args)
+                    if action=='run_command':
+                        args.pop('_workspace_script_review',None)
                     decision=classify(action,args,org=job['org'],research_only=s.get('research_only',False))
                     from .action_verification import guard as guard_uncertain_action
                     guard_uncertain_action(self.store,id,action,args)
