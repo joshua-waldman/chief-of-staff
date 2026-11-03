@@ -44,8 +44,29 @@ OPERATIONS = {'delete_email', 'mark_email_read', 'mark_teams_read', 'calendar_rs
               'merge_code', 'deploy_code'}
 
 
+def routine_triage(connection, job, state, summary=None):
+    """Catch explicit triage mislabeled as strategy in monitored conversations.
+
+    Limit this fallback to the output's heading and automatic intake. Explicit
+    owner requests, generated drafts, and declared documents retain their normal
+    review behavior; mentioning triage in the body of a report is harmless.
+    """
+    if job['org'] != 'Communications' or state.get('result_kind') != 'strategy':
+        return False
+    if not (job['request'].startswith('Triage this incoming') or
+            connection.execute('SELECT 1 FROM communication_threads WHERE job_id=?', (job['id'],)).fetchone()):
+        return False
+    if state.get('deliverable_file_ids'):
+        return False
+    text = job['result'] if summary is None else summary
+    heading = next((line.strip('#* _') for line in text.splitlines() if line.strip()), '')
+    return bool(re.search(r'\btriage\b|\bJira update\b|\b(?:password expiry|delinquent timesheet|training due date) reminder\b|\bTeams topic summary\b', heading, re.I))
+
+
 def own_work(connection, job, state):
     if state.get('source_only'):
+        return False
+    if routine_triage(connection, job, state):
         return False
     kind = state.get('result_kind')
     if kind is not None:
