@@ -80,7 +80,7 @@ function jobRefreshContext(){
   $:s=>({'#job-dialog':dialog,'#detail':detail,'#refresh-job':refreshButton}[s]||null),
   api:()=>new Promise(resolve=>resolveRequest=resolve),
   captureView:root=>({y:root.scrollTop}),restoreView:(root,saved)=>root.scrollTop=saved.y,
-  esc:x=>String(x??''),badge:()=>'',date:()=>'',readable:()=>'',reviewView:()=>'',returnedResultView:()=>'',btn:()=>'',bindReview:()=>{}};
+  esc:x=>String(x??''),badge:()=>'',date:()=>'',readable:()=>'',reviewView:()=>'',returnedResultView:()=>'',btn:()=>'',bindReview:()=>{},renameJobView:()=>'',bindJobRename:()=>{}};
  vm.createContext(ctx);
  vm.runInContext(source.slice(source.indexOf('function itemTiming('),source.indexOf('function table(')),ctx);
  vm.runInContext(source.slice(source.indexOf('function capacityView('),source.indexOf('async function navigate(')),ctx);
@@ -144,7 +144,7 @@ test('monitor failure is visible, escaped, and clears on recovery',()=>{
 test('resolved job questions disappear from current status while error history remains',async()=>{
  const nodes={'#detail':{innerHTML:''},'#job-dialog':{open:false,showModal(){this.open=true}},'#refresh-job':{}};
  const job={id:'research',org:'Technology',title:'Research',status:'running',project:'',created:'now',request:'Research',brief:{status_summary:'Continuing'},question:'Old access error',approvals:[],files:[],children:[],events:[{id:1,kind:'tool_error',body:'Old access error',created:'then'}]};
- const ctx={handle:fn=>fn,selected:null,api:async()=>job,$:s=>nodes[s]||null,esc:x=>String(x??''),badge:x=>x,date:x=>x,readable:()=>'',btn:()=>'',reviewView:()=>'',returnedResultView:()=>'',bindReview:()=>{},document:{querySelectorAll:()=>[]}};
+ const ctx={handle:fn=>fn,selected:null,api:async()=>job,$:s=>nodes[s]||null,esc:x=>String(x??''),badge:x=>x,date:x=>x,readable:()=>'',btn:()=>'',reviewView:()=>'',returnedResultView:()=>'',bindReview:()=>{},renameJobView:()=>'',bindJobRename:()=>{},document:{querySelectorAll:()=>[]}};
  vm.createContext(ctx);
  vm.runInContext(source.slice(source.indexOf('function itemTiming('),source.indexOf('function table(')),ctx);
  const start=source.indexOf('async function openJob(');

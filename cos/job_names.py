@@ -62,6 +62,8 @@ def source_topic(sources, meeting=False):
 
 
 def display_name(job, brief, sources=()):
+    if job.get('user_name'):
+        return job['user_name']
     for candidate in (brief.get('job_name'), brief.get('email_subject'), brief.get('context'), job.get('title'), brief.get('requested_action'), brief.get('email_excerpt')):
         name = usable_name(candidate)
         if name:
@@ -79,6 +81,11 @@ def add_display_names(store, jobs, briefs=None):
     if not jobs:
         return
     ids = list(dict.fromkeys(job['id'] for job in jobs))
+    marks = ','.join('?' for _ in ids)
+    names = {row['job_id']: row['name'] for row in store.rows(
+        'SELECT job_id,name FROM job_names WHERE job_id IN ('+marks+')', ids)}
+    for job in jobs:
+        job['user_name'] = names.get(job['id'], '')
     if briefs is None:
         marks = ','.join('?' for _ in ids)
         briefs = {row['job_id']: json.loads(row['body']) for row in store.rows(

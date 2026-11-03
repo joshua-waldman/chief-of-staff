@@ -193,6 +193,11 @@ def organization_agents():
         brief=json.loads(agent.pop('brief_body') or '{}')
         agent['status_summary']=brief.get('status_summary','')
         agent['next_step']=brief.get('next_step','')
+    from .job_names import add_display_names
+    add_display_names(store,agents)
+    names={agent['id']:agent['display_name'] for agent in agents}
+    for agent in agents:
+        agent['parent_title']=names.get(agent['parent_id'],agent['parent_title'])
     return agents
 
 @app.get('/api/jobs/{id}')
@@ -205,6 +210,28 @@ def job(id,compact:bool=False):
     from .job_names import add_display_names
     add_display_names(store,[result,*result['children']])
     return result
+
+@app.post('/api/jobs/{id}/rename')
+async def rename_job(id,request:Request):
+    data=await request.json()
+    if not isinstance(data,dict) or not isinstance(data.get('name'),str):
+        raise ValueError('Name must be text.')
+    name=data['name'].strip()
+    if len(name)>120 or any(ord(char)<32 or ord(char)==127 for char in name):
+        raise ValueError('Use a single-line name of at most 120 characters.')
+    return await run_in_threadpool(save_job_name,id,name)
+
+
+def save_job_name(id,name):
+    with store.lock,store.connect() as c:
+        if not c.execute('SELECT 1 FROM jobs WHERE id=?',(id,)).fetchone():
+            raise HTTPException(404,'Job not found')
+        if name:
+            c.execute('INSERT INTO job_names(job_id,name) VALUES(?,?) ON CONFLICT(job_id) DO UPDATE SET name=excluded.name',(id,name))
+        else:
+            c.execute('DELETE FROM job_names WHERE job_id=?',(id,))
+    return {'user_name':name}
+
 
 @app.get('/api/jobs/{id}/events')
 def job_events(id,before:int=0,limit:int=100):

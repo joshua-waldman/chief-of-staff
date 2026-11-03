@@ -1,6 +1,61 @@
 from cos.job_names import compact_name, display_name
 from cos.briefs import update_brief
 from cos.db import Store
+import pytest
+from fastapi.testclient import TestClient
+
+
+def test_user_names_persist_across_updates_and_reset(tmp_path, monkeypatch):
+    from cos import server
+    path = tmp_path/'renames.db'
+    store = Store(path)
+    monkeypatch.setattr(server, 'store', store)
+    parent = store.create_job('Review the release')
+    child = store.create_job('Inspect logs', 'Technology', parent_id=parent['id'])
+    original = store.job(child['id'])
+    client = TestClient(server.app)
+    client.cookies.set('cos_session', server.TOKEN)
+    headers = {'x-cos-token': server.TOKEN}
+    url = '/api/jobs/'+child['id']+'/rename'
+    name = '发布计划 — RE: release 2.0 <review> and all follow-up actions'
+    assert client.post(url, json={'name':name}).status_code == 403
+    assert client.post(url, json={'name':'  '+name+'  '}, headers=headers).status_code == 200
+    assert store.job(child['id']) == original
+    update_brief(store, child, {'job_name':'New automatic label'})
+    monkeypatch.setattr(server, 'store', Store(path))
+    for compact in (False, True):
+        queue = client.get('/api/jobs', params={'compact':compact}).json()
+        assert next(j for j in queue if j['id']==child['id'])['display_name'] == name
+        detail = client.get('/api/jobs/'+parent['id'], params={'compact':compact}).json()
+        assert detail['children'][0]['display_name'] == name
+        assert client.get('/api/jobs/'+child['id'], params={'compact':compact}).json()['user_name'] == name
+    agents = client.get('/api/organization-agents').json()
+    assert next(j for j in agents if j['id']==child['id'])['display_name'] == name
+    assert client.post(url, json={'name':''}, headers=headers).status_code == 200
+    assert client.get('/api/jobs/'+child['id']).json()['display_name'] == 'New automatic label'
+
+
+@pytest.mark.parametrize('payload', [{}, {'name':None}, {'name':False}, {'name':[]},
+    {'name':'x'*121}, {'name':'two\nlines'}, {'name':'null\x00character'}, []])
+def test_rename_rejects_invalid_names(tmp_path, monkeypatch, payload):
+    from cos import server
+    store = Store(tmp_path/'invalid.db')
+    monkeypatch.setattr(server, 'store', store)
+    job = store.create_job('Review release')
+    client = TestClient(server.app)
+    client.cookies.set('cos_session', server.TOKEN)
+    assert client.post('/api/jobs/'+job['id']+'/rename', json=payload,
+                       headers={'x-cos-token':server.TOKEN}).status_code == 400
+    assert not store.rows('SELECT * FROM job_names')
+
+
+def test_rename_missing_job(tmp_path, monkeypatch):
+    from cos import server
+    monkeypatch.setattr(server, 'store', Store(tmp_path/'missing.db'))
+    client = TestClient(server.app)
+    client.cookies.set('cos_session', server.TOKEN)
+    assert client.post('/api/jobs/missing/rename', json={'name':'Name'},
+                       headers={'x-cos-token':server.TOKEN}).status_code == 404
 
 
 def test_compact_names_remove_source_ids_and_bound_length():
