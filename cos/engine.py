@@ -847,6 +847,14 @@ class Engine:
                 raise ValueError('source_only must be a boolean.')
             if task.get('source_only') and task['org'] not in {'Communications','Technology','Engineering'}:
                 raise ValueError('Source readers must use Communications, Technology or Engineering.')
+            required=task.get('required_tools',[])
+            if (not isinstance(required,list) or len(required)>32
+                    or any(not isinstance(tool,str) or not tool or len(tool)>80 for tool in required)):
+                raise ValueError('required_tools must contain at most 32 concrete tool names.')
+            candidate={'org':task['org'],'messages':json.dumps({'source_only':task.get('source_only',False)})}
+            unavailable=sorted({tool for tool in required if not allowed_job_action(candidate,tool)})
+            if unavailable:
+                raise ValueError('Delegated '+task['org']+' worker cannot use required tools: '+', '.join(unavailable)+'. Choose an organization with these read capabilities or split the assignment; restricted source readers cannot delegate or change external state.')
         depth=0
         parent=job
         while parent.get('parent_id'):
@@ -882,7 +890,7 @@ class Engine:
         self.validate_delegation(job,a)
         for t in a['tasks']:
             child=self.store.create_job(t['request'],t['org'],t.get('project',job['project']),job['id'])
-            state={'messages':[]}
+            state={'messages':[],'required_tools':t.get('required_tools',[])}
             if t.get('source_only'):
                 state.update(source_only=True,research_only=True)
             if job['org']=='Technology' or session(job).get('research_only') or (job['org']=='Communications' and research_delegation(a)):

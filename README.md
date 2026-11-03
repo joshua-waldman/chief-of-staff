@@ -424,3 +424,7 @@ pages without discarding the stored history. Background detail refresh pauses
 while the activity timeline is open so loaded history stays in place; use its
 **Refresh** button for the latest events. Restart the server and refresh the browser
 after installing this update. Database query indexes are added on startup.
+
+### Research delegation capabilities
+
+Delegation accepts an optional `required_tools` list for each task. COS checks the entire batch before creating workers and rejects assignments whose organization or source restrictions cannot provide those tools. Restricted Technology source readers can use `fetch_url`, `browser_read`, and `jira_read` to retrieve evidence; the existing host allowlist, redirect validation, organization routing, depth limits, and external-action approval policy still apply. Source readers cannot delegate or perform browser interactions or external writes. Existing source-reader sessions receive the same read capabilities on resumption.
