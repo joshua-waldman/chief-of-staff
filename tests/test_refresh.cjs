@@ -275,3 +275,29 @@ test('inconclusive outcomes retain evidence and do not require owner verificatio
  assert.match(s.detail.html,/No authoritative receipt/);
  assert.doesNotMatch(s.detail.html,/data-resolve|Verified:|Approve exact action/);
 });
+
+
+test('monitor capacity warning explains waiting, recovery and mixed failures',()=>{
+ const ctx={state:{monitor_attention:true,monitor:{state:'scanning',active_source:'teams',sources:{email:{state:'watching'},teams:{state:'needs_attention',error_code:'capacity_wait',error:'No sign-in needed <safe>'}}}},labels:{watching:'Watching',needs_attention:'Needs attention'},esc:x=>String(x??'').replace(/</g,'&lt;'),date:x=>x,btn:()=>'<button>Settings</button>'};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function monitoringAlert('),source.indexOf('function composer(')),ctx);
+ let html=ctx.monitoringAlert();
+ assert.match(html,/<h2>Message processing is waiting for model capacity/);
+ assert.match(html,/retry automatically; no Microsoft sign-in is needed/);
+ assert.match(html,/Teams:<\/b> Waiting for model capacity/);
+ assert.match(html,/Checking recovery/);
+ assert.match(html,/Email:<\/b> Watching/);
+ assert.match(html,/No sign-in needed &lt;safe>/);
+ assert.match(html,/warning clears after both sources/);
+ ctx.state.monitor.sources.teams.error_code='capacity_paused';
+ html=ctx.monitoringAlert();
+ assert.match(html,/<h2>Message processing paused by model capacity limits/);
+ assert.doesNotMatch(html,/retry automatically/);
+ ctx.state.monitor.sources.email={state:'needs_attention',error:'Connection failed'};
+ html=ctx.monitoringAlert();
+ assert.match(html,/<h2>Message monitoring needs attention/);
+ assert.match(html,/Connection failed/);
+ assert.match(html,/Paused by model capacity limits/);
+ ctx.state.monitor_attention=false;
+ assert.equal(ctx.monitoringAlert(),'');
+});

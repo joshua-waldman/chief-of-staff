@@ -8,6 +8,7 @@ from .config import settings,ROOT,gateway_key
 from .db import now,uid
 from .trace import emit
 from .teams_content import text as teams_text
+from .capacity import CapacityDelayed
 
 class Monitor:
     def __init__(self,store):
@@ -228,7 +229,7 @@ class Monitor:
             since=(datetime.fromisoformat(cursor)-timedelta(minutes=2)).isoformat().replace('+00:00','Z')
             started=now()
             self.store.set_state('monitor_status',{**previous,'state':'scanning','attention_required':bool(previous.get('attention_required') or previous.get('state')=='needs_attention'),'started':started,'sources':sources,'active_source':source})
-            old=sources.get(source,{})
+            old={k:v for k,v in sources.get(source,{}).items() if k not in ('error_code','model','retry_at')}
             try:
                 r=subprocess.run([sys.executable,'-m','cos.monitor_bridge',since,source],cwd=ROOT,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=600,**background_options())
                 if r.returncode:
@@ -245,6 +246,13 @@ class Monitor:
                 else:
                     self.store.set_state(key,started)
                     sources[source]={'state':'watching','last_poll':now(),'last_attempt':now(),'new_jobs':added}
+            except CapacityDelayed as error:
+                paused=bool(error.state.get('paused'))
+                message=('Message processing is paused after repeated model capacity limits. Review gateway capacity and retry an affected job to resume model requests.' if paused else
+                         'Waiting for model capacity to process messages. Monitoring will retry automatically; no Microsoft sign-in is needed.')
+                sources[source]={**old,'state':'needs_attention','last_attempt':now(),'new_jobs':0,
+                    'error_code':'capacity_paused' if paused else 'capacity_wait','model':error.model,
+                    'retry_at':error.state.get('retry_at'),'error':message+' Saved checkpoints are unchanged.'}
             except Exception as error:
                 sources[source]={**old,'state':'needs_attention','last_attempt':now(),'new_jobs':0,'error':str(error)[-2500:]}
             emit('monitor.source_completed',{'source':source,'state':sources[source]['state'],'new_jobs':sources[source]['new_jobs'],'failures':len(sources[source].get('failures',[]))},store=self.store)
