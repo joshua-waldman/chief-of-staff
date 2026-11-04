@@ -4,6 +4,7 @@
     "Example Project": "C:/Projects/ExampleProject"
   },
   "monitor_enabled": false,
+  "teams_auth": {},
   "capacity_recovery_seconds": 900,
   "model_parallel_requests": 1,
   "engineering_workflows": {}

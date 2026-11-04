@@ -301,9 +301,86 @@ def test_summary_read_http_requires_explicit_source_approval(tmp_path,monkeypatc
     assert client.post(url,json=body).status_code==403
     response=client.get('/api/jobs/'+job['id']).json()
     assert response['read_targets'][0]['args']['id']=='mail'
+    store.update(job['id'], messages=json.dumps({'messages': [], 'optional_read_warning': 'Cleanup rejected'}))
+    compact=client.get('/api/jobs/'+job['id']+'?compact=true').json()
+    assert compact['optional_read_warning']=='Cleanup rejected'
+    assert 'messages' not in compact
     response=client.post(url,json=body,headers={'x-cos-token':server.TOKEN})
     assert response.status_code==200
     approval=store.one('SELECT * FROM approvals WHERE id=?',(response.json()['approval_id'],))
     assert approval['status']=='pending'
     assert approval['tool']=='mark_email_read'
     assert client.post(url,json=body,headers={'x-cos-token':server.TOKEN}).status_code==400
+
+
+@pytest.mark.parametrize('outcome', ['rejected', 'timeout'])
+def test_optional_read_failure_preserves_summary_and_distinguishes_uncertainty(tmp_path, outcome):
+    from cos.message_triage import request_read
+    from cos.integrations import CommunicationRejected
+    store = Store(tmp_path/'optional.db')
+    job = informational(store)
+    engine = Engine(store)
+    calls = []
+    def execute(*args):
+        calls.append(args)
+        if outcome == 'rejected':
+            raise CommunicationRejected('Graph API 403: requires Chat.ReadWrite')
+        raise TimeoutError('Outcome unknown')
+    engine.tools.execute = execute
+    try:
+        request = request_read(store, job['id'], 'mark_email_read', 'mail')
+        engine.decide(request['approval_id'], True)
+        updated = store.job(job['id'])
+        assert updated['result'] == job['result']
+        assert len(calls) == 1
+        if outcome == 'rejected':
+            assert updated['status'] == 'completed'
+            assert updated['question'] == ''
+            assert 'optional mark-as-read failed' in json.loads(updated['messages'])['optional_read_warning']
+            assert store.detail(job['id'])['approvals'][0]['status'] == 'failed_not_executed'
+        else:
+            assert updated['status'] == 'blocked'
+            assert store.detail(job['id'])['approvals'][0]['status'] == 'uncertain'
+        with pytest.raises(ValueError, match='already'):
+            engine.decide(request['approval_id'], True)
+        assert len(calls) == 1
+    finally:
+        engine.stop()
+
+
+def test_startup_repairs_only_definitive_optional_read_failure(tmp_path):
+    from cos.db import now
+    store = Store(tmp_path/'repair.db')
+    job = informational(store)
+    error = 'Graph API 403: requires Chat.ReadWrite'
+    store.write("INSERT INTO approvals(id,job_id,tool,args,risk,reason,status,created,result) VALUES(?,?,?,?,?,?,?,?,?)",
+                ('failed-read', job['id'], 'mark_teams_read', '{}', 'low', 'Read', 'failed_not_executed', now(), error))
+    store.update(job['id'], status='waiting_input', question='Action was not executed. Check permissions. '+error)
+    reopened = Store(tmp_path/'repair.db')
+    assert reopened.job(job['id'])['status'] == 'completed'
+    assert reopened.job(job['id'])['result'] == job['result']
+    assert reopened.detail(job['id'])['approvals'][0]['status'] == 'failed_not_executed'
+    assert len(reopened.rows("SELECT * FROM events WHERE job_id=? AND kind='not_executed'", (job['id'],))) == 1
+    Store(tmp_path/'repair.db')
+    assert len(reopened.rows("SELECT * FROM events WHERE job_id=? AND kind='not_executed'", (job['id'],))) == 1
+
+
+@pytest.mark.parametrize('guard', ['obligation', 'incoming', 'incomplete', 'child', 'uncertain'])
+def test_optional_cleanup_repair_preserves_real_attention(tmp_path, guard):
+    from cos.db import now
+    from cos.optional_cleanup import complete_rejected_read
+    store = Store(tmp_path/'guard.db')
+    job = informational(store)
+    if guard == 'obligation':
+        update_brief(store, job, {'action_needed': 'yes', 'requested_action': 'Investigate'})
+    elif guard == 'incoming':
+        store.write('INSERT INTO communication_inbox(job_id,body,created) VALUES(?,?,?)', (job['id'], 'New evidence', now()))
+    elif guard == 'incomplete':
+        store.write('UPDATE communication_sources SET complete=0 WHERE job_id=?', (job['id'],))
+    elif guard == 'child':
+        store.create_job('Unfinished work', 'Technology', parent_id=job['id'])
+    else:
+        store.write("INSERT INTO approvals(id,job_id,tool,args,risk,reason,status,created) VALUES(?,?,?,?,?,?,?,?)",
+                    ('uncertain', job['id'], 'mark_teams_read', '{}', 'low', 'Read', 'uncertain', now()))
+    with store.connect() as connection:
+        assert not complete_rejected_read(connection, job, {}, 'mark_teams_read', 'Rejected')

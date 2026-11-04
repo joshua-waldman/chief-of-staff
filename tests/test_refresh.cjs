@@ -301,3 +301,15 @@ test('monitor capacity warning explains waiting, recovery and mixed failures',()
  ctx.state.monitor_attention=false;
  assert.equal(ctx.monitoringAlert(),'');
 });
+
+
+test('failed optional cleanup is escaped and preserves completed summary display',async()=>{
+ const s=jobRefreshContext();
+ s.ctx.esc=x=>String(x??'').replace(/</g,'&lt;');
+ const pending=s.ctx.openJob('job');
+ s.respond('Summary',{result:'Preserved summary',optional_read_warning:'Missing permission <script>'});
+ await pending;
+ assert.match(s.detail.html,/Optional cleanup unavailable/);
+ assert.match(s.detail.html,/Missing permission &lt;script>/);
+ assert.ok(!s.detail.html.includes('Decision or information needed'));
+});

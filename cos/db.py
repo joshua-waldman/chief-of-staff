@@ -116,6 +116,8 @@ class Store:
                         if not reviewable:
                             c.execute('UPDATE result_reviews SET eligible=0 WHERE job_id=?',(job['id'],))
             reconcile(c)
+            from .optional_cleanup import reconcile as reconcile_optional_cleanup
+            reconcile_optional_cleanup(c)
 
     @contextmanager
     def connect(self):

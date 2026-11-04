@@ -20,7 +20,7 @@ from .db import Store,uid,now
 from .engine import Engine,session
 from .monitor import Monitor
 from .timing import TimingAssessor
-from .integrations import skill_inventory,mcp_inventory,auth_status,skill_dir
+from .integrations import skill_inventory,mcp_inventory,auth_status,skill_dir,teams_read_status
 from .tools import file_record,workspace,safe_name
 from .provider import Gateway
 from .trace import emit,context,failure,bundle
@@ -207,6 +207,7 @@ def job(id,compact:bool=False):
         raise HTTPException(404,'Job not found')
     from .message_triage import read_targets
     result['read_targets']=read_targets(store,result)
+    result['optional_read_warning']=store.one("SELECT json_extract(messages,'$.optional_read_warning') AS warning FROM jobs WHERE id=?",(id,))['warning'] or ''
     from .job_names import add_display_names
     add_display_names(store,[result,*result['children']])
     return result
@@ -372,7 +373,7 @@ def download(id):
 @app.get('/api/connections')
 def connections():
     from .github import connection_status
-    return {'gateway':{'configured':bool(gateway_key()),'url':settings()['gateway_url']},'microsoft':auth_status(),'github':connection_status(),'skills':skill_inventory(),'mcp':mcp_inventory(),'sandbox':{'available':bool(shutil.which('docker'))},'auth_flow':auth}
+    return {'gateway':{'configured':bool(gateway_key()),'url':settings()['gateway_url']},'microsoft':auth_status(),'teams_read':teams_read_status(),'github':connection_status(),'skills':skill_inventory(),'mcp':mcp_inventory(),'sandbox':{'available':bool(shutil.which('docker'))},'auth_flow':auth}
 
 @app.post('/api/settings')
 async def update_settings(request:Request):
@@ -402,12 +403,27 @@ def test_gateway():
 
 @app.post('/api/auth/start')
 def start_auth():
+    return start_auth_flow(False)
+
+
+@app.post('/api/auth/teams/start')
+def start_teams_auth():
+    from .teams_auth import validate_config
+    config=settings()['teams_auth']
+    validate_config(config)
+    if not config:
+        raise HTTPException(400,'Save the approved Teams app client and tenant IDs first.')
+    return start_auth_flow(True)
+
+
+def start_auth_flow(teams):
     if auth['running']:
         return {'ok':True}
     auth.update(running=True,output='')
     def run():
         try:
-            p=subprocess.Popen([sys.executable,'-u',str(skill_dir('slai-email')/'scripts/auth.py')],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace',**background_options())
+            command=[sys.executable,'-u','-m','cos.teams_auth'] if teams else [sys.executable,'-u',str(skill_dir('slai-email')/'scripts/auth.py')]
+            p=subprocess.Popen(command,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace',**background_options())
             for line in p.stdout:
                 auth['output']=(auth['output']+line)[-12000:]
             p.wait()
