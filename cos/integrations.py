@@ -78,6 +78,13 @@ def run_skill(name,script,args, timeout=90):
     except json.JSONDecodeError:
         return result.stdout[-20000:]
 
+def teams_read_status():
+    try:
+        return communication('teams_read_status', {})
+    except Exception:
+        return {'configured':False,'available':False,'summary':'Teams mark-as-read permissions could not be checked. Check Microsoft authentication and installed skills.'}
+
+
 def auth_status():
     try:
         return run_skill('slai-email','auth.py',['--status','--json'],30)

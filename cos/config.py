@@ -21,6 +21,7 @@ DEFAULTS = {
     'self_email': '',
     'projects': {},
     'github_accounts': {},
+    'teams_auth': {},
     'engineering_workflows': {},
     'skill_roots': [str(Path.home()/'.claude/skills'), str(Path.home()/'.codex/skills')],
     'mcp_configs': [str(Path(os.environ.get('LOCALAPPDATA', '')) / 'Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude-3p/claude_desktop_config.json')],
@@ -45,6 +46,8 @@ def save_settings(changes):
     validate_workflows(s['engineering_workflows'],s['projects'])
     from .github import validate_accounts
     validate_accounts(s['github_accounts'])
+    from .teams_auth import validate_config
+    validate_config(s['teams_auth'])
     if s['gateway_url'] != DEFAULTS['gateway_url']:
         raise ValueError('Only the verified AMD Unified gateway is enabled')
     s['parallel_agents'] = max(1, min(12, int(s['parallel_agents'])))

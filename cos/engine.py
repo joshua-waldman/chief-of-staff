@@ -1265,6 +1265,10 @@ class Engine:
                     s.pop('waiting_action',None)
                     call=s.pop('waiting_call',None)
                     if call: self.add_result(s['messages'],call,{'not_executed':True,'error':str(error)[:3000]})
+                    from .optional_cleanup import complete_rejected_read
+                    with self.store.lock,self.store.connect() as c:
+                        if complete_rejected_read(c,self.store.job(job['id']),s,approval['tool'],str(error)):
+                            return
                     self.persist(job['id'],s,status='waiting_input',question='Action was not executed. Check the source, connection or permissions, then request fresh approval. '+str(error)[:1500])
                     self.store.event(job['id'],'not_executed',approval['tool']+': '+str(error)[:3000])
                     return
@@ -1295,6 +1299,7 @@ class Engine:
             recovery.record(self.store,job['id'],s,approval['tool'],args,result,receipt_id=aid)
         self.add_result(s['messages'],s.pop('waiting_call'),result)
         if s.pop('summary_read_approval',False):
+            s.pop('optional_read_warning',None)
             self.persist(job['id'],s,status='completed',question='')
             self.store.event(job['id'],'approved' if approved else 'rejected',approval['tool'])
             return

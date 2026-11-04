@@ -13,6 +13,7 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from urllib.parse import quote, urlparse
 from .integrations import skill_dir
+from .teams_auth import read_client, status as teams_read_status, SETUP
 
 
 class PlainText(HTMLParser):
@@ -148,6 +149,8 @@ def reply_history(graph, original):
 
 
 def perform(graph, action, a):
+    if action=='teams_read_status':
+        return teams_read_status(graph)
     if action=='verify_action':
         return verify_action(graph,a)
     if action=='teams_attachments':
@@ -222,7 +225,16 @@ def perform(graph, action, a):
     elif action=='mark_email_read':
         graph.patch('/me/messages/'+ident(a['id']),{'isRead':True})
     elif action=='mark_teams_read':
+        shared=graph
+        try:
+            graph=read_client(shared)
+        except ValueError:
+            raise
+        except Exception as error:
+            raise ValueError('Teams authentication failed before mark-as-read was attempted. Check Connections and encrypted credential storage.') from error
         owner=graph.get('/me',params={'$select':'id'})
+        if graph is not shared and shared.get('/me',params={'$select':'id'})['id'] != owner['id']:
+            raise ValueError('The Teams sign-in must use the same account as the shared Microsoft connection. Sign in again in Connections.')
         graph.post('/chats/'+ident(a['chat_id'])+'/markChatReadForUser',{'user':{'id':owner['id']}})
     else: raise ValueError('Unsupported communication action.')
     return {'executed':True,'operation':action,'source_id':a.get('id') or a.get('chat_id'),'response':a.get('response'),'send_response':a.get('send_response',True) if action=='calendar_rsvp' else None}
@@ -239,6 +251,8 @@ def main():
             result=perform(stable_mail_client(GraphClient),payload['action'],payload['arguments'])
     except (Exception,SystemExit) as error:
         message=errors.getvalue() or str(error)
+        if payload['action']=='mark_teams_read' and 'Graph API 403:' in message and 'Chat.ReadWrite' in message:
+            message=SETUP+' '+message
         result={'bridge_error':message,'not_executed':isinstance(error,ValueError) or bool(re.search(r'Graph API (?:400|401|403|404|405|409|412|422):',message))}
     print(json.dumps(result,ensure_ascii=False))
 

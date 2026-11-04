@@ -483,3 +483,21 @@ On restart, unstarted pending workspace-script actions with the older generic
 host-command approval reason are superseded and queued for fresh automatic review.
 Review denials and uncertain or previously executed actions are retained. No
 pending approval is treated as evidence that the script executed.
+
+
+### Optional Teams mark-as-read authentication
+
+A Teams summary can finish even if optional mark-as-read is rejected. The job keeps its summary and a cleanup warning; rejected actions remain recorded as not executed. On restart, COS repairs old informational jobs stuck solely on a definitive read rejection. New source activity, incomplete sources, unfinished delegated work, and uncertain action outcomes retain their existing handling. Nothing is replayed during repair.
+
+The Graph `markChatReadForUser` endpoint requires delegated `Chat.ReadWrite`; `ChatMessage.Send` does not cover it. The installed shared Microsoft skill sign-in may lack this permission. Repeating that sign-in does not add tenant consent.
+
+To enable the optional separate connection:
+
+1. Have your tenant administrator provide an organization-approved, single-tenant Entra app registration. Add Microsoft Graph **delegated** permissions `Chat.ReadWrite` and `User.Read`, grant consent according to tenant policy, and enable **Authentication → Allow public client flows**. This uses MSAL device code authentication; no client secret is needed. Application-only authentication is not supported by the mark-as-read API.
+2. Install updated dependencies with `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`, then restart COS.
+3. In **Connections → Teams mark-as-read**, save the app's Application (client) ID and Directory (tenant) ID. Select **Sign in to Teams app** and follow the instructions in the Microsoft 365 panel. Sign in with the same account as the shared Microsoft connection.
+4. Request and approve a fresh, exact mark-as-read action. Saving configuration or signing in never approves or retries an action.
+
+The separate MSAL cache is encrypted by Windows DPAPI under `%LOCALAPPDATA%/AMD-ChiefOfStaff/teams-auth`, outside the OneDrive workspace. On other supported hosts, MSAL Extensions requires an available encrypted OS credential store; COS does not fall back to plaintext. Cache files are isolated by tenant and client ID. Clearing both IDs restores the shared connection. Outlook, source reads, and message sends continue using the installed skills.
+
+References: [Graph markChatReadForUser permissions](https://learn.microsoft.com/en-us/graph/api/chat-markchatreadforuser?view=graph-rest-1.0), [register a public desktop client](https://learn.microsoft.com/en-us/entra/identity-platform/scenario-desktop-app-registration), [MSAL token acquisition](https://learn.microsoft.com/en-us/entra/msal/python/getting-started/acquiring-tokens).
