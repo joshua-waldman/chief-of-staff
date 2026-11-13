@@ -50,6 +50,20 @@ def test_any_installed_skill_sources_and_dependencies_are_reviewed(env):
     assert args['_preparation_review']
 
 
+@pytest.mark.parametrize('launcher', [['python'], ['python3'], ['py', '-3'], ['py.exe', '-3']])
+def test_python_launchers_capture_sources_and_execute_with_server_python(env, launcher):
+    import sys
+    store, job, script, _ = env
+    _, args, reviewer = review(env, args={'command': [*launcher, str(script), '--json']})
+    operation = json.loads(reviewer.calls[0][0][1]['content'])['operation']
+    assert len(operation['sources']) == 2
+    snapshot = prep.consume(store, job, 'run_command', args)
+    command = prep.command_for(job, snapshot)
+    assert command[0] == sys.executable
+    assert command[1].endswith('lookup.py')
+    assert command[2:] == ['--json']
+
+
 @pytest.mark.parametrize('change', ['entry', 'dependency', 'arguments', 'contract'])
 def test_changed_reviewed_operation_cannot_execute(env, monkeypatch, change):
     store, job, script, _ = env

@@ -24,9 +24,12 @@ DENIED = {'eval', 'exec', 'compile', '__import__', 'globals', 'locals', 'vars',
 def invocation(command):
     if not isinstance(command, list) or not all(isinstance(x, str) for x in command):
         return None
-    if not command or PureWindowsPath(command[0]).name.lower() not in {'python', 'python.exe', 'python3', 'python3.exe'}:
+    if not command or PureWindowsPath(command[0]).name.lower() not in {'python', 'python.exe', 'python3', 'python3.exe', 'py', 'py.exe'}:
         return None
     values = command[1:]
+    # The Windows launcher selects Python 3; execution still uses COS's interpreter.
+    if PureWindowsPath(command[0]).name.lower() in {'py', 'py.exe'} and values and values[0] == '-3':
+        values = values[1:]
     while values and values[0] in {'-B', '-u'}:
         values = values[1:]
     return values if values and not values[0].startswith('-') and values[0].endswith('.py') else None
