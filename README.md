@@ -92,7 +92,7 @@ Context recovery automatically releases the last visual input when required text
 
 Public research follows a bounded number of redirects, validating each destination against the exact host allowlist and public HTTPS requirements. Microsoft Learn Graph documentation may use the `view` and `tabs` display selectors; arbitrary query strings remain blocked. Successful source reads are saved as immutable evidence files and carried through context recovery. A successful retry or browser fallback clears its matching current error, while unrelated failures and the historical activity log remain available. Resuming a job replaces its stale status and question; completion shows the final result.
 
-Agent context is scoped to the current task. Delegation starts fresh child contexts with a focused request and only explicitly selected `file_ids` (up to 16 per child); no files are copied by default. Parent history and recovery archives are excluded. Children select output `file_ids` when calling `finish`, so only declared deliverables return to the parent. Technology research delegation proceeds without approval for external reads and COS-local findings and deliverables. Research restrictions persist through delegated work; external changes, including routine Jira writes from research jobs, require action approval. Other Communications delegation and subsequent sends retain their separate exact-action approvals. On restart, pending research-only delegation approvals and Technology jobs stopped solely to confirm the old delegation approval rule are queued for reassessment; substantive questions and uncertain actions remain waiting.
+Agent context is scoped to the current task. Delegation starts fresh child contexts with a focused request and only explicitly selected `file_ids` (up to 16 per child); no files are copied by default. Parent history and recovery archives are excluded. Children select output `file_ids` when calling `finish`, so only declared deliverables return to the parent. Technology research delegation proceeds without approval for external reads and COS-local findings and deliverables. Research restrictions persist through delegated work; external changes, including routine Jira writes from research jobs, require action approval. All organizations may delegate preparation without approval; every external change, including all Jira writes, retains exact-action approval. On restart, pending delegation approvals and Technology jobs stopped solely to confirm the old delegation approval rule are queued for reassessment; substantive questions and uncertain actions remain waiting.
 
 Artifact links in delegated requests must have their corresponding job-local file IDs selected in `file_ids`. Missing selections are rejected before any child starts, with a local ID hint when available. Selected links are rewritten to the child's copies. `read_file` accepts local paths, attached IDs and `/api/files/ID` links; older links resolve only when a matching artifact is already registered in the current job. Links alone never grant access to another job's files.
 
@@ -434,56 +434,46 @@ Delegation accepts an optional `required_tools` list for each task. COS checks t
 Owner feedback can explicitly remember guidance for one source sender across conversations. Choose a recorded identity in the review form; COS previews its source, label, and exact email address or Teams contact ID. Sender scope is separate from conversation scope, and is editable in Knowledge base. Display names, quoted headers, and message bodies never establish sender identity. Existing rules and pending suggestions keep their current scope. Older jobs without a stable identity require source refresh before sender scope is available. Sender bindings preserve the guidance text, conditions and exceptions; they do not authorize sends or deletes. Mixed-sender email batches always fall back to normal triage when a sender rule is cited.
 
 
-### Automatic local action review
+### Preparation and external-change approvals
 
-`approval_mode` defaults to `auto_review`. Known Self-Improvement checks run
-without interruption, including tests under `tests/`, `stage/`, and `staged/`.
-For Engineering jobs, an independent gateway call reviews recognized Python
-pytest/unittest checks, feature branch creation, and staged patches against the
-persisted owner request, authenticated review feedback, and exact action. It has
-no execution tools and receives no worker conversation or retrieved knowledge.
-Only this job workspace and its registered project qualify. Patch previews and
-existing hash, feature-branch, organization, and unresolved-outcome checks still
-apply. Recognized Python tests use the server interpreter. This is host execution,
-not a sandbox. Automatic decisions appear in job history and action receipts.
+COS autonomously performs task-related reads, searches, analysis, delegation,
+validation and preparation of drafts and artifacts inside COS. Approval belongs
+at the point an operation would change something outside COS, after the concrete
+proposal has been prepared. This boundary applies to every organization and
+nested worker, regardless of service or tool. A task with multiple external
+changes needs approval for each concrete change; approval of preparation or a
+parent task never grants blanket permission to its children.
 
-Unclear, malformed, oversized or unavailable reviews fall back to the existing
-exact-action approval UI. Research-only and source-only restrictions remain in
-force. External sends, Confluence writes, publishing, merges, deployments,
-deletion, imported MCP operations and unrecognized host commands still require
-approval. Incoming messages and attachments cannot grant authorization.
-In Connections, choose **Approve local work for me** or **Ask for approval**.
-Setting `approval_mode` to `manual` disables this additional reviewer; the existing routine-action allowances remain active. Restart the server
-to load updated code. Startup retires provably unstarted pending Self-Improvement
-test approvals, including the previously unrecognized `stage/` command, and queues
-the job to continue. Executed or uncertain actions are never replayed by this rule.
+All Jira creates, edits and comments require approval, as do calendar changes,
+invitations, messages, mark-read, deletion, Confluence writes, project branches
+and patches, publishing, merging and deployment. COS-local artifacts and native
+Self-Improvement changes to COS retain their local allowances.
 
+`approval_mode` defaults to `auto_review`. Native reads and delegation run
+immediately. Flexible commands, installed-skill Python scripts, imported MCP
+calls and browser interactions can receive independent effects review. The
+reviewer inspects exact arguments and available complete Python sources/local
+dependencies or the actual imported tool contract. Read-only operations can use
+query POSTs; the decision concerns effects rather than HTTP method or tool name.
+A worker's description or MCP read-only hint cannot grant authorization. Reviewed
+operations receive a job-scoped single-use token; changed arguments, dependencies
+or tool contracts invalidate it. Skill scripts run copies of inspected sources
+with the server interpreter. This review is a model-based control, not a sandbox;
+it is not a guarantee that arbitrary programs have no side effects. Unknown or
+opaque effects and unavailable/malformed reviews return a replanning error; COS
+uses another verifiable read route or reports the specific blocker. Uncertainty
+alone does not request owner approval. A classified external change does.
+Automatically reviewed browser navigation also blocks non-read HTTP methods and
+WebSockets, so some interactive search pages may still need manual review.
 
-Workspace Python artifact builders (for example `python build_workbook.py`) now
-qualify for automatic source review. COS supplies the full script, recursively
-resolved local Python imports, and installed library identities to the reviewer.
-The supported installed artifact libraries are openpyxl, python-docx,
-python-pptx and pypdf, along with a limited set of standard libraries. Arguments are included in review and passed as data to the captured script. Dynamic
-execution, opaque imports, interpreter switches other than
-`-B`/`-u`, oversized sources and reflective code retain manual approval.
-
-An allowed script runs with the server interpreter in isolated mode, using
-captured source for the entry point and local imports. Changed sources, imports,
-command, working directory or library identities require fresh review. A
-server-owned bundle digest protects captured code at launch. Runtime audit guards
-limit writes and reads to the job workspace and an isolated temporary directory
-(plus read-only Python/library files),
-block credential/reserved files, executable outputs, network calls, subprocesses,
-links and permission changes, and register generated artifacts. These are Python
-runtime guards, not an OS sandbox. Server-installed libraries remain trusted.
-Research-only jobs can create guarded COS-local artifacts; source-only and
-historical readers cannot execute scripts. External action gates still apply.
-
-On restart, unstarted pending workspace-script actions with the older generic
-host-command approval reason are superseded and queued for fresh automatic review.
-Review denials and uncertain or previously executed actions are retained. No
-pending approval is treated as evidence that the script executed.
-
+In Connections, **Review preparation automatically** enables this effects review;
+**Review flexible tools manually** retains manual review of flexible operations.
+Native read and delegation allowances apply in both modes. Findings and review
+reasons remain in job history. On restart, provably unstarted legacy delegation
+approvals and eligible pending flexible actions are queued for reassessment;
+executing and uncertain actions are never replayed. A previous preparation-review
+stop is not repeatedly resumed automatically. Pending external-write approvals
+remain pending. Restart the server and refresh the browser after updating.
 
 ### Optional Teams mark-as-read authentication
 

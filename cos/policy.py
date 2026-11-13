@@ -9,8 +9,8 @@ class Decision:
     reason: str
 
 ALWAYS = {'send_email','reply_email','send_teams','confluence_write','merge_code','deploy_code','delete_file','publish','run_command','install_dependencies','browser_action','apply_changes'}
-ALWAYS |= {'calendar_rsvp','delete_email','mark_email_read','mark_teams_read','create_feature_branch'}
-LOW = {'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','create_skill','create_organization','delegate','ask_user','finish','fetch_url','search_mail','read_mail','list_chats','read_teams','meeting_artifacts','meeting_transcripts','save_meeting_summary','jira_read','jira_write','list_skills','read_skill','mcp_list_tools','run_sandbox','run_python','mail_attachments','teams_attachments','browser_read'}
+ALWAYS |= {'calendar_rsvp','delete_email','mark_email_read','mark_teams_read','create_feature_branch','jira_write'}
+LOW = {'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','create_skill','create_organization','delegate','ask_user','finish','fetch_url','search_mail','read_mail','list_chats','read_teams','meeting_artifacts','meeting_transcripts','save_meeting_summary','jira_read','list_skills','read_skill','mcp_list_tools','run_sandbox','run_python','mail_attachments','teams_attachments','browser_read'}
 LOW |= {'calendar_events','calendar_event','search_commitments','record_commitment','add_commitment_evidence'}
 LOW |= {'read_action_receipt','edit_file'}
 LOW |= {'repository_connections','repository_search','repository_read','repository_tree'}
@@ -31,10 +31,8 @@ def classify(tool,args,org=None,research_only=False):
         return Decision('high',True,'Research authorizes external reads and COS-local outputs only; external writes require approval.')
     if tool=='delegate' and research_only:
         return Decision('low',False,'Delegated research inherits the restriction to external reads and COS-local outputs.')
-    if tool=='delegate' and org=='Communications':
-        if research_delegation(args):
-            return Decision('low',False,'Research may read external sources and produce COS-local findings without delegation approval.')
-        return Decision('high',True,'Review delegated work beyond Technology research before starting it.')
+    if tool=='delegate':
+        return Decision('low',False,'Delegation prepares work inside COS; each child retains its own external-change approval gates.')
     if autonomous_check(org,tool,args):
         return Decision('low',False,'Self-Improvement local tests are authorized; the server selects its Python interpreter and validates the working directory.')
     if org=='Self-Improvement' and tool=='apply_changes':
@@ -44,14 +42,11 @@ def classify(tool,args,org=None,research_only=False):
     if tool=='install_dependencies' and trusted_packages(args.get('packages',[])):
         return Decision('low',False,'Known registry packages are installed as binary wheels into the job-local dependencies directory.')
     if tool in ALWAYS:
-        return Decision('high',True,'Approval is required for sends, Confluence, publishing, merging, deployment, deletion, and unrestricted host commands.')
+        reason=('The operation needs effects review before execution.' if tool in {'run_command','browser_action','install_dependencies'}
+                else 'This action changes state outside COS. Review the complete proposed change before execution.')
+        return Decision('high',True,reason)
     if tool == 'mcp_call':
         return Decision('high',True,'Review the exact imported operation before it runs.')
-    if tool == 'jira_write':
-        if args.get('operation') not in {'comment','edit','create'}:
-            return Decision('high',True,'Non-routine Jira operation.')
-        if args.get('operation') == 'edit' and set(args.get('fields',{}))-{'summary','description','labels'}:
-            return Decision('high',True,'This Jira edit changes fields outside the low-risk set.')
     if tool in LOW:
         return Decision('low',False,'Routine work authorized by the user.')
     raise ValueError('Unknown tool: '+tool)

@@ -50,8 +50,8 @@ def test_jira_review_feedback_is_owner_direction_not_a_conflicting_disclaimer(tm
     persisted=json.dumps(session(s.job(job['id'])))
     assert 'Yes I approve posting this to the Jira ticket.' in persisted
     assert 'This message is not send approval' not in persisted
-    assert 'Do not request a magic approval phrase' in REVIEW_POLICY
-    assert 'dedicated exact-action approval buttons' in REVIEW_POLICY
+    from cos.policy import classify
+    assert classify('jira_write', {'operation': 'comment'}, 'Engineering').approval
     assert not s.rows('SELECT * FROM approvals')
     e.stop()
 
@@ -65,6 +65,10 @@ def test_jira_write_failure_never_blindly_repeats_a_comment(tmp_path,monkeypatch
         raise TimeoutError('Response timed out')
     monkeypatch.setattr(e.tools,'execute',timeout)
     job=s.create_job('Post approved comment','Engineering');e.run(job['id'])
+    assert not called
+    assert s.job(job['id'])['status']=='awaiting_approval'
+    approval=s.one("SELECT id FROM approvals WHERE job_id=? AND status='pending'",(job['id'],))
+    e.decide(approval['id'],True)
     assert called==[True]
     assert s.job(job['id'])['status']=='blocked'
     assert s.one('SELECT status FROM approvals WHERE job_id=?',(job['id'],))['status']=='uncertain'
