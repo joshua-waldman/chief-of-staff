@@ -153,29 +153,32 @@ def test_engine_executes_only_after_allow_and_records_receipt(env, monkeypatch, 
     job, args = candidate(store)
     reviewer = Reviewer(json.dumps({'allow': allow, 'reason': 'Reviewed exact local test.'}))
     engine = Engine(store, Scripted(perform('run_command', args),
-                    perform('finish', {'summary': 'Verified.'})), review_provider=reviewer)
+                    perform('finish', {'summary': 'Verification finished or its evidence limitation reported.'})), review_provider=reviewer)
     calls = []
     monkeypatch.setattr(engine.tools, 'execute', lambda job, action, args: calls.append(action) or {'exit_code': 0})
     try:
         engine.run(job['id'])
         receipt = store.one("SELECT * FROM approvals WHERE tool='run_command'")
-        assert receipt['status'] == ('executed' if allow else 'pending')
-        assert receipt['reason'].startswith('Automatic review:')
+        if allow:
+            assert receipt['status'] == 'executed'
+            assert receipt['reason'].startswith('Automatic review:')
+        else:
+            assert receipt is None  # Unclassified preparation replans, without asking for approval.
         assert calls == (['run_command'] if allow else [])
-        assert store.job(job['id'])['status'] == ('completed' if allow else 'awaiting_approval')
+        assert store.job(job['id'])['status'] == 'completed'
     finally:
         engine.stop()
 
 
 @pytest.mark.parametrize('action', ['create_feature_branch', 'apply_changes'])
-def test_branch_and_exact_patch_can_receive_automatic_review(env, action):
+def test_external_branch_and_patch_require_exact_owner_approval(env, action):
     store, project, options = env
     job, unused = candidate(store)
     args = {'branch': 'codex/feature'} if action == 'create_feature_branch' else {
         '_review_diffs': [{'target': str(project / 'app.py'), 'diff': '+ requested change'}]}
     reviewer = Reviewer()
-    assert not decide(store, job, args, reviewer, action).approval
-    assert len(reviewer.calls) == 1
+    assert decide(store, job, args, reviewer, action).approval
+    assert not reviewer.calls
 
 
 def test_cross_project_patch_and_oversized_review_stay_manual(env):

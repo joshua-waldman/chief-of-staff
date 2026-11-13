@@ -35,7 +35,7 @@ def test_risk_policy():
         assert classify(action,{}).approval
     for action in ['write_file','create_document','create_presentation','run_sandbox']:
         assert not classify(action,{}).approval
-    assert not classify('jira_write',{'operation':'comment'}).approval
+    assert classify('jira_write',{'operation':'comment'}).approval
     assert classify('jira_write',{'operation':'edit','fields':{'assignee':'other'}}).approval
     with pytest.raises(ValueError):
         classify('unknown',{})

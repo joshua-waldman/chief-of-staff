@@ -72,7 +72,7 @@ def test_meeting_tools_are_read_or_local_and_actions_keep_approval():
     for tool in ('meeting_transcripts', 'save_meeting_summary'):
         assert allowed_action('Communications', tool)
         assert not classify(tool, {}).approval
-    assert classify('delegate', {}, 'Communications').approval
+    assert not classify('delegate', {}, 'Communications').approval
     assert classify('send_teams', {}).approval
 
 

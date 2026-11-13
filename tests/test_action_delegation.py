@@ -9,6 +9,17 @@ from cos.reviews import submit
 from cos.tools import Tools, allowed_job_action
 
 
+def legacy_pending(engine, job):
+    from cos import engine as module
+    from cos.policy import Decision
+    original = module.classify
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(module, 'classify', lambda action, args, **kwargs:
+                      Decision('high', True, 'Legacy delegation gate') if action == 'delegate'
+                      else original(action, args, **kwargs))
+        run(engine, job)
+
+
 def proposal():
     return {'tasks': [
         {'org': 'Technology', 'request': 'Research the requested options; return sources and a comparison.'},
@@ -17,23 +28,17 @@ def proposal():
 
 
 def test_communications_delegation_policy_is_contextual():
-    assert classify('delegate', {}, org='Communications').approval
+    assert not classify('delegate', {}, org='Communications').approval
     assert not classify('delegate', {}, org='Technology').approval
 
 
 def test_approved_delegation_waits_for_results_and_separate_send_review(store):
     engine = Engine(store, Scripted(perform('delegate', proposal())))
     job = store.create_job('Handle the work requested in this message', 'Communications')
-    assert run(engine, job)['status'] == 'awaiting_approval'
-    assert not store.rows('SELECT * FROM jobs WHERE parent_id=?', (job['id'],))
-    approval = store.rows("SELECT * FROM approvals WHERE status='pending'")[0]
-    assert json.loads(approval['args']) == proposal()
-    engine.decide(approval['id'], True)
-    assert store.job(job['id'])['status'] == 'waiting_children'
+    assert run(engine, job)['status'] == 'waiting_children'
+    assert not store.rows("SELECT * FROM approvals WHERE status='pending'")
     children = store.rows('SELECT * FROM jobs WHERE parent_id=?', (job['id'],))
     assert len(children) == 2
-    with pytest.raises(ValueError):
-        engine.decide(approval['id'], True)
     for child in children:
         engine.provider = Scripted(perform('finish', {'summary': 'Verified deliverable returned'}))
         assert run(engine, child)['status'] == 'completed'
@@ -48,7 +53,7 @@ def test_approved_delegation_waits_for_results_and_separate_send_review(store):
 def test_rejected_or_stale_delegation_never_starts_work(store, change):
     engine = Engine(store, Scripted(perform('delegate', proposal())))
     job = store.create_job('Handle incoming requested work', 'Communications')
-    run(engine, job)
+    legacy_pending(engine, job)
     approval = store.rows("SELECT * FROM approvals WHERE status='pending'")[0]
     if change == 'reject':
         engine.decide(approval['id'], False)
@@ -72,21 +77,22 @@ def test_no_reply_can_still_require_action(store):
              'requested_action': 'Research options', 'action_plan': 'Technology returns a sourced comparison'}
     engine = Engine(store, Scripted(perform('update_brief', brief), perform('delegate', proposal())))
     job = store.create_job('Triage this incoming email conversation. Research requested.', 'Communications')
-    assert run(engine, job)['status'] == 'awaiting_approval'
+    assert run(engine, job)['status'] == 'waiting_children'
     detail = store.detail(job['id'])
     assert detail['brief']['response_needed'] == 'no'
     assert detail['brief']['action_needed'] == 'yes'
-    assert not detail['children']
+    assert len(detail['children']) == 2
 
 
 def test_pending_delegation_survives_restart_without_starting_children(store):
     engine = Engine(store, Scripted(perform('delegate', proposal())))
     job = store.create_job('Investigate this request', 'Communications')
-    run(engine, job)
+    legacy_pending(engine, job)
     restarted = Engine(store, Scripted())
     restarted.start()
     try:
-        assert store.job(job['id'])['status'] == 'awaiting_approval'
+        assert store.job(job['id'])['status'] == 'queued'
+        assert store.one("SELECT status FROM approvals WHERE tool='delegate'")['status'] == 'superseded'
         assert not store.rows('SELECT * FROM jobs WHERE parent_id=?', (job['id'],))
     finally:
         restarted.stop()
@@ -125,7 +131,7 @@ def test_research_redelegates_without_approval_but_external_work_requires_it(sto
 
 def test_research_policy_does_not_bypass_external_gates():
     assert not classify('delegate', research_proposal(), 'Communications').approval
-    assert classify('delegate', proposal(), 'Communications').approval
+    assert not classify('delegate', proposal(), 'Communications').approval
     for action in ['jira_write', 'mcp_call', 'browser_action', 'send_email', 'apply_changes', 'run_command', 'create_feature_branch']:
         assert classify(action, {}, 'Self-Improvement', research_only=True).approval
     for action in ['read_file', 'fetch_url', 'write_file', 'create_document', 'create_presentation']:
@@ -243,4 +249,4 @@ def test_depth_exception_is_only_for_valid_source_readers(store):
 
 def test_communications_source_reads_are_autonomous_but_ordinary_work_is_not():
     assert not classify('delegate', source_proposal(), 'Communications').approval
-    assert classify('delegate', {'tasks': [{'org': 'Communications', 'request': 'Handle email'}]}, 'Communications').approval
+    assert not classify('delegate', {'tasks': [{'org': 'Communications', 'request': 'Handle email'}]}, 'Communications').approval

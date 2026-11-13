@@ -206,7 +206,7 @@ def test_agent_tools_can_only_propose_and_cite_evidence(env):
     assert not allowed_action('Strategy','record_commitment')
     assert not allowed_action('Communications','review_commitment')
     assert classify('send_email',{}).approval
-    assert classify('delegate',{},'Communications').approval
+    assert not classify('delegate',{},'Communications').approval
 
 
 def test_commitment_api_auth_csrf_status_and_attention(env,monkeypatch):
