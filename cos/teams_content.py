@@ -17,6 +17,8 @@ class Content(HTMLParser):
             self.hidden += 1
         if self.hidden:
             return
+        if tag == 'at' or 'schema.skype.com/mention' in attrs.get('itemtype', '').lower():
+            self.parts.append('@')
         if tag in {'br', 'p', 'div', 'li', 'tr'}:
             self.parts.append('\n')
         picture = tag == 'uriobject' and str(attrs.get('type', '')).lower().startswith('picture')

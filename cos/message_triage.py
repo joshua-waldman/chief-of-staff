@@ -13,6 +13,29 @@ updates, work assigned to others, optional invitations and suggestions need no
 owner action unless the context establishes otherwise. Do not manufacture a
 reply, acknowledgement, investigation, reminder, monitoring task or delegation
 just to be helpful. Account for owner replies, completed work and superseded asks.
+Resolve the requester and intended addressee from the ORIGINAL message before
+deciding whether the authenticated owner owes anything. In group conversations,
+use salutations, direct @mentions and surrounding wording to identify whom the
+request addresses. Distinguish an addressed person from a named actor merely
+being discussed; a mention alone is not an assignment. HTML Teams Mention spans
+and at elements also identify mentions. The words you/your
+refer to that addressee, not automatically to the authenticated owner reading
+the conversation. Quoted or forwarded requests retain their original addressee.
+For example, a group message '@Brian assigned this ticket to you, can you help
+validating this please' addresses Brian. For an owner other than Brian,
+both flags are no unless separate source evidence establishes an owner step.
+A ticket assigned to Brian supports Brian's responsibility; it does not create
+owner validation, coordination, monitoring or delegation work. A genuine separate
+request to the authenticated owner can establish work despite another ticket
+assignee, but cite the actual owner-directed wording and how its addressee is
+identified. Urgency or priority of someone else's work does not transfer it.
+Prior model summaries, job titles and delegated task descriptions are derived
+interpretations, not independent evidence of an owner assignment. Correct them
+when the original message contradicts them. In action_reason/response_reason,
+identify who is asked to act and why that person is or is not the owner; merely
+calling a request 'direct' is insufficient. If the addressee is genuinely
+unresolved, use unknown with the specific missing identity/context, never a
+default assignment to the owner. A clear request to someone else is no.
 Generic application guidance to review a completed result is optional reading,
 not a new owner obligation. Unverified runtime/tests alone do not assign work.
 For each yes decision cite the outstanding owner obligation and supporting

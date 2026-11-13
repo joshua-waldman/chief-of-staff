@@ -33,6 +33,19 @@ def test_images_links_and_picture_objects_survive_normalization():
     assert text('x < y', 'Text') == 'x < y'
 
 
+@pytest.mark.parametrize('mention', [
+    '<span itemtype="http://schema.skype.com/Mention" itemscope="" itemid="0">Greer, Brian</span>',
+    '<at id="0">Greer, Brian</at>',
+    '<span itemtype="http://schema.skype.com/Mention"><b>Greer, Brian</b></span>',
+])
+def test_named_addressee_survives_teams_normalization(mention):
+    body = '<p>' + mention + '&nbsp;assigned AVA-15121 to you, can you help validating this please.</p>'
+    normalized = text(body)
+    assert normalized == '@Greer, Brian\xa0assigned AVA-15121 to you, can you help validating this please.'
+    assert text('<script>' + mention + '</script>') == ''
+    assert text(mention, 'Text') == mention
+
+
 def test_poller_retains_image_only_html_and_drops_empty_bodies():
     class Skype:
         _msg_base = 'https://example.com/v1'
