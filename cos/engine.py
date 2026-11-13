@@ -791,6 +791,8 @@ class Engine:
                         from .tools import validate_mcp_arguments
                         validate_mcp_arguments(action,args)
                     if action=='run_command':
+                        from .skill_commands import prepare
+                        args=prepare(job,args)
                         args.pop('_workspace_script_review',None)
                     args.pop('_preparation_review',None)
                     args.pop('_external_change_review',None)
