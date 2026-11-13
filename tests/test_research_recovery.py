@@ -251,7 +251,7 @@ def test_browser_guards_redirects_preserves_screenshots_and_rejects_http_errors(
         main_frame = object()
         url = URL
         def goto(self, url, **kwargs):
-            request = SimpleNamespace(url=destination[0], frame=self.main_frame, is_navigation_request=lambda: True)
+            request = SimpleNamespace(method='GET', url=destination[0], frame=self.main_frame, is_navigation_request=lambda: True)
             route = SimpleNamespace(request=request, continue_=lambda: allowed.append(True), abort=lambda: allowed.append(False))
             browser.guard(route)
             if not allowed[-1]:
@@ -265,6 +265,7 @@ def test_browser_guards_redirects_preserves_screenshots_and_rejects_http_errors(
     class Browser:
         pages = [Page()]
         def route(self, pattern, guard): self.guard = guard
+        def route_web_socket(self, pattern, guard): self.socket_guard = guard
         def close(self): pass
     browser = Browser()
     playwright = SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=lambda *a, **kw: browser))
