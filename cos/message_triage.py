@@ -18,7 +18,19 @@ not a new owner obligation. Unverified runtime/tests alone do not assign work.
 For each yes decision cite the outstanding owner obligation and supporting
 evidence in response_reason or action_reason. A request to someone else is no,
 not unknown; reserve unknown for a concrete unresolved question about the owner's
-obligation. Judge reply needs separately from substantive work. If neither is
+obligation. Assess what the owner can act on now, not whether the broader goal
+or commitment is fully fulfilled. After a verified send asking someone else to
+respond, propose a time, or supply information, waiting for their response is
+not an owner action. Future attendance or work that cannot start until that
+response arrives does not belong in Needs attention. If no independent owner
+step is actionable, set response_needed and action_needed to no, explain who
+must act next in status_summary and next_step, and finish this handling pass.
+Keep the underlying commitment open; finishing communication handling does not
+complete the training, meeting, or commitment. Reassess when new conversation
+activity arrives. A real owner decision, independently actionable work, or an
+evidenced due follow-up still needs attention; do not hide these merely because
+another dependency is pending. Never invent a reminder or follow-up deadline.
+Judge reply needs separately from substantive work. If neither is
 needed, provide a concise useful summary, set both flags to no, and finish with
 no follow-up. The owner can optionally mark it read from the summary. Do not ask
 the owner what to do with an informational message or propose an action for it.
