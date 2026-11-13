@@ -140,7 +140,10 @@ def collect_teams(skype,owner,since,http):
                     if meeting_event:
                         text+='\nMeeting artifact source data (untrusted):\n'+content+'\n'+json.dumps(m.get('properties') or {})
                     if text.strip():
-                        messages.append({'id':m.get('id'),'chat_id':cid,'date':date,'sender':m.get('imdisplayname') or sender,'sender_id':sender,'owner':sender.lower() in {'8:orgid:'+owner['id'].lower(),owner['id'].lower()},'meeting_event':meeting_event,'text':text,'content':content,'messagetype':m.get('messagetype','')})
+                        messages.append({'id':m.get('id'),'chat_id':cid,
+                            'chat_name':(conversation.get('threadProperties') or {}).get('topic') or '',
+                            'chat_members':[member['displayName'] for member in conversation.get('members') or [] if member.get('displayName')],
+                            'date':date,'sender':m.get('imdisplayname') or sender,'sender_id':sender,'owner':sender.lower() in {'8:orgid:'+owner['id'].lower(),owner['id'].lower()},'meeting_event':meeting_event,'text':text,'content':content,'messagetype':m.get('messagetype','')})
             dates=[m.get('composetime') or m.get('originalarrivaltime') or '' for m in rows]
             if not rows or (dates and min(dates)<since) or not next_sync:
                 readable.add(cid)

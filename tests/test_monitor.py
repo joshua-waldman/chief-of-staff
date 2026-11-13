@@ -85,6 +85,18 @@ def test_repeated_message_continuation_retains_checkpoint():
     assert 'chat' not in result['readable_conversations']
 
 
+def test_teams_collection_preserves_conversation_name_and_roster():
+    skype = Skype()
+    skype.list_messages = lambda cid, **kw: ([{'id':'m', 'composetime':'2026-10-22T01:00:00Z',
+        'messagetype':'Text', 'from':'other', 'imdisplayname':'Alice', 'content':'Review release'}], '') if cid == 'chat' else ([], '')
+    conversation = {'id':'chat', 'threadProperties':{'topic':'Engineering sync'},
+        'members':[{'displayName':'Alice'}, {'displayName':'Bob'}]}
+    result = collect_teams(skype, {'id':'owner'}, SINCE,
+        lambda *args: (200, {'conversations':[conversation]}, ''))
+    assert result['messages'][0]['chat_name'] == 'Engineering sync'
+    assert result['messages'][0]['chat_members'] == ['Alice', 'Bob']
+
+
 def setup_monitor(tmp_path,monkeypatch):
     import cos.monitor as module
     monkeypatch.setattr(module,'gateway_key',lambda:'test-key')

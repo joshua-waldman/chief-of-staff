@@ -61,15 +61,33 @@ def source_topic(sources, meeting=False):
     return ''
 
 
-def display_name(job, brief, sources=()):
+def source_label(brief, sources):
+    """Use original source metadata without compacting people's names or subjects."""
+    emails = [s for s in sources if s.get('source') == 'email']
+    if emails:
+        first = emails[0]
+        return ' · '.join(filter(None, (first.get('sender') or brief.get('email_from'),
+                                       first.get('subject') or brief.get('email_subject'))))
+    if brief.get('email_from') and brief.get('email_subject'):
+        return brief['email_from'] + ' · ' + brief['email_subject']
+    return ', '.join(dict.fromkeys(s['sender'] for s in sources
+        if s.get('source') == 'teams' and s.get('sender') not in (None, '', 'You', 'other participant')
+        and not re.search(r'orgid:|https?://', s['sender'], re.I)))
+
+
+def display_name(job, brief, sources=(), label=''):
     if job.get('user_name'):
         return job['user_name']
+    label = ' '.join((label or source_label(brief, sources)).split())
+    name = ''
     for candidate in (brief.get('job_name'), brief.get('email_subject'), brief.get('context'), job.get('title'), brief.get('requested_action'), brief.get('email_excerpt')):
         name = usable_name(candidate)
         if name:
-            return name
-    return source_topic(sources, meeting='19:meeting_' in (job.get('title') or '')) or (
-        'Conversation review' if job.get('org') == 'Communications' else 'Task review')
+            break
+    name = name or source_topic(sources, meeting='19:meeting_' in (job.get('title') or ''))
+    if label:
+        return name + ' — ' + label if name and name.casefold() not in label.casefold() else label
+    return name or ('Conversation review' if job.get('org') == 'Communications' else 'Task review')
 
 
 def add_display_names(store, jobs, briefs=None):
@@ -90,20 +108,37 @@ def add_display_names(store, jobs, briefs=None):
         marks = ','.join('?' for _ in ids)
         briefs = {row['job_id']: json.loads(row['body']) for row in store.rows(
             'SELECT job_id,body FROM job_briefs WHERE job_id IN ('+marks+')', ids)}
-    unresolved = []
-    for job in jobs:
-        job['display_name'] = display_name(job, briefs.get(job['id'], {}))
-        if job['org'] == 'Communications' and job['display_name'] == 'Conversation review':
-            unresolved.append(job['id'])
+    ancestry = {}
+    for row in store.rows('''WITH RECURSIVE lineage(job_id,ancestor_id,parent_id,depth) AS (
+            SELECT id,id,parent_id,0 FROM jobs WHERE id IN ('''+marks+''')
+            UNION ALL SELECT l.job_id,j.id,j.parent_id,l.depth+1 FROM lineage l
+            JOIN jobs j ON j.id=l.parent_id WHERE l.depth<64)
+            SELECT job_id,ancestor_id FROM lineage ORDER BY depth''', ids):
+        ancestry.setdefault(row['job_id'], []).append(row['ancestor_id'])
+    ids = list(dict.fromkeys([*ids, *(ancestor for parents in ancestry.values() for ancestor in parents)]))
+    marks = ','.join('?' for _ in ids)
+    # Labels are shared by every topic in a chat. Fetch metadata for all jobs,
+    # even those with an inferred name, so the source stays visible after triage.
+    labels = {}
+    for row in store.rows('''SELECT c.job_id,l.source,l.name,l.subject
+            FROM communication_threads c LEFT JOIN teams_topics t ON t.topic_id=c.thread_id AND c.source='teams'
+            JOIN communication_labels l ON l.source=c.source AND l.thread_id=COALESCE(t.chat_id,c.thread_id)
+            WHERE c.job_id IN ('''+marks+')', ids):
+        label = (row['name'] or row['subject']) if row['source'] == 'teams' else ' · '.join(filter(None, (row['name'], row['subject'])))
+        labels.setdefault(row['job_id'], []).append(label)
     sources = {}
-    if unresolved:
-        marks = ','.join('?' for _ in unresolved)
-        rows = store.rows('''SELECT job_id,subject,substr(body,1,2000) AS body FROM (
-            SELECT job_id,subject,body,row_number() OVER (
+    if ids:
+        rows = store.rows('''SELECT job_id,source,sender,subject,substr(body,1,2000) AS body FROM (
+            SELECT job_id,source,sender,subject,body,row_number() OVER (
                 PARTITION BY job_id ORDER BY received,message_id) AS position
-            FROM communication_sources WHERE job_id IN ('''+marks+')) WHERE position<=32', unresolved)
+            FROM communication_sources WHERE job_id IN ('''+marks+')) WHERE position<=32', ids)
         for row in rows:
             sources.setdefault(row['job_id'], []).append(row)
-        for job in jobs:
-            if job['id'] in sources:
-                job['display_name'] = display_name(job, briefs.get(job['id'], {}), sources[job['id']])
+    for job in jobs:
+        label = ''
+        for ancestor in ancestry.get(job['id'], [job['id']]):
+            label = ' / '.join(labels.get(ancestor, ())) or source_label({}, sources.get(ancestor, ()))
+            if label:
+                break
+        job['display_name'] = display_name(job, briefs.get(job['id'], {}), sources.get(job['id'], ()),
+                                           label)

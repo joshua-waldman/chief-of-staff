@@ -115,9 +115,9 @@ def test_legacy_job_list_and_detail_share_source_topic_without_mutation(tmp_path
     with store.connect() as c:
         save_source(c, job['id'], 'teams', 'one', 'Participant', '', '', 'Launch Readiness ForumPlay', True)
     original = store.job(job['id'])
-    assert server.jobs()[0]['display_name'] == 'Launch Readiness Forum'
+    assert server.jobs()[0]['display_name'] == 'Launch Readiness Forum — Participant'
     detail = server.job(job['id'])
-    assert detail['display_name'] == 'Launch Readiness Forum'
+    assert detail['display_name'] == 'Launch Readiness Forum — Participant'
     assert detail['title'] == original['title']
     assert detail['request'] == original['request']
     assert store.job(job['id']) == original
@@ -135,3 +135,47 @@ def test_detail_and_child_use_generated_names(tmp_path, monkeypatch):
     detail = server.job(parent['id'])
     assert detail['display_name'] == 'Release review'
     assert detail['children'][0]['display_name'] == 'Release failure analysis'
+
+
+@pytest.mark.parametrize('chat_name,members,expected', [
+    ('Release 2.0 — Engineering sync', ['Alice Smith', 'Bob Jones'], 'Release 2.0 — Engineering sync'),
+    ('', ['Alice Smith', 'Bob Jones'], 'Alice Smith, Bob Jones'),
+    ('', [], 'Alice Smith'),
+])
+def test_teams_source_name_survives_generated_summary(tmp_path, chat_name, members, expected):
+    from cos.monitor import Monitor
+    from cos.job_names import add_display_names
+    store = Store(tmp_path/'teams-labels.db')
+    monitor = Monitor(store)
+    monitor.enqueue_teams_topic({'chat_id':'chat', 'topic_id':'topic', 'title':'Release review',
+        'messages':[{'id':'1', 'date':'2026-11-13', 'sender':'Alice Smith', 'owner':False,
+            'text':'Please review', 'chat_name':chat_name, 'chat_members':members}]})
+    job = store.one('SELECT * FROM jobs')
+    update_brief(store, job, {'job_name':'Check release risks'})
+    jobs = [store.job(job['id'])]
+    add_display_names(Store(store.path), jobs)
+    assert jobs[0]['display_name'] == 'Check release risks — ' + expected
+    child = store.create_job('Investigate logs', 'Technology', parent_id=job['id'])
+    grandchild = store.create_job('Inspect failure', 'Engineering', parent_id=child['id'])
+    derived = [child, grandchild]
+    add_display_names(store, derived)
+    assert all(row['display_name'].endswith(' — ' + expected) for row in derived)
+    jobs[0]['user_name'] = 'My custom name'
+    assert display_name(jobs[0], {}, label=expected) == 'My custom name'
+
+
+def test_email_source_name_and_full_subject_survive_brief_updates(tmp_path):
+    from cos.monitor import Monitor
+    from cos.job_names import add_display_names
+    store = Store(tmp_path/'email-labels.db')
+    monitor = Monitor(store)
+    monitor.email_intake.classify = lambda threads: {}
+    subject = 'RE: Release 2.0 — Budget review and next steps for the November launch'
+    monitor.process({'messages':[], 'emails':[{'id':'mail', 'conversationId':'thread',
+        'subject':subject, 'from':{'emailAddress':{'name':'Alice Smith', 'address':'alice@example.com'}},
+        'bodyPreview':'Please review'}]})
+    job = store.one('SELECT * FROM jobs')
+    update_brief(store, job, {'job_name':'Review launch budget', 'email_from':'alice@example.com'})
+    jobs = [store.job(job['id'])]
+    add_display_names(Store(store.path), jobs)
+    assert jobs[0]['display_name'] == 'Review launch budget — Alice Smith · ' + subject

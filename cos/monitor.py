@@ -109,7 +109,26 @@ class Monitor:
     def enqueue_conversation(self,source,thread_id,request,items,emails=None,decision=None,sources=(),topic=None):
         with self.store.lock,self.store.connect() as c:
             c.execute('BEGIN IMMEDIATE')
+            if source == 'email' and emails:
+                latest = max(emails, key=lambda m: (m.get('receivedDateTime') or '', m['id']))
+                address = (latest.get('from') or {}).get('emailAddress') or {}
+                c.execute('INSERT OR REPLACE INTO communication_labels VALUES(?,?,?,?)',
+                    (source, thread_id, address.get('name') or address.get('address') or '', latest.get('subject') or ''))
             if topic:
+                messages = sorted(topic['messages'], key=lambda m: (m.get('date') or '', str(m['id'])))
+                named = next((m for m in reversed(messages) if 'chat_name' in m), None)
+                previous = c.execute("SELECT name,subject FROM communication_labels WHERE source='teams' AND thread_id=?", (topic['chat_id'],)).fetchone()
+                members = list(dict.fromkeys(name for m in messages for name in m.get('chat_members', []) if name))
+                cached = c.execute('''SELECT DISTINCT json_extract(payload,'$.sender') AS sender,
+                    json_extract(payload,'$.sender_id') AS sender_id,json_extract(payload,'$.owner') AS owner
+                    FROM teams_topic_messages WHERE chat_id=?''', (topic['chat_id'],)).fetchall()
+                cached = [dict(row) for row in cached]
+                participants = list(dict.fromkeys(m.get('sender') for m in [*cached, *messages]
+                    if m.get('sender') and not m.get('owner') and not m.get('sender_id') == m.get('sender')))
+                name = (named.get('chat_name') or '') if named else (previous['name'] if previous else '')
+                people = ', '.join(members) or ', '.join(participants) or (previous['subject'] if previous else '')
+                if name or people:
+                    c.execute('INSERT OR REPLACE INTO communication_labels VALUES(?,?,?,?)', ('teams', topic['chat_id'], name, people))
                 c.execute('INSERT OR IGNORE INTO teams_topics VALUES(?,?,?)',(thread_id,topic['chat_id'],topic['title']))
                 for m in topic['messages']:
                     assigned=c.execute('SELECT topic_id FROM teams_topic_messages WHERE chat_id=? AND message_id=?',(topic['chat_id'],str(m['id']))).fetchone()
