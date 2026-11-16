@@ -167,6 +167,11 @@ class Commitments:
         row=self.store.one('SELECT * FROM commitments WHERE id=?',(identity,))
         if not row: raise ValueError('Commitment not found.')
         row['evidence']=self.store.rows('SELECT * FROM commitment_evidence WHERE commitment_id=? ORDER BY created,id',(identity,))
+        for evidence in row['evidence']:
+            link=self.store.one('SELECT job_id,revision,relationship,summary,files,created FROM review_commitment_links WHERE evidence_id=?',(evidence['id'],))
+            if link:
+                link['files']=json.loads(link['files'])
+                evidence['review_snapshot']=link
         row['history']=self.store.rows('SELECT * FROM commitment_history WHERE commitment_id=? ORDER BY id',(identity,))
         row['completion_pending']=row['status'] in {'proposed','open'} and any(e['kind']=='completion' and not e['reviewed'] for e in row['evidence'])
         row['possible_matches']=self.matches(row) if row['status']!='merged' else []
@@ -232,10 +237,16 @@ class Commitments:
                     raise ValueError('Confirm the same owner and scope before merging commitments.')
                 sources=c.execute('SELECT * FROM commitment_evidence WHERE commitment_id=?',(identity,)).fetchall()
                 for source in sources:
-                    found=c.execute('SELECT 1 FROM commitment_evidence WHERE commitment_id=? AND fingerprint=?',(target['id'],source['fingerprint'])).fetchone()
+                    found=c.execute('SELECT id FROM commitment_evidence WHERE commitment_id=? AND fingerprint=?',(target['id'],source['fingerprint'])).fetchone()
                     if not found:
+                        copied_id=uid()
                         c.execute('INSERT INTO commitment_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                            (uid(),target['id'],*[source[key] for key in ('source_job','source_file_id','source_identity','source_url','meeting_date','source_timestamp','excerpt','kind','fingerprint','reviewed','created')]))
+                            (copied_id,target['id'],*[source[key] for key in ('source_job','source_file_id','source_identity','source_url','meeting_date','source_timestamp','excerpt','kind','fingerprint','reviewed','created')]))
+                    else:
+                        copied_id=found['id']
+                    c.execute('''INSERT OR IGNORE INTO review_commitment_links
+                        SELECT job_id,revision,?, ?,relationship,summary,files,created
+                        FROM review_commitment_links WHERE evidence_id=?''',(target['id'],copied_id,source['id']))
                 c.execute("UPDATE commitments SET status='merged',merged_into=?,version=version+1,updated=? WHERE id=?",(target['id'],stamp,identity))
                 c.execute('UPDATE commitments SET version=version+1,updated=? WHERE id=?',(stamp,target['id']))
                 details={'target_id':target['id'],'retained_fields_from':target['id']}

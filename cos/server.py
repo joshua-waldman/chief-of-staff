@@ -116,7 +116,7 @@ async def result_review(id,request:Request):
     payload=await request.json()
     def operation():
         body=payload
-        return store.review_result(id,body.get('revision'))
+        return store.review_result(id,body.get('revision'),body.get('commitments'),body.get('snapshot_fingerprint'))
     return await run_in_threadpool(operation)
 
 @app.get('/api/commitments')

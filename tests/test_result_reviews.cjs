@@ -13,6 +13,42 @@ function setup(){
  vm.runInContext(source.slice(source.indexOf('function resultsNotice('),source.indexOf('function render(){')),context);
  return context;
 }
+
+test('review offers explained matches and manual choices without preselecting completion',()=>{
+ const ctx=setup();
+ const item={id:'one',owner:'Alex',scope:'global',status:'open',version:2,deliverable:'Find <portal>'};
+ const r={commitments:{choices:[item,{...item,id:'two',status:'proposed'}],matches:[{...item,reason:'Shared content: portal',excerpt:'Untrusted <script>source'}],links:[]}};
+ const html=ctx.reviewCommitmentView(r);
+ assert.match(html,/Shared content: portal/);
+ assert.match(html,/Untrusted &lt;script>source/);
+ assert.match(html,/Choose another commitment/);
+ assert.match(html,/Fulfills — complete commitment/);
+ assert.match(html,/Progress — keep open/);
+ assert.match(html,/Related — keep open/);
+ assert.ok(!html.includes('checked'));
+ assert.ok(!html.includes('<script>'));
+ const reviewed=ctx.reviewCommitmentView({...r,reviewed:'now',commitments:{...r.commitments,links:[{commitment_id:'one',deliverable:'Find <portal>',relationship:'fulfills'}]}});
+ assert.match(reviewed,/Fulfills/);
+ assert.match(reviewed,/data-review-open-commitment="one"/);
+ assert.ok(!reviewed.includes('type="checkbox"'));
+});
+
+test('combined review submits exact selected versions, relationships and snapshot',async()=>{
+ const button={};const calls=[];
+ const item={id:'one',version:4};
+ const ctx={j:{result_review:{revision:'saved',commitments:{choices:[item],snapshot_fingerprint:'digest'}}},id:'job',
+  $:selector=>selector==='#review-result-commitments'?button:null,
+  document:{querySelectorAll:selector=>selector==='[data-review-commitment]:checked'?[{dataset:{reviewCommitment:'one'}}]:selector==='[data-review-relation]'?[{dataset:{reviewRelation:'one'},value:'progress'}]:[]},
+  handle:fn=>fn,api:async(path,body)=>calls.push({path,body}),toast:()=>{},openJob:async()=>{},refresh:async()=>{}};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf(" if($('#review-result-commitments'))"),source.indexOf(" document.querySelectorAll('[data-summary-read]')")),ctx);
+ await button.onclick();
+ assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{path:'jobs/job/result-review',body:{revision:'saved',commitments:[{commitment_id:'one',version:4,relationship:'progress'}],snapshot_fingerprint:'digest'}}]);
+ assert.equal(button.disabled,false);
+ ctx.document.querySelectorAll=()=>[];
+ await assert.rejects(button.onclick(),/Select a commitment/);
+ assert.equal(calls.length,1);
+});
 test('review queue preserves escaped summaries and provides a direct result action',()=>{
  const ctx=setup();
  ctx.returnedResults=[{id:'job',org:'Technology',title:'Draft <brief>',summary:'Result <text>',completed:'today'}];

@@ -117,12 +117,23 @@ function resultSummary(summary,files=[]){
 function resultsView(){
  return intro('Your completed work, ready to review.','Open the named document or read the generated content, then mark it reviewed when you are done.')+(returnedResults.length?returnedResults.map(r=>'<article class="panel"><div class="eyebrow">'+esc(r.org)+' · '+esc(date(r.completed))+'</div><h2>'+esc(r.review_title||r.display_name||r.title)+'</h2>'+(r.items?'<p>Prepared for you to read and review.</p><ul>'+r.items.map(item=>'<li>'+esc(item.title)+' · '+(item.kind==='document'?'Document':'Read in job details')+'</li>').join('')+'</ul><p class="small">From: '+esc(r.display_name||r.title)+'</p>':'<p class="result">'+resultSummary(r.summary)+'</p>')+btn('Open review','data-job="'+esc(r.id)+'"')+'</article>').join(''):'<section class="panel empty"><h2>All caught up</h2><p>New completed responses and deliverables will appear here.</p></section>');
 }
+function reviewCommitmentView(r){
+ const c=r.commitments;
+ if(!c)return '';
+ const links=(c.links||[]).map(link=>'<p>'+esc(({fulfills:'Fulfills',progress:'Progress on',related:'Related to'})[link.relationship])+': '+btn(esc(link.deliverable),'data-review-open-commitment="'+esc(link.commitment_id)+'"','link-btn')+'</p>').join('');
+ if(r.reviewed)return links?'<section><h4>Linked commitments</h4>'+links+'</section>':'';
+ const matches=new Map((c.matches||[]).map(m=>[m.id,m]));
+ const choice=item=>{const match=matches.get(item.id);return '<article class="panel"><label><input type="checkbox" data-review-commitment="'+esc(item.id)+'"> '+esc(item.deliverable)+'</label><p class="small">'+esc(item.owner)+' · '+esc(item.scope)+' · '+esc(item.status)+'</p>'+(match?'<p>'+esc(match.reason)+'</p>'+(match.excerpt?'<blockquote class="readable">'+esc(match.excerpt)+'</blockquote>':''):'')+btn('Open commitment','data-review-open-commitment="'+esc(item.id)+'"','link-btn')+'<label>How this result relates <select data-review-relation="'+esc(item.id)+'">'+(item.status==='open'?'<option value="fulfills">Fulfills — complete commitment</option>':'')+'<option value="progress">Progress — keep open</option><option value="related">Related — keep open</option></select></label></article>'};
+ const suggested=(c.matches||[]).map(choice).join('');
+ const others=(c.choices||[]).filter(item=>!matches.has(item.id));
+ return '<section><h4>Match this result to commitments</h4><p>Suggestions use shared content and may be incomplete. Select a commitment and confirm whether this result fulfills it, advances it, or is related. Only “Fulfills” completes an accepted commitment.</p>'+links+(suggested||'<p>No suggested matches. You can choose a commitment below.</p>')+(others.length?'<details id="review-other-commitments"><summary>Choose another commitment ('+others.length+')</summary>'+others.map(choice).join('')+'</details>':'')+((c.choices||[]).length?btn('Mark reviewed & update selected commitments','id="review-result-commitments"'):'')+'</section>';
+}
 function returnedResultView(j){
  const r=j.result_review;
  if(!r)return '';
  const files=(r.files||j.files).filter(f=>(r.file_ids.includes(f.id)||r.summary.includes('/api/files/'+f.id))&&f.purpose!=='recovery');
  const content=r.items?r.items.map(item=>'<article class="review-content"><p class="eyebrow">'+(item.kind==='document'?'Document to review':'Generated content to read')+'</p><h4>'+esc(item.title)+'</h4>'+jobFilesView(files.filter(f=>item.file_ids.includes(f.id)))+(item.content?'<div class="readable">'+resultSummary(item.content,files)+'</div>':'')+'</article>').join('')+(r.context?'<details><summary>Thread handling context</summary><div class="readable">'+resultSummary(r.context,files)+'</div></details>':''):'<div class="readable">'+resultSummary(r.summary,files)+'</div>'+jobFilesView(files);
- return '<section class="panel returned-result"><h3>'+(r.reviewed?'Reviewed result':'Completed · Ready for your review')+'</h3>'+(r.review_title?'<h2>'+esc(r.review_title)+'</h2><p>Read the content below and check any open questions or gaps. Send direction to COS if you want changes.</p>':'')+'<p class="small">Returned '+esc(date(r.completed))+'</p>'+(j.status&&j.status!=='completed'?'<p class="small">This saved result remains available while COS handles new activity.</p>':'')+content+(r.reviewed?'<p class="small">Marked reviewed '+esc(date(r.reviewed))+'</p>':'<p class="small">Mark reviewed when you have read this content. This acknowledges your review; it does not send the draft or complete its underlying commitment.</p>'+btn('Mark reviewed','id="mark-result-reviewed"'))+'</section>';
+ return '<section class="panel returned-result"><h3>'+(r.reviewed?'Reviewed result':'Completed · Ready for your review')+'</h3>'+(r.review_title?'<h2>'+esc(r.review_title)+'</h2><p>Read the content below and check any open questions or gaps. Send direction to COS if you want changes.</p>':'')+'<p class="small">Returned '+esc(date(r.completed))+'</p>'+(j.status&&j.status!=='completed'?'<p class="small">This saved result remains available while COS handles new activity.</p>':'')+content+reviewCommitmentView(r)+(r.reviewed?'<p class="small">Marked reviewed '+esc(date(r.reviewed))+'</p>':'<p class="small">Mark reviewed when you have read this content. This acknowledges your review; it does not send the draft or complete its underlying commitment.</p>'+btn('Mark reviewed','id="mark-result-reviewed"'))+'</section>';
 }
 function notifyResults(results){
  const revisions=new Set(results.map(r=>r.revision));
@@ -260,7 +271,7 @@ async function openJob(id,{background=false}={}){
  }
  if(generation!==(openJob.generation||0)||selected!==id)return;
  // Read the live view after the request: the user may have scrolled or closed it while waiting.
- if(background&&($('#activity-details')?.open||$('#rename-job')?.open||selected!==id||!$('#job-dialog').open||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)||document.querySelector('#detail button[disabled]')))return;
+ if(background&&($('#activity-details')?.open||$('#rename-job')?.open||$('#review-other-commitments')?.open||document.querySelector('[data-review-commitment]:checked')||selected!==id||!$('#job-dialog').open||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)||document.querySelector('#detail button[disabled]')))return;
  const same=selected===id,opening=wasOpening||!same||!$('#job-dialog').open;
  const snapshot=opening?null:captureView($('#job-dialog'));
  const b=j.brief||{},html='<div class="eyebrow">'+esc(j.org)+'</div><h2 class="detail-title">'+esc(j.display_name||b.job_name||'Job details')+'</h2>'+renameJobView(j)+'<div class="detail-meta">'+badge(j.status)+timingBadge(j)+'<span class="small">'+esc(j.project||'Workspace')+' · '+date(j.created)+'</span></div><details><summary class="small">Original request</summary><div class="code">'+esc(j.request)+'</div></details>'+
@@ -302,6 +313,20 @@ async function openJob(id,{background=false}={}){
   const button=$('#mark-result-reviewed');button.disabled=true;
   try{await api('jobs/'+id+'/result-review',{revision:j.result_review.revision});toast('Result marked reviewed');await Promise.all([openJob(id),refresh(true)]);}finally{button.disabled=false;}
  });
+ if($('#review-result-commitments'))$('#review-result-commitments').onclick=handle(async()=>{
+  const button=$('#review-result-commitments');
+  const commitments=[...document.querySelectorAll('[data-review-commitment]:checked')].map(input=>{
+   const item=j.result_review.commitments.choices.find(c=>c.id===input.dataset.reviewCommitment);
+   return {commitment_id:item.id,version:item.version,relationship:[...document.querySelectorAll('[data-review-relation]')].find(select=>select.dataset.reviewRelation===item.id).value};
+  });
+  if(!commitments.length)throw Error('Select a commitment, or use Mark reviewed.');
+  button.disabled=true;
+  try{await api('jobs/'+id+'/result-review',{revision:j.result_review.revision,commitments,snapshot_fingerprint:j.result_review.commitments.snapshot_fingerprint});toast('Result reviewed and commitments updated');await Promise.all([openJob(id),refresh(true)]);}finally{button.disabled=false;}
+ });
+ document.querySelectorAll('[data-review-open-commitment]').forEach(button=>button.onclick=handle(async()=>{
+  commitmentDetail=await api('commitments/'+encodeURIComponent(button.dataset.reviewOpenCommitment));commitmentMergeTarget=null;
+  $('#job-dialog').close();await navigate('commitments');renderCommitments(true);$('#cm-detail')?.scrollIntoView({block:'start'});
+ }));
  document.querySelectorAll('[data-summary-read]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{await api('jobs/'+id+'/mark-read',{tool:b.dataset.readTool,target_id:b.dataset.summaryRead});await Promise.all([openJob(id),refresh(true)])}finally{b.disabled=false}}));
  if($('#load-source'))$('#load-source').onclick=handle(()=>loadSource(id));
  document.querySelectorAll('[data-collapse-source]').forEach(button=>button.onclick=collapseSourceConversation);
@@ -319,7 +344,7 @@ async function refresh(force=false){
 
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=handle(()=>navigate(b.dataset.view)));$('#close-dialog').onclick=()=>{$('#job-dialog').close();selected=null};$('#job-dialog').addEventListener('close',()=>selected=null);
 refresh().catch(e=>toast(e.message,true));
-setInterval(async()=>{if(busy||handle.active||document.hidden)return;busy=true;try{await Promise.all([refresh(),selected&&$('#job-dialog').open&&!$('#activity-details')?.open&&!$('#rename-job')?.open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)&&!document.querySelector('#detail button[disabled]')?openJob(selected,{background:true}):Promise.resolve()]);if(view==='connections'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){con=await api('connections');render()}}catch(e){}finally{busy=false}},4000);
+setInterval(async()=>{if(busy||handle.active||document.hidden)return;busy=true;try{await Promise.all([refresh(),selected&&$('#job-dialog').open&&!$('#activity-details')?.open&&!$('#rename-job')?.open&&!$('#review-other-commitments')?.open&&!document.querySelector('[data-review-commitment]:checked')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)&&!document.querySelector('#detail button[disabled]')?openJob(selected,{background:true}):Promise.resolve()]);if(view==='connections'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){con=await api('connections');render()}}catch(e){}finally{busy=false}},4000);
 
 function captureView(root){
  if(!root)return null;

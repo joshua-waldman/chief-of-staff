@@ -40,7 +40,11 @@ function commitmentSummary(item){
 }
 
 function commitmentSources(item){
- return '<details id="cm-evidence" open><summary>Source evidence ('+item.evidence.length+')</summary>'+item.evidence.map(e=>'<article class="panel"><b>'+esc(e.kind==='completion'?'Possible completion — verify':e.kind==='assignment'?'Assignment evidence':'Corroborating evidence')+'</b><p>'+esc(e.meeting_date||'Meeting date unknown')+' · '+esc(e.source_timestamp)+'</p><blockquote class="readable">'+esc(e.excerpt)+'</blockquote><p><a href="'+esc(e.source_url)+'" target="_blank" rel="noreferrer">Meeting source ↗</a> · <a href="/api/files/'+encodeURIComponent(e.source_file_id)+'">Transcript</a> · '+btn('Source job','data-job="'+esc(e.source_job)+'"','link-btn')+'</p></article>').join('')+'</details>';
+ return '<details id="cm-evidence" open><summary>Source evidence ('+item.evidence.length+')</summary>'+item.evidence.map(e=>{
+  const snapshot=e.review_snapshot;
+  if(snapshot)return '<article class="panel"><b>'+esc(({fulfills:'Reviewed result — fulfills commitment',progress:'Reviewed result — progress',related:'Reviewed result — related'})[snapshot.relationship])+'</b><p>'+esc(date(snapshot.created))+'</p><blockquote class="readable">'+esc(snapshot.summary)+'</blockquote>'+snapshot.files.map(f=>'<p>Reviewed document: '+esc(f.name)+'</p>').join('')+btn('Source review','data-job="'+esc(snapshot.job_id)+'"','link-btn')+'</article>';
+  return '<article class="panel"><b>'+esc(e.kind==='completion'?'Possible completion — verify':e.kind==='assignment'?'Assignment evidence':'Corroborating evidence')+'</b><p>'+esc(e.meeting_date||'Meeting date unknown')+' · '+esc(e.source_timestamp)+'</p><blockquote class="readable">'+esc(e.excerpt)+'</blockquote><p>'+(e.source_url?'<a href="'+esc(e.source_url)+'" target="_blank" rel="noreferrer">Meeting source ↗</a> · ':'')+(e.source_file_id?'<a href="/api/files/'+encodeURIComponent(e.source_file_id)+'">Transcript</a> · ':'')+btn('Source job','data-job="'+esc(e.source_job)+'"','link-btn')+'</p></article>';
+ }).join('')+'</details>';
 }
 
 function commitmentHistory(item){

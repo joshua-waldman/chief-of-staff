@@ -63,6 +63,8 @@ class Store:
             c.executescript(guidance_schema)
             from .commitments import SCHEMA as commitment_schema
             c.executescript(commitment_schema)
+            from .review_commitments import SCHEMA as review_commitment_schema
+            c.executescript(review_commitment_schema)
             from .schedules import SCHEMA as schedule_schema
             c.executescript(schedule_schema)
             from .teams_migration import SCHEMA as teams_migration_schema
@@ -193,6 +195,10 @@ class Store:
         j['result_review']=self.result_review(id) if j['status']!='cancelled' else None
         if j['result_review']:
             review=j['result_review']
+            from .review_commitments import review_context
+            commitment_context=review_context(self,review)
+            if commitment_context['choices'] or commitment_context['links']:
+                review['commitments']=commitment_context
             ids=set(review['file_ids'])
             if not review.get('final_output'):
                 ids |= set(re.findall(r'/api/files/([A-Za-z0-9_-]+)',review['summary']))
@@ -287,13 +293,16 @@ class Store:
                 row['items']=[{key:item[key] for key in ('title','kind','file_ids')} for item in review['items']]
         return rows
 
-    def review_result(self,id,revision):
+    def review_result(self,id,revision,commitments=None,snapshot_fingerprint=None):
         with self.lock,self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             row=c.execute('''SELECT r.*,j.status FROM result_reviews r JOIN jobs j ON j.id=r.job_id
                 WHERE r.job_id=?''',(id,)).fetchone()
             if not row or not row['eligible'] or row['status']=='cancelled' or row['revision']!=revision:
                 raise ValueError('This result has changed. Open the latest completed result before marking it reviewed.')
+            if commitments is not None:
+                from .review_commitments import link_review
+                link_review(c,dict(row),commitments,snapshot_fingerprint)
             if not row['reviewed']:
                 stamp=now()
                 c.execute('UPDATE result_reviews SET reviewed=? WHERE job_id=?',(stamp,id))
