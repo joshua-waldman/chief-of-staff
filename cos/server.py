@@ -293,6 +293,7 @@ async def create_job(request:Request):
         # Keep the new job invisible to workers until all inputs are attached.
         with engine.lock:
             j=store.create_job(text,project=project)
+            store.set_state('owner_self_chat:'+j['id'],{'request_sha256':hashlib.sha256(text.encode('utf-8')).hexdigest(),'created':j['created']})
             store.update(j['id'],status='preparing')
             for name,data in decoded:
                 p=workspace(j['id'])/'inputs'/(uid()[:8]+'-'+name)

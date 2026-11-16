@@ -94,7 +94,7 @@ class Engine:
     def start(self):
         emit('engine.recovery_started',{'running_jobs':self.store.one("SELECT COUNT(*) AS count FROM jobs WHERE status='running'")['count']})
         # Interrupted mutations never auto-replay, particularly sends.
-        replay_safe={'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','create_skill','fetch_url','search_mail','read_mail','list_chats','read_teams','meeting_artifacts','meeting_transcripts','save_meeting_summary','jira_read','list_skills','read_skill','mcp_list_tools','run_python','mail_attachments','teams_attachments','browser_read','calendar_events','calendar_event','search_commitments','record_commitment','add_commitment_evidence'}
+        replay_safe={'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','create_skill','fetch_url','search_mail','read_mail','list_chats','read_teams','meeting_artifacts','meeting_transcripts','save_meeting_summary','jira_read','list_skills','read_skill','mcp_list_tools','run_python','mail_attachments','teams_attachments','browser_read','calendar_events','calendar_event','search_commitments','record_commitment','add_commitment_evidence','create_owner_commitment'}
         replay_safe.add('read_action_receipt')
         replay_safe |= {'repository_connections','repository_search','repository_read','repository_tree'}
         for row in self.store.rows("SELECT id,job_id,tool FROM approvals WHERE status='executing'"):

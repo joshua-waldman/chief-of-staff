@@ -1,5 +1,6 @@
 {
   "self_email": "owner@example.com",
+  "self_name": "Example Owner",
   "projects": {
     "Example Project": "C:/Projects/ExampleProject"
   },
