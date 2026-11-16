@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import PureWindowsPath
 
-STALL_RECOVERY_VERSION=3
+STALL_RECOVERY_VERSION=4
 RECOVERY_READS={'read_file','read_action_receipt','read_teams','read_mail','fetch_url','browser_read',
     'list_files','list_chats','search_mail','search_knowledge','jira_read','meeting_artifacts',
     'meeting_transcripts','mail_attachments','teams_attachments','calendar_events','calendar_event',
@@ -127,7 +127,6 @@ def limit_recovery_read(state,action):
     if attempt.get('active') and action=='update_brief':
         if attempt.get('brief_updates',0)>=1:
             raise ValueError('Recovery brief already saved. Produce the requested deliverable using output tools, then finish; status updates alone do not complete the work.')
-        attempt['brief_updates']=attempt.get('brief_updates',0)+1
     if attempt.get('active') and action in RECOVERY_READS:
         if attempt.get('verification_reads',0)>=2:
             raise ValueError('Recovery verification budget exhausted. Reading is disabled for this recovery. Use the saved findings and latest verified excerpts to write the requested synthesis and finish. If a specific evidence gap prevents completion, identify that gap explicitly; never infer completion.')
@@ -144,6 +143,9 @@ def stable(value):
 
 def observe(state,action,args,result,*,error=False):
     """New evidence, file pages and actual changes count; cosmetic brief edits do not."""
+    if action=='update_brief' and not error and state.get('stall_recovery',{}).get('active'):
+        attempt=state['stall_recovery']
+        attempt['brief_updates']=attempt.get('brief_updates',0)+1
     state['last_progress_action']=action
     if action=='update_brief' and not error:
         state['reads_since_brief']=0

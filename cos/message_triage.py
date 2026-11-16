@@ -76,7 +76,10 @@ rule's scope, exceptions and target; a targeted rule applies only to its matchin
 source and thread ID. Conflicting preferences require review.
 If only an email preview is available, call read_mail to read the full body first.
 Use cached full source text when available. For Teams consider the supplied
-messages together, including owner replies; read_teams only if context is missing.
+messages together, including owner replies; read_teams only if context is missing. For Teams notification emails, the email
+conversation_id is an Outlook identifier, never a Teams chat ID. Use list_chats
+to discover the actual chat ID, then read_teams. If discovery is ambiguous,
+inspect candidate chats; never guess identifiers or invent MCP tools.
 Teams images are message content, including messages with no caption. Use
 teams_attachments for this topic and read_file on its downloaded images before
 deciding reply/action needs. Do not infer image contents from alt text, filenames
@@ -103,7 +106,8 @@ summary once neither an owner reply nor unresolved owner work remains. For ignor
 mark_email_read or mark_teams_read through the existing exact-action approval
 flow; never mark read directly or claim it was already marked read.
 Available actions (via perform): read_mail {id}, read_teams {chat_id,limit?},
-update_brief {the fields above}. All actions use JSON arguments.
+list_chats {}, update_brief {the fields above}. All actions use JSON arguments.
+Summary fields are strings; uncertainties may also be a list of short strings.
 """
 
 
@@ -169,7 +173,7 @@ def request_read(store, job_id, tool, target_id):
 
 def first_pass(store, job, state):
     """Only replace initial orchestration context, never resumed owner reviews."""
-    if state.get('source_revision') or job['step'] != 0:
+    if state.get('source_revision') or state.get('stall_recovery') or state.get('automatic_replans') or job['step'] != 0:
         return None
     if store.one('SELECT 1 FROM job_briefs WHERE job_id=?', (job['id'],)):
         return None

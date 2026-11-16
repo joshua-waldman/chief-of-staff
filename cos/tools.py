@@ -571,6 +571,8 @@ class Tools:
         if action=='list_chats':
             return run_skill('slai-teams','list_chats.py',['--json'])
         if action=='read_teams':
+            if str(a.get('chat_id','')).startswith(('AAQk','AAkA')):
+                raise ValueError('This is an Outlook identifier, not a Teams chat ID. Call list_chats and use an actual returned chat ID, then read_teams. Do not repeat this identifier or invent MCP tools.')
             from .teams_topics import chat_ids
             bound=chat_ids(self.store,id) or re.findall(r'(?m)Chat ID: (\S+)',job['request'])
             if bound and a['chat_id'] not in bound:
