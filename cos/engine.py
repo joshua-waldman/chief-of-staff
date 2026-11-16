@@ -138,6 +138,8 @@ class Engine:
         self.recover_context_imports()
         self.recover_context_preflight()
         self.recover_historical_attention()
+        from .conversations import recover_email_questions
+        recover_email_questions(self.store)
         deliver_waiting(self.store)
         from .teams_migration import prepare as prepare_teams_migration
         prepare_teams_migration(self.store)

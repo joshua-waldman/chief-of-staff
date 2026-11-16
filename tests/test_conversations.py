@@ -45,7 +45,7 @@ def test_load_legacy_email_once_and_do_not_replace_full_text_with_preview(monito
     def read(*args):
         calls.append(args)
         return {'body':'Full email\nLast paragraph','from':'sender@example.com','date':'2026-01-01'}
-    monkeypatch.setattr(integrations,'run_skill',read)
+    monkeypatch.setattr(integrations,'communication',read)
     assert load_sources(monitor.store,job)=={'errors':[]}
     with monitor.store.connect() as c:
         save_source(c,job['id'],'email','legacy-mail','sender@example.com','','2026-01-01','Short preview',False)
@@ -62,10 +62,10 @@ def test_source_read_failure_preserves_cached_text_and_supports_retry(monitor,mo
         save_source(c,job['id'],'email','unavailable','','','','Available preview',False)
     def fail(*args):
         raise RuntimeError('Private connector diagnostics')
-    monkeypatch.setattr(integrations,'run_skill',fail)
+    monkeypatch.setattr(integrations,'communication',fail)
     assert load_sources(monitor.store,job)['errors']
     assert monitor.store.detail(job['id'])['source_messages'][0]['body']=='Available preview'
-    monkeypatch.setattr(integrations,'run_skill',lambda *args:{'body':'Recovered full text'})
+    monkeypatch.setattr(integrations,'communication',lambda *args:{'body':'Recovered full text'})
     assert not load_sources(monitor.store,job)['errors']
     assert monitor.store.detail(job['id'])['source_messages'][0]['body']=='Recovered full text'
 
@@ -92,6 +92,7 @@ def test_source_loading_limits_email_and_teams_reads_to_latest_five(monitor,monk
         calls.append((script,args))
         return [] if script=='list_messages.py' else {'body':'Full email'}
     monkeypatch.setattr(integrations,'run_skill',read)
+    monkeypatch.setattr(integrations,'communication',lambda action,args:read('slai-email','read_mail.py',['--id',args['id'],'--json']))
     assert not load_sources(monitor.store,job)['errors']
     assert calls[0][1]==['--chat-id','example-chat','--limit','5','--raw','--json']
     assert [args[1] for script,args in calls[1:]]==['mail-9','mail-8','mail-7','mail-6','mail-5']

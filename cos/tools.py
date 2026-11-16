@@ -568,10 +568,8 @@ class Tools:
         if action=='search_mail':
             return run_skill('slai-email','search_mail.py',[a['query'],'--json'])
         if action=='read_mail':
-            result=run_skill('slai-email','read_mail.py',['--id',a['id'],'--json'])
-            from .conversations import cache_source_read
-            cache_source_read(self.store,id,action,a,result)
-            return result
+            from .conversations import read_email
+            return read_email(self.store,id,a['id'])
         if action=='list_chats':
             return run_skill('slai-teams','list_chats.py',['--json'])
         if action=='read_teams':

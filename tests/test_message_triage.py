@@ -53,7 +53,7 @@ def test_finish_resolves_older_previews_before_deciding_attention(tmp_path,monke
     def read(*args):
         reads.append(args)
         return {'body':'Please investigate the failure.' if older_request else 'Automated owner field change.'}
-    monkeypatch.setattr(tools,'run_skill',read)
+    monkeypatch.setattr('cos.integrations.communication',read)
     class Provider:
         def __init__(self): self.calls=0
         def complete(self,messages,**kwargs):
@@ -171,7 +171,7 @@ def test_email_preview_is_read_before_body_decision(tmp_path,monkeypatch):
     def read(*args):
         reads.append(args)
         return {'body':'The release shipped. No follow-up requested.','from':'sender@example.com','subject':'Release'}
-    monkeypatch.setattr(tools,'run_skill',read)
+    monkeypatch.setattr('cos.integrations.communication',read)
     class Provider:
         def __init__(self):
             self.calls=0

@@ -149,6 +149,8 @@ def reply_history(graph, original):
 
 
 def perform(graph, action, a):
+    if action=='read_mail':
+        return read_mail(graph,a)
     if action=='teams_read_status':
         return teams_read_status(graph)
     if action=='verify_action':
@@ -238,6 +240,61 @@ def perform(graph, action, a):
         graph.post('/chats/'+ident(a['chat_id'])+'/markChatReadForUser',{'user':{'id':owner['id']}})
     else: raise ValueError('Unsupported communication action.')
     return {'executed':True,'operation':action,'source_id':a.get('id') or a.get('chat_id'),'response':a.get('response'),'send_response':a.get('send_response',True) if action=='calendar_rsvp' else None}
+
+
+def read_mail(graph, a):
+    """Read both legacy and immutable IDs; recover moved items by exact RFC ID."""
+    params={'$select':'id,internetMessageId,subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments',
+            '$expand':'attachments($select=id,name,contentType,size,isInline)'}
+    errors=io.StringIO()
+    try:
+        with redirect_stderr(errors):
+            message=graph.get('/me/messages/'+ident(a['id']),params=params)
+    except (Exception,SystemExit) as error:
+        detail=errors.getvalue() or str(error)
+        # Only identity/access-to-item errors permit this bounded read fallback.
+        # Authentication, permission, throttling and service failures stay errors.
+        if not re.search(r'ErrorInvalidIdMalformed|ErrorInvalidId|ErrorItemNotFound|Graph API 404:',detail):
+            raise RuntimeError(detail) from error
+        # Conversion is an identity operation, not a mailbox mutation. It can
+        # recover legacy REST IDs without guessing another message from search.
+        message=None
+        try:
+            with redirect_stderr(io.StringIO()):
+                converted=graph.post('/me/translateExchangeIds',{
+                    'inputIds':[a['id']],'sourceIdType':'restId','targetIdType':'restImmutableEntryId'})
+                targets={x['targetId'] for x in converted.get('value',[])
+                         if x.get('sourceId')==a['id'] and x.get('targetId') and not x.get('errorDetails')}
+                if len(targets)==1:
+                    candidate=next(iter(targets))
+                    if candidate!=a['id']:
+                        message=graph.get('/me/messages/'+ident(candidate),params=params)
+        except (Exception,SystemExit):
+            pass  # Keep the initial failure unless the exact RFC fallback works.
+        if message is None:
+            internet_id=a.get('internet_message_id')
+            if not isinstance(internet_id,str) or not internet_id or len(internet_id)>2048:
+                raise RuntimeError(detail) from error
+            matches=graph.get('/me/messages',params={
+                '$filter':"internetMessageId eq '"+internet_id.replace("'","''")+"'",
+                '$select':'id,internetMessageId','$top':'2'})
+            rows=matches.get('value',[])
+            if (len(rows)!=1 or matches.get('@odata.nextLink') or
+                    rows[0].get('internetMessageId')!=internet_id or not rows[0].get('id')):
+                raise ValueError('The original email ID is unavailable and its exact Internet Message ID did not resolve uniquely.')
+            message=graph.get('/me/messages/'+ident(rows[0]['id']),params=params)
+            if message.get('internetMessageId')!=internet_id:
+                raise ValueError('Recovered email identity changed during retrieval.')
+    if not message.get('id') or not isinstance(message.get('body',{}).get('content'),str):
+        raise ValueError('Full email body or authoritative message ID is missing.')
+    return {'id':message['id'],'internetMessageId':message.get('internetMessageId',''),
+            'subject':message.get('subject',''),
+            'from':(message.get('from') or {}).get('emailAddress',{}).get('address',''),
+            'to':[x['emailAddress']['address'] for x in message.get('toRecipients',[])],
+            'cc':[x['emailAddress']['address'] for x in message.get('ccRecipients',[])],
+            'date':message.get('receivedDateTime',''),'body':plain(message['body']),
+            'attachments':[{k:item.get(k) for k in ('id','name','contentType','size','isInline')}
+                           for item in message.get('attachments',[])]}
 
 
 def main():

@@ -53,6 +53,7 @@ class Store:
             CREATE INDEX IF NOT EXISTS teams_topic_members ON teams_topic_messages(topic_id);
             CREATE TABLE IF NOT EXISTS communication_inbox(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT,body TEXT,created TEXT);
             CREATE TABLE IF NOT EXISTS communication_sources(job_id TEXT,source TEXT,message_id TEXT,sender TEXT,subject TEXT,received TEXT,body TEXT,complete INTEGER,PRIMARY KEY(job_id,source,message_id));
+            CREATE TABLE IF NOT EXISTS email_source_ids(job_id TEXT,message_id TEXT,internet_id TEXT NOT NULL DEFAULT '',canonical_id TEXT NOT NULL DEFAULT '',PRIMARY KEY(job_id,message_id));
             CREATE INDEX IF NOT EXISTS communication_pending ON communication_inbox(job_id,id);
             CREATE TABLE IF NOT EXISTS conversation_activity(job_id TEXT PRIMARY KEY,first_seen TEXT,last_seen TEXT);
             CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT);
@@ -201,7 +202,8 @@ class Store:
                 file=self.one('SELECT * FROM files WHERE id=?',(file_id,))
                 if file and not is_recovery_file(file['job_id'],file['path']):
                     review['files'].append({**file,'purpose':'deliverable'})
-        j['source_messages']=self.rows('SELECT * FROM communication_sources WHERE job_id=? ORDER BY received,message_id',(id,))
+        from .conversations import source_messages
+        j['source_messages']=source_messages(self,id)
         from .guidance_targets import candidates
         with self.connect() as c:
             j['sender_candidates']=candidates(c,id)
