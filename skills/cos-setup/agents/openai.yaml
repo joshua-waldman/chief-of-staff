@@ -1,0 +1,4 @@
+interface:
+  display_name: "Set up Chief of Staff"
+  short_description: "Set up COS and optional desktop or laptop access"
+  default_prompt: "Use $cos-setup to inspect this machine and guide me through the appropriate COS setup."
