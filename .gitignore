@@ -24,6 +24,9 @@
 !/scripts/
 !/scripts/check_repository.py
 !/scripts/install_hooks.py
+!/scripts/Test-CosRemoteAccess.ps1
+!/scripts/connect_cos.py
+!/scripts/Install-CosShortcuts.ps1
 !/.githooks/
 !/.githooks/pre-commit
 !/.githooks/pre-push

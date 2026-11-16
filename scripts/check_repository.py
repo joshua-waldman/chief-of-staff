@@ -13,6 +13,8 @@ ROOT_FILES = {
     'pytest.ini', 'acceptance.json', 'Start-ChiefOfStaff.cmd',
     'Start-ChiefOfStaff.ps1', 'Setup-Atlassian.ps1', 'config.example.json',
     'scripts/check_repository.py', 'scripts/install_hooks.py',
+    'scripts/Test-CosRemoteAccess.ps1', 'scripts/connect_cos.py',
+    'scripts/Install-CosShortcuts.ps1',
     '.githooks/pre-commit', '.githooks/pre-push', '.github/workflows/checks.yml',
 }
 PATTERNS = {

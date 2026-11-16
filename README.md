@@ -70,6 +70,163 @@ Deployment means running this app on your own Windows machine. The server binds 
 
 Use `Start-ChiefOfStaff.ps1 -Stop` before updates or to stop the background task until the next sign-in. Run the launcher again to start it immediately. For development, stop the task first and use `Start-ChiefOfStaff.ps1 -Foreground`; Ctrl+C stops that foreground instance. Server logs are saved in `data/launcher/`, retaining the current and previous run. To remove automatic startup permanently, stop the app and delete your `ChiefOfStaff-<Windows user SID>` task in Task Scheduler. Re-running the normal launcher registers it again. A changed port takes effect after stopping the existing task and launching again with `-Port`.
 
+### Desktop icons
+
+After the normal launcher has registered COS to start at Windows sign-in, run
+this once **on the COS host** from the installation/checkout directory:
+
+```powershell
+.\scripts\Install-CosShortcuts.ps1
+```
+
+This creates **Chief of Staff** on the current user's Windows desktop. Double-click
+it to open COS in the default browser, including inside a remote desktop session.
+The icon opens the UI; COS continues to run through its existing scheduled task.
+It does not create a second server. If you deliberately stopped COS, double-click
+`Start-ChiefOfStaff.cmd` in the installation folder to resume it. If you changed
+the server port, create/update the icon with `-Port 8766 -Force`.
+
+On a **Windows laptop**, create the connection icon once, using the COS host's
+approved private DNS name:
+
+```powershell
+.\scripts\Install-CosShortcuts.ps1 -Mode Remote -RemoteComputer desktop.example.com
+```
+
+This creates **COS Remote Desktop**. Connect to your approved private network,
+double-click that icon, sign in, then double-click **Chief of Staff** inside the
+remote desktop. The connection icon uses the built-in Windows RDP client and
+prompts for credentials; it stores no password. If Windows Hello produces a
+certificate/UPN error, choose **More choices → Use a different account** and use
+your organizational account password if that sign-in method is available.
+
+Remote mode needs only this standalone PowerShell script; copy it to the laptop
+without installing COS, Python, integrations or a second database. Keep generated
+shortcuts private since a remote shortcut includes the desktop's hostname. Delete
+an icon to remove it. Re-running leaves existing icons unchanged; use `-Force` to
+replace them. `-DesktopDirectory <existing-folder>` changes the output location,
+`-RemotePort` supports a configured RDP port, and `-WhatIf` previews file creation.
+Use your organization's approved PowerShell execution policy if scripts are blocked.
+
+Connecting through RDP normally locks the **host's physical console**; it does
+not sign out your account or stop COS. Unlocking the host locally can disconnect
+the remote session. This differs from the laptop locking due to its own inactivity
+policy. Close/disconnect the RDP window when finished rather than signing out;
+corporate session timeouts and sleep policy still govern availability. A shortcut
+does not provide simultaneous local and remote control or change those policies.
+
+## Remote access
+
+Keep one authoritative COS host and use its existing loopback interface. Prefer
+Remote Desktop over your organization's approved private connection, then open
+`http://127.0.0.1:8765` in the **desktop session's** browser. A laptop VPN connection
+does not by itself establish a route or authorization to that specific desktop.
+Do not expose COS publicly or synchronize an active SQLite data directory.
+
+On the desktop, collect a read-only readiness inventory:
+
+```powershell
+.\scripts\Test-CosRemoteAccess.ps1
+```
+
+The report shows the OS, RDP enablement/NLA, relevant listeners, scheduled-task
+working directories and installed connectivity software. Unknown probes stay
+unknown. Reports contain private machine/path information; keep them out of Git.
+The script neither enables remote access nor changes firewalls, power or policy.
+
+On the laptop, while connected through an approved private route, check only the
+specific desktop and RDP port supplied by IT:
+
+```powershell
+.\scripts\Test-CosRemoteAccess.ps1 -Target desktop.example.com -TargetPort 3389
+```
+
+Success means a TCP connection completed, not that owner login, MFA or the COS
+workflow has passed. If approved, connect with Remote Desktop Connection
+(`mstsc.exe`), using that same desktop name. On failure, ask IT to verify private
+DNS, routing, desktop ACLs/firewall and RDP entitlement; do not open public ports.
+For an office desktop, check the laptop's approved VPN/private-access route first.
+For a desktop behind home NAT, corporate-resource VPN access alone is insufficient.
+
+An optional direct SSH tunnel lets you use the laptop browser. It requires an
+independently approved SSH server/account and private route to the desktop, plus a
+host key already verified through a trusted channel and recorded in known_hosts.
+The helper requires Python 3.11 but no COS dependencies or local COS installation.
+Copy just the helper to a laptop if needed. Preview first:
+
+```powershell
+python scripts/connect_cos.py --host desktop.example.com --user owner
+# Add --connect to run SSH after the prerequisites have been established.
+```
+
+The helper fixes both ends to `127.0.0.1`, requires strict SSH host-key checking,
+disables agent/X11 forwarding, and fails if the local port cannot bind. It loads
+no SSH config files, preventing inherited extra forwards or local commands; sites
+requiring an SSH config, jump host or special authentication need a separately
+reviewed configuration. The helper supports direct desktop DNS/IPv4 destinations.
+Keep its terminal open; Ctrl+C closes the tunnel. It installs nothing and does
+not verify corporate approval. SSH startup does not prove remote COS availability.
+Use `--local-port 18765` if 8765 is occupied, and browse the printed loopback URL.
+Refresh after COS restarts. Local cookies are not port-isolated; avoid another COS
+instance on the laptop and consider a dedicated browser profile.
+
+Validate history, an old attachment, downloads, a harmless request, answering a
+question, approval previews, reconnection and restart/session renewal. Use local
+fixtures for approval tests. Disconnecting RDP should preserve the signed-in
+session; verify corporate timeout, sleep and reboot/sign-in policies before
+depending on unattended processing. Schedules cannot wake or sign in the host.
+
+### Recommendation audit (2026-11-16)
+
+The supplied remote-access recommendation correctly identifies the local token
+as request/CSRF protection rather than owner authentication: the root page
+provides it. `run.py` still binds to loopback, and `cos/server.py` still checks
+Host/Origin and API cookie/write tokens. The interactive scheduled-task design,
+SQLite WAL usage and database-only `manage.py backup` behavior also match the
+reviewed source. Full recovery still needs coordinated artifacts, settings and
+integration provisioning; the existing backup command alone is insufficient.
+
+Two qualifications affect implementation. First, the document describes exact
+action approvals as if every external write always needs an owner click; current
+configuration supports automatic approval review. Remote access preserves the
+configured approval policy and must not be represented as adding manual gates.
+Second, the document's static citations are not deployment revision evidence.
+The live scheduled task observed during this audit uses a separate installation
+from this development checkout. New helpers here have not been deployed there.
+
+Read-only host checks found Windows 11 Enterprise, enabled RDP with NLA, a running
+interactive COS task, COS listening only on IPv4 loopback at port 8765, and RDP
+listeners on 3389. Zscaler appeared in installed-software records; GlobalProtect
+and an SSH server service did not appear in the probes. These findings establish
+local state only. The owner confirmed an office-network desktop and a Windows 11
+Enterprise laptop. Active data-root overrides, backup recovery, effective access
+policy and full COS workflow tests remain unverified. The owner
+subsequently confirmed a successful laptop TCP check to RDP and an authenticated
+Remote Desktop session. That establishes the tested route/login, rather than
+every off-network scenario or COS workflow. Desktop icons were then created;
+no firewall, authentication or power policies were changed.
+
+AMD's [IT onboarding guide, pages 8 and 17](https://amdcloud.sharepoint.com/sites/amd-info-tech/Shared%20Documents/Global%20AMD%20NEO%20IT/Global-AMD-NEO_IT.pdf?web=1)
+identifies GlobalProtect for MFA-protected private access and Zscaler for internet
+security. This is a documented route to investigate with IT, not proof that this
+owner can reach this desktop on 3389 or install/enable SSH. Use AMD Software Center
+or IT to provision the laptop's approved client if absent. The same guide directs
+employees to ACE and ServiceNow for IT help. Ask: "Can my managed Windows laptop,
+off-network through the approved private connection, reach my office Windows
+desktop by private DNS on RDP, using my own account? Which client, entitlement and
+device controls are required?" No support request was sent by this audit.
+
+Microsoft confirms [RDP host editions and network prerequisites](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/remotepc/remote-desktop-allow-access).
+[Windows OpenSSH setup](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse)
+can involve service and firewall changes. Tunnel options follow the primary
+[SSH manual](https://man.openbsd.org/ssh.1) and
+[client configuration manual](https://man.openbsd.org/ssh_config.5).
+Synthetic tests cover loopback Host/Origin behavior at default and alternate
+ports, session/CSRF checks and proxy-host rejection. They do not replace an actual
+SSH/RDP connection or end-to-end file/approval tests. A future HTTPS private URL
+needs owner authentication before every route, TLS and explicit proxy/origin
+design before any network exposure.
+
 ## Connect services
 
 1. Open **Connections**, save your AMD gateway key, and test the connection. The key is stored in Windows Credential Manager as `AMD-ChiefOfStaff / gateway`. Alternatively set `LLM_GATEWAY_KEY` in the server environment. The app does not load `.env` files. Inference uses `https://llm-api.amd.com/Unified/v1`; no public-provider fallback is configured.
