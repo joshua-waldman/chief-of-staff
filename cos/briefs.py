@@ -85,11 +85,14 @@ def unresolved_action(store, job):
 def update_brief(store,job,a):
     current=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
     body=json.loads(current['body']) if current else {}
+    a=dict(a)
+    if isinstance(a.get('uncertainties'),list) and all(isinstance(v,str) for v in a['uncertainties']):
+        a['uncertainties']='; '.join(a['uncertainties'])
     if set(a)-FIELDS:
-        raise ValueError('Unknown job summary field.')
+        raise ValueError('Unknown job summary fields: '+', '.join(sorted(set(a)-FIELDS))+'. Use only fields in the tool catalog.')
     for key,value in a.items():
         if not isinstance(value,str) or len(value)>(12000 if key=='proposed_body' else 2000):
-            raise ValueError('Invalid summary field length.')
+            raise ValueError('Summary field '+key+' must be a string of at most '+str(12000 if key=='proposed_body' else 2000)+' characters.')
         if key in {'response_needed','action_needed'} and value not in {'yes','no','unknown'}:
             raise ValueError(key+' must be yes, no, or unknown.')
         if key == 'time_sensitive' and value not in {'yes','no','unknown'}:

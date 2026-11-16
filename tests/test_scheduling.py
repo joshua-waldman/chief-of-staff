@@ -321,10 +321,13 @@ def test_repeated_unchanged_reads_stop_across_slices_and_warn_first(env,monkeypa
     job=env.create_job('Analyze','Technology')
     for _ in range(10):
         engine.run(job['id'])
-        if env.job(job['id'])['status']=='blocked': break
+        if session(env.job(job['id'])).get('automatic_replans'): break
     current=env.job(job['id'])
-    assert current['status']=='blocked'
-    assert 'unchanged results' in current['question'] and 'step budget' not in current['question']
+    assert current['status']=='queued'
+    assert current['question']==''
+    assert session(current)['automatic_replans']==1
+    assert engine.model_role(current)=='director'
+    assert not engine.ready_jobs(None)
     assert len(captured)==19
     assert any('Progress check:' in json.dumps(messages) for messages in captured)
     assert any('Automatic progress recovery:' in json.dumps(messages) for messages in captured)

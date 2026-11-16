@@ -330,3 +330,67 @@ def test_image_recovery_for_email_uses_verified_source_receipt(env,monkeypatch):
         assert image_chat_ids(env,job)==[]
     finally:
         engine.stop()
+
+
+def test_rejected_brief_does_not_consume_successful_update_budget(env,monkeypatch):
+    from cos import config
+    monkeypatch.setitem(config.DEFAULTS,'max_steps',10)
+    job=stopped(env,'Communications')
+    fields={'context':'Known source','status_summary':'FYI only','next_step':'Finish',
+            'response_needed':'no','response_reason':'No request','action_needed':'no',
+            'action_reason':'No owner work','uncertainties':[]}
+    engine=Engine(env,Scripted(perform('update_brief',{'unsupported':'bad'}),
+        perform('update_brief',fields),perform('finish',{'summary':'FYI only; no owner work.'})))
+    try:
+        engine.recover_stalled_jobs()
+        engine.run(job['id'])
+        assert env.job(job['id'])['status']=='completed'
+        assert json.loads(env.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))['body'])['uncertainties']==''
+    finally:
+        engine.stop()
+
+
+def test_recovery_keeps_full_context_before_initial_brief(env):
+    from cos.message_triage import first_pass
+    job=env.create_job('Triage this incoming email','Communications')
+    assert first_pass(env,job,{'messages':[]}) is not None
+    assert first_pass(env,job,{'messages':[],'stall_recovery':{'active':True}}) is None
+    assert first_pass(env,job,{'messages':[],'automatic_replans':1}) is None
+
+
+def test_outlook_identifier_is_rejected_before_teams_call(env,monkeypatch):
+    from cos import tools
+    job=env.create_job('Triage this incoming email','Communications')
+    def unexpected(*args,**kwargs):
+        raise AssertionError('Must not call Teams with an Outlook ID')
+    monkeypatch.setattr(tools,'run_skill',unexpected)
+    import pytest
+    with pytest.raises(ValueError,match='list_chats'):
+        tools.Tools(env).execute(job,'read_teams',{'chat_id':'AAQkOutlookConversation'})
+
+
+def test_internal_failure_retries_with_backoff_and_preserves_receipts(env,monkeypatch):
+    import time
+    job=stopped(env)
+    engine=Engine(env,Scripted(perform('finish',{'summary':'Recovered verified findings.'})))
+    try:
+        state=session(job)
+        state['file_reads']={'preserved':{'ranges':[[0,8]]}}
+        engine.defer_stalled_job(job,state)
+        current=env.job(job['id'])
+        assert current['status']=='queued' and current['question']==''
+        assert session(current)['file_reads']==state['file_reads']
+        assert session(current)['recovery_retry_at']>time.time()
+        assert engine.ready_jobs(None)==[]
+        engine.stop()
+        engine=Engine(env,Scripted(perform('finish',{'summary':'Recovered verified findings.'})))
+        assert engine.ready_jobs(None)==[]
+        state=session(current)
+        state['recovery_retry_at']=0
+        env.update(job['id'],messages=json.dumps(state))
+        assert engine.ready_jobs(None)[0]['id']==job['id']
+        assert engine.model_role(env.job(job['id']))=='director'
+        engine.run(job['id'])
+        assert env.job(job['id'])['status']=='completed'
+    finally:
+        engine.stop()
