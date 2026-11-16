@@ -18,7 +18,7 @@ DEFAULTS = {
     # Conservative fallback, not a claim about the gateway's model capacity.
     'context_window_tokens': 128000, 'model_context_windows': {},
     'poll_seconds': 60, 'command_prefix': '!cos', 'self_chat_id': '48:notes',
-    'self_email': '',
+    'self_email': '', 'self_name': '',
     'projects': {},
     'github_accounts': {},
     'teams_auth': {},
@@ -50,6 +50,9 @@ def save_settings(changes):
     validate_config(s['teams_auth'])
     if s['gateway_url'] != DEFAULTS['gateway_url']:
         raise ValueError('Only the verified AMD Unified gateway is enabled')
+    if not isinstance(s['self_name'],str) or len(s['self_name'])>160:
+        raise ValueError('Owner display name must be text of at most 160 characters.')
+    s['self_name']=s['self_name'].strip()
     s['parallel_agents'] = max(1, min(12, int(s['parallel_agents'])))
     if type(s['queue_paused']) is not bool:
         raise ValueError('Queue paused must be true or false.')
