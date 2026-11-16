@@ -16,6 +16,18 @@ function record(status='proposed'){
   evidence:[{id:'evidence',kind:'completion',source_job:'job',source_file_id:'file',source_url:'https://example.com/recording',meeting_date:'2026-10-23',source_timestamp:'00:02:00',excerpt:'<script>untrusted source'}],history:[],possible_matches:[]};
 }
 
+test('review evidence shows its saved summary without fabricated meeting links',()=>{
+ const ctx=context();const item=record('completed');
+ item.evidence=[{review_snapshot:{relationship:'fulfills',summary:'Saved <report>',revision:'old',created:'yesterday',job_id:'source',files:[{id:'doc',name:'Deck <one>',sha256:'abc'}]}}];
+ const html=ctx.commitmentSources(item);
+ assert.match(html,/fulfills commitment/);
+ assert.match(html,/Saved &lt;report&gt;/);
+ assert.match(html,/Deck &lt;one&gt;/);
+ assert.match(html,/data-job="source"/);
+ assert.ok(!html.includes('Meeting source'));
+ assert.ok(!html.includes('Transcript'));
+});
+
 test('uncertain deadlines and proposals remain distinct from confirmed work',()=>{
  const ctx=context();const html=ctx.commitmentDetailView(record());
  assert.match(html,/Inferred date — confirm/);
