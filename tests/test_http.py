@@ -34,7 +34,7 @@ def test_communication_source_endpoint_loads_text_without_changing_job(tmp_path,
     store=Store(tmp_path/'source.db')
     monkeypatch.setattr(server,'store',store)
     job=store.create_job('Email ID: example-message','Communications')
-    monkeypatch.setattr(integrations,'run_skill',lambda *args:{'body':'Full source\nFinal line','from':'sender@example.com'})
+    monkeypatch.setattr(integrations,'communication',lambda *args:{'body':'Full source\nFinal line','from':'sender@example.com'})
     client=TestClient(app)
     client.get('/')
     assert client.post('/api/jobs/'+job['id']+'/source',json={}).status_code==403

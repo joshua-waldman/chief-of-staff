@@ -134,7 +134,8 @@ def read_targets(store, job):
         return []
     if store.one('SELECT 1 FROM communication_inbox WHERE job_id=?', (job['id'],)):
         return []
-    sources = store.rows('SELECT * FROM communication_sources WHERE job_id=?', (job['id'],))
+    from .conversations import source_messages
+    sources = source_messages(store,job['id'])
     if not sources or any(not source['complete'] for source in sources):
         return []
     targets = [{'tool':'mark_email_read','args':{'id':s['message_id'], 'subject':s['subject'], 'from':s['sender']},
@@ -143,6 +144,10 @@ def read_targets(store, job):
     targets += [{'tool':'mark_teams_read','args':{'chat_id':cid}, 'label':'Mark entire Teams chat as read'}
                 for cid in chat_ids(store,job['id'])]
     done = [(a['tool'],json.loads(a['args'])) for a in store.rows("SELECT tool,args FROM approvals WHERE job_id=? AND status='executed'", (job['id'],))]
+    aliases={r['message_id']:r['canonical_id'] or r['message_id'] for r in store.rows(
+        'SELECT message_id,canonical_id FROM email_source_ids WHERE job_id=?',(job['id'],))}
+    done=[(tool,{**args,'id':aliases.get(args.get('id'),args.get('id'))}) if tool=='mark_email_read' else (tool,args)
+          for tool,args in done]
     return [t for t in targets if not any(tool==t['tool'] and all(args.get(k)==v for k,v in t['args'].items() if k in {'id','chat_id'}) for tool,args in done)]
 
 

@@ -44,6 +44,13 @@ def record(store, job_id, state, action, args, result, *, error=False, receipt_i
     resolved = []
     if key in failures:
         resolved.append(failures.pop(key))
+    if action=='read_mail' and isinstance(result,dict) and result.get('id'):
+        identities=store.rows('SELECT message_id FROM email_source_ids WHERE job_id=? AND canonical_id=?',
+                              (job_id,result['id']))
+        for identity in identities:
+            alias_key=target(action,{'id':identity['message_id']})
+            if alias_key in failures:
+                resolved.append(failures.pop(alias_key))
     if action in RESEARCH:
         # A successful read proves host enablement, even when the original
         # allowlist failure occurred on another page or transport.

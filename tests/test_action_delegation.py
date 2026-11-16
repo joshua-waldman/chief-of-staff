@@ -191,6 +191,7 @@ def test_mail_source_handoff_at_depth_limit_returns_evidence(store, monkeypatch)
         return {'id': 'mail-1', 'received': '2026-10-01', 'body': 'Extraction is ready.'}
 
     monkeypatch.setattr('cos.tools.run_skill', mail_skill)
+    monkeypatch.setattr('cos.integrations.communication', lambda action, args: calls.append((action,args)) or {'id':'mail-1','body':'Extraction is ready.'})
     monkeypatch.setattr('cos.tools.communication', lambda action, args: calls.append((action, args)) or {'files': []})
     evidence = engine.tools.execute(child, 'write_file', {
         'path': 'evidence.txt', 'content': 'mail-1, October 1: Extraction is ready.'})
