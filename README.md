@@ -19,18 +19,101 @@ Clone into a local folder. Keep the SQLite database on one machine; do not run t
 ```powershell
 git clone https://github.com/joshua-waldman/chief-of-staff.git chief-of-staff
 Set-Location chief-of-staff
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 python scripts/install_hooks.py
 ```
 
 The repository is [joshua-waldman/chief-of-staff](https://github.com/joshua-waldman/chief-of-staff). You need access to this private repository before cloning. ZIP downloads do not have Git history or hooks; use a clone for development.
 
-## Configure your installation
+### Guided first-time setup
 
-Copy the sanitized example before the first launch:
+After cloning or extracting into a local folder **outside OneDrive or other
+synchronized folders**, double-click
+**Setup-ChiefOfStaff.cmd**, or run the PowerShell command:
 
 ```powershell
+.\Setup-ChiefOfStaff.ps1
+```
+
+The wizard asks for the owner email on a new installation and whether this is a
+desktop host that should support laptop access. It creates a Python 3.11 virtual
+environment if needed, installs the requirements, preserves existing settings,
+registers/starts the per-user task and checks the local COS page. Existing Python
+3.11 and repository access are prerequisites; it does not install system software.
+The manual venv/configuration steps are unnecessary when using the wizard. New
+installations start with the queue paused and monitoring off. Complete **Connections**
+before clicking **Connect** or enabling monitoring. Enter the gateway key only in
+the local credential UI; setup does not request secrets in a terminal or chat.
+
+Choose **Yes** for optional desktop access to create the host's **Chief of Staff**
+browser icon and a private laptop connection kit under
+`%LOCALAPPDATA%\AMD-ChiefOfStaff\LaptopSetup`. This reads the current host's DNS
+name/suffix and configured RDP port, so each owner gets their own target. The kit
+contains **COS Remote Desktop**, the standalone shortcut installer and instructions.
+Copy it to the laptop through approved private storage. It does not include COS
+data or credentials and does not provision a private route or enable RDP. Verify
+the name/port from the laptop, then the remote login and COS page. If IT requires a
+different private alias, supply `-RemoteComputer` explicitly.
+
+For an agent or other noninteractive shell, collect the owner's choices first:
+
+```powershell
+.\Setup-ChiefOfStaff.ps1 -SelfEmail owner@example.com -DesktopAccess Enable -NonInteractive -NoBrowser
+# Or use -DesktopAccess Skip when remote desktop access is not wanted.
+```
+
+Use the actual owner's email; it is not a password. Omit `-SelfEmail` when reusing
+unchanged existing configuration. Optional parameters include `-Port`,
+`-RemoteComputer`, `-RemotePort`, `-LaptopKitDirectory` and `-PythonExe`.
+`-WhatIf` previews the setup without installing packages, writing files or
+registering/starting a task. Setup refuses to replace another installation's task,
+install a host in a detected OneDrive folder, change the environment of a running
+instance, reuse an occupied port, overwrite
+owner configuration or replace an existing laptop kit. Inspect the reported
+conflict; do not launch a duplicate server. Reuse a healthy installation rather
+than rerunning first-time setup. Use the organization's approved script policy if
+PowerShell execution is blocked.
+
+To add desktop access to an already running COS installation without reinstalling:
+
+```powershell
+.\scripts\Install-CosShortcuts.ps1
+.\scripts\New-CosLaptopKit.ps1
+```
+
+The kit generator runs **on the COS host**. Choose a new `-Destination` when a kit
+already exists. A laptop-only client should use the resulting kit or the standalone
+shortcut installer described below; it should not run the host setup wizard.
+
+### Setup with Claude or Codex
+
+Attach [`skills/cos-setup/SKILL.md`](skills/cos-setup/SKILL.md) to a session and say:
+“Use this skill to inspect this machine and set up COS. Ask for missing choices
+and let me complete sign-in privately.” The file is self-contained and can also
+be installed as a `cos-setup` skill using your client's normal skill mechanism.
+
+The agent distinguishes a new host, an existing installation and a laptop client;
+checks prerequisites; performs the selected setup; helps configure the gateway and
+chosen integrations; and verifies the local/remote steps it can actually test.
+It optionally obtains the application itself: reuse existing files, clone the
+private repository, or download/extract an authenticated ZIP. The user may supply
+an organization-approved mirror and revision. A skill-hub installation does not
+grant access to the private repository, and laptop-only setup skips a full clone.
+It asks about optional desktop access and services, rather than enabling every
+integration. Private repository access, gateway credentials, MFA/device-code
+sign-in and corporate connectivity provisioning may require the owner or IT.
+The skill reports these as pending instead of claiming setup is complete. It does
+not require another installed skill just to begin; integration-specific helpers
+are discovered only when needed.
+
+## Configure your installation
+
+For **manual installation only**, copy the sanitized example before the first
+launch. Skip this step if guided setup already created `config.local.json`; do not
+overwrite an existing configuration:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item config.example.json config.local.json
 ```
 
@@ -99,6 +182,10 @@ remote desktop. The connection icon uses the built-in Windows RDP client and
 prompts for credentials; it stores no password. If Windows Hello produces a
 certificate/UPN error, choose **More choices → Use a different account** and use
 your organizational account password if that sign-in method is available.
+The `/prompt` switch requests the Windows credential dialog; it does not force a
+password provider or change the laptop's Windows Hello policy. The generated
+connection shortcut is specific to the supplied host. Distribute the generic
+installer or have each host generate its own kit for another owner.
 
 Remote mode needs only this standalone PowerShell script; copy it to the laptop
 without installing COS, Python, integrations or a second database. Keep generated

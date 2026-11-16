@@ -12,9 +12,12 @@ ROOT_FILES = {
     '.gitignore', '.gitattributes', 'README.md', 'requirements.txt', 'run.py', 'manage.py',
     'pytest.ini', 'acceptance.json', 'Start-ChiefOfStaff.cmd',
     'Start-ChiefOfStaff.ps1', 'Setup-Atlassian.ps1', 'config.example.json',
+    'Setup-ChiefOfStaff.cmd', 'Setup-ChiefOfStaff.ps1',
     'scripts/check_repository.py', 'scripts/install_hooks.py',
     'scripts/Test-CosRemoteAccess.ps1', 'scripts/connect_cos.py',
     'scripts/Install-CosShortcuts.ps1',
+    'scripts/New-CosLaptopKit.ps1',
+    'skills/cos-setup/SKILL.md', 'skills/cos-setup/agents/openai.yaml',
     '.githooks/pre-commit', '.githooks/pre-push', '.github/workflows/checks.yml',
 }
 PATTERNS = {

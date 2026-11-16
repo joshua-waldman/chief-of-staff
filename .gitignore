@@ -9,6 +9,8 @@
 !/acceptance.json
 !/Start-ChiefOfStaff.cmd
 !/Start-ChiefOfStaff.ps1
+!/Setup-ChiefOfStaff.cmd
+!/Setup-ChiefOfStaff.ps1
 !/Setup-Atlassian.ps1
 !/config.example.json
 !/cos/
@@ -27,6 +29,12 @@
 !/scripts/Test-CosRemoteAccess.ps1
 !/scripts/connect_cos.py
 !/scripts/Install-CosShortcuts.ps1
+!/scripts/New-CosLaptopKit.ps1
+!/skills/
+!/skills/cos-setup/
+!/skills/cos-setup/SKILL.md
+!/skills/cos-setup/agents/
+!/skills/cos-setup/agents/openai.yaml
 !/.githooks/
 !/.githooks/pre-commit
 !/.githooks/pre-push
