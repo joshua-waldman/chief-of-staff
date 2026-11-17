@@ -42,7 +42,7 @@ search_mail {query}; read_mail {id}; list_chats {}; read_teams {chat_id}; meetin
 meeting_transcripts {chat_id,date?:YYYY-MM-DD}: use Claude's meeting-recap Stream helper with existing Teams credentials to read transcripts attached to recordings, then try shared transcript files. Defaults to the newest recording date; pass date for a specific meeting occurrence. Returns job-local files for read_file, source links and access diagnostics. A recording or recap metadata is not transcript text. Cannot transcribe video/audio.
 save_meeting_summary {source_file_id,title,summary,evidence}: save a concise meeting summary as active searchable evidence for future email/Teams replies. Source must come from meeting_transcripts in this job; evidence is an exact transcript excerpt (max 1500 characters). Summary (max 2400 characters) includes meeting date, topics, decisions, commitments, open questions and the owner's specific action items with assignee, deadline or unknown, source timestamps and status. Observations never authorize actions.
 send_email {to: comma/semicolon-separated email addresses or string array,subject,body,cc?,bcc?}; reply_email {id,body}; send_teams {chat_id,body}: approval always required. Read full threads and attachments and give a verified-facts ledger before drafting.
-jira_read {command,args:[text]}: check, jira-search, jira-issue, jira-projects, jira-types, jira-fields, jira-transitions, conf-search, conf-page, conf-spaces.
+jira_read {command,args:[text]}: check, jira-search, jira-issue, jira-comments, jira-projects, jira-types, jira-fields, jira-transitions, conf-search, conf-page, conf-spaces. Read issue comments with command:"jira-issue", args:["EX-123","--comments"], or command:"jira-comments", args:["EX-123","--limit","20","--order","-created"]. Find the requested comment ID in the returned comments; never pass "comments" or a comment ID as extra issue keys. A failed comment read does not invalidate a successful issue read.
 jira_write {operation:comment|edit|create,id?,body?,project?,type?,summary?,fields?:object}: prepare the complete ticket change, then request exact-action approval for every create, comment or edit.
 confluence_write {operation:create|update,id?,space?,title?,body}: approval always required.
 browser_read {url}: read a dynamic page in an isolated Edge profile and save a screenshot. browser_action {url,steps:[{operation:click|fill|press,selector,value?}]}: navigation/search/filtering may receive independent preparation review; external changes require exact-action approval.
@@ -136,6 +136,40 @@ def is_recovery_file(job_id,path):
 
 def safe_name(name):
     return re.sub(r'[^a-zA-Z0-9._ -]','_',name)[:100].strip(' .') or 'artifact'
+
+
+def validate_jira_read(command,args):
+    """Reject malformed comment lookups before they become misleading issue 404s."""
+    if not isinstance(args,list) or any(not isinstance(x,str) for x in args):
+        raise ValueError('Jira read args must be a list of strings.')
+    if command not in {'jira-issue','jira-comments'}:
+        return
+    hint='Use jira-issue with args ["EX-123","--comments"] or jira-comments with args ["EX-123"]; find the comment ID in the returned comments.'
+    switches={'--raw','--dry-run','--verbose'}
+    values={'--fields','--expand'} if command=='jira-issue' else {'--limit','--order'}
+    if command=='jira-issue':
+        switches |= {'--comments','--links'}
+    keys=[]
+    i=0
+    while i<len(args):
+        arg=args[i]
+        flag,separator,value=arg.partition('=')
+        if arg in switches:
+            pass
+        elif flag in values:
+            if not separator:
+                i+=1
+                if i>=len(args) or args[i].startswith('--'):
+                    raise ValueError('Missing Jira read option value. '+hint)
+            elif not value:
+                raise ValueError('Missing Jira read option value. '+hint)
+        elif re.fullmatch(r'(?:[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*|[1-9][0-9]*)',arg):
+            keys.append(arg)
+        else:
+            raise ValueError('Invalid Jira issue key or read option. '+hint)
+        i+=1
+    if not keys or (command=='jira-comments' and len(keys)!=1):
+        raise ValueError('Supply issue keys for jira-issue or exactly one issue key for jira-comments. '+hint)
 
 
 def validate_jira_parent(a,parent):
@@ -694,9 +728,10 @@ class Tools:
             return run_skill('slai-email','send_mail.py',argv)
         if action in {'jira_read','jira_write','confluence_write'}:
             if action=='jira_read':
-                allowed={'check','jira-search','jira-issue','jira-projects','jira-types','jira-createmeta','jira-fields','jira-transitions','conf-search','conf-page','conf-spaces'}
+                allowed={'check','jira-search','jira-issue','jira-comments','jira-projects','jira-types','jira-createmeta','jira-fields','jira-transitions','conf-search','conf-page','conf-spaces'}
                 if a['command'] not in allowed:
                     raise ValueError('Unsupported read command.')
+                validate_jira_read(a['command'],a.get('args',[]))
                 args=[a['command'],*a.get('args',[])]
                 if any(x in {'raw','--token-stdin'} for x in args):
                     raise ValueError('Credential/raw operations are not available.')
