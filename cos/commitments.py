@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS commitment_evidence(
  fingerprint TEXT NOT NULL, reviewed INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL,
  UNIQUE(commitment_id,fingerprint));
 CREATE INDEX IF NOT EXISTS commitment_evidence_parent ON commitment_evidence(commitment_id,created);
+CREATE INDEX IF NOT EXISTS commitment_evidence_source ON commitment_evidence(source_identity,source_timestamp);
 CREATE TABLE IF NOT EXISTS commitment_history(
  id INTEGER PRIMARY KEY AUTOINCREMENT, commitment_id TEXT NOT NULL, action TEXT NOT NULL,
  actor TEXT NOT NULL, note TEXT NOT NULL, details TEXT NOT NULL, created TEXT NOT NULL);
@@ -131,13 +132,29 @@ class Commitments:
         source=verified_source(self.store,job,args)
         if data['deadline_certainty']!='unknown' and data['deadline_text'] not in source['excerpt']:
             raise ValueError('Deadline wording must occur in the cited transcript evidence.')
-        fingerprint=digest(normalized(data['owner']),normalized(data['deliverable']),data['scope'],source['source_identity'],source['source_timestamp'],source['excerpt'])
+        fingerprint=digest(normalized(data['owner']),normalized(data['deliverable']),data['scope'],source['source_identity'],source['source_timestamp'])
         with self.store.lock,self.store.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             existing=c.execute('SELECT id FROM commitments WHERE fingerprint=?',(fingerprint,)).fetchone()
+            # Legacy fingerprints included the excerpt. A recap may quote more of
+            # the same assignment than the meeting-chat reader did. Reuse that
+            # assignment across jobs, retaining each distinct verified excerpt.
+            if not existing:
+                candidates=c.execute('''SELECT DISTINCT c.* FROM commitments c
+                    JOIN commitment_evidence e ON e.commitment_id=c.id
+                    WHERE e.source_identity=? AND e.source_timestamp=? AND c.scope=?
+                    ORDER BY c.created,c.id''',
+                    (source['source_identity'],source['source_timestamp'],data['scope'])).fetchall()
+                existing=next((r for r in candidates
+                    if normalized(r['owner'])==normalized(data['owner'])
+                    and normalized(r['deliverable'])==normalized(data['deliverable'])),None)
             if existing:
                 identity=canonical(c,existing['id'])['id']
                 reused=True
+                evidence_id,added=add_source(c,identity,source,'assignment')
+                if added:
+                    c.execute('UPDATE commitments SET version=version+1,updated=? WHERE id=?',(now(),identity))
+                    history(c,identity,'evidence_added','agent',details={'evidence_id':evidence_id,'kind':'assignment'})
             else:
                 identity=uid(); stamp=now(); reused=False
                 c.execute('''INSERT INTO commitments(id,owner,deliverable,scope,deadline_text,deadline_date,deadline_certainty,deadline_basis,status,fingerprint,version,created,updated)

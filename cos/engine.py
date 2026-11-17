@@ -909,7 +909,9 @@ class Engine:
 
     def add_result(self,messages,call_id,result):
         if isinstance(result,dict) and result.get('image_data'):
-            messages.append({'role':'tool','tool_call_id':call_id,'content':'Image attached in the following message.'})
+            metadata={k:v for k,v in result.items() if k not in {'image_data','mime'}}
+            messages.append({'role':'tool','tool_call_id':call_id,'content':'Image attached in the following message.'+
+                ('\n'+json.dumps(metadata,ensure_ascii=False) if metadata else '')})
             messages.append({'role':'user','_cos_tool_image':True,'_cos_source_call':call_id,'content':[{'type':'image_url','image_url':{'url':'data:'+result['mime']+';base64,'+result['image_data']}}]})
         else:
             text=json.dumps(result,ensure_ascii=False)
