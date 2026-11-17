@@ -257,6 +257,20 @@ function actionVerificationView(j){
  }).join('');
 }
 
+function approvalMessage(a){
+ const args=JSON.parse(a.args),history=a.tool==='reply_email'&&typeof args._reply_history==='string'&&args._reply_history&&args.body?.endsWith(args._reply_history)?args._reply_history:'';
+ return {text:history?args.body.slice(0,-history.length):args.body,history};
+}
+function approvalMessageView(a){
+ if(!['send_email','reply_email','send_teams'].includes(a.tool))return '';
+ const {text,history}=approvalMessage(a);if(!text&&!history)return '';
+ return '<div class="field"><label for="body-'+a.id+'">'+(history?'Reply text':'Final message body')+'</label><textarea id="body-'+a.id+'">'+esc(text)+'</textarea></div>'+(history?'<details><summary>Quoted conversation history (included in the reply)</summary><div class="readable">'+esc(history)+'</div></details>':'');
+}
+function approvalEdits(a,value){
+ const {text,history}=approvalMessage(a),normalize=x=>x.replace(/\r\n?/g,'\n');
+ if(normalize(value)===normalize(text))return {};
+ return {edited:history?{reply_text:value}:{body:value}};
+}
 async function openJob(id,{background=false}={}){
  const wasOpening=!background&&(selected!==id||!$('#job-dialog').open);
  const generation=background?(openJob.generation||0):(openJob.generation=(openJob.generation||0)+1);
@@ -287,7 +301,7 @@ async function openJob(id,{background=false}={}){
  j.approvals.filter(a=>a.status==='executing').map(a=>'<section class="approval" role="status"><h3>Approved action in progress</h3><p>'+esc(a.tool)+' is running. Your approval is recorded; you can keep using the app while it finishes.</p></section>').join('')+
  actionVerificationView(j)+
  j.approvals.filter(a=>a.status==='pending').map(a=>{const args=JSON.parse(a.args);return '<section class="approval"><h3>'+esc(a.tool==='delegate'?'Start delegated work':({calendar_rsvp:'Respond to calendar invitation',delete_email:'Delete email',mark_email_read:'Mark email as read',mark_teams_read:'Mark Teams chat as read',create_feature_branch:'Create feature branch'}[a.tool]||a.tool)+' · '+a.risk+' risk')+'</h3><p class="small">'+esc(a.reason)+'</p>'+(['send_email','reply_email','send_teams'].includes(a.tool)?readable('To',args.to||args.chat_id||'Original thread')+(args.cc?readable('Cc',args.cc):'')+(args.bcc?readable('Bcc',args.bcc):'')+readable('Subject',args.subject||b.email_subject):a.tool==='delegate'?'<p>This is a legacy delegation proposal. Preparation no longer needs approval; external changes retain their separate approvals.</p>'+args.tasks.map(t=>'<article class="panel">'+readable('Organization',t.org)+readable('Project',t.project)+readable('Task scope and expected result',t.request)+'</article>').join(''):actionPreview(a.tool,args))+''+
- ((args.body&&['send_email','reply_email','send_teams'].includes(a.tool)?'<div class="field"><label for="body-'+a.id+'">Final message body</label><textarea id="body-'+a.id+'">'+esc(args.body)+'</textarea></div>':'')+'<div class="row">'+btn('Approve exact action','data-approve="'+a.id+'"')+btn('Reject & revise','data-reject="'+a.id+'"','secondary')+'</div>')+'</section>'}).join('')+
+ (approvalMessageView(a)+'<div class="row">'+btn('Approve exact action','data-approve="'+a.id+'"')+btn('Reject & revise','data-reject="'+a.id+'"','secondary')+'</div>')+'</section>'}).join('')+
  (j.result&&!j.result_review?'<section class="panel"><h3>Result</h3><p class="result">'+esc(j.result)+'</p></section>':'')+
  jobFilesView(j.files)+
  (j.children.length?'<h3>Delegated work</h3>'+j.children.map(c=>'<div class="child" data-child="'+c.id+'">'+badge(c.status)+' '+esc(c.org)+' · '+esc(c.display_name||c.title)+'</div>').join(''):'')+
@@ -306,7 +320,7 @@ async function openJob(id,{background=false}={}){
  });
  if($('#answer-form'))$('#answer-form').onsubmit=handle(async e=>{e.preventDefault();await api('jobs/'+id+'/answer',{answer:$('#answer').value});toast('Response received');await Promise.all([openJob(id),refresh(true)])});
  document.querySelectorAll('[data-child]').forEach(b=>b.onclick=handle(()=>openJob(b.dataset.child)));
- document.querySelectorAll('[data-approve],[data-reject]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{const aid=b.dataset.approve||b.dataset.reject,body=$('#body-'+aid);await api('approvals/'+aid,{approved:!!b.dataset.approve,...(body?{edited:{body:body.value}}:{})});toast(b.dataset.approve?'Approval recorded. The action will finish in the background.':'Action rejected; COS will revise it.');await Promise.all([openJob(id),refresh(true)])}finally{b.disabled=false}}));
+ document.querySelectorAll('[data-approve],[data-reject]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{const aid=b.dataset.approve||b.dataset.reject,body=$('#body-'+aid),approval=j.approvals.find(a=>a.id===aid);await api('approvals/'+aid,{approved:!!b.dataset.approve,...(b.dataset.approve&&body?approvalEdits(approval,body.value):{})});toast(b.dataset.approve?'Approval recorded. The action will finish in the background.':'Action rejected; COS will revise it.');await Promise.all([openJob(id),refresh(true)])}finally{b.disabled=false}}));
  bindReview(id);
  bindJobRename(j);
  if($('#mark-result-reviewed'))$('#mark-result-reviewed').onclick=handle(async()=>{

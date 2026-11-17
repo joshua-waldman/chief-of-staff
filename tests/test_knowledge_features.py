@@ -86,6 +86,51 @@ def test_engine_reply_approval_freezes_history_and_blocks_removal(tmp_path,monke
     with pytest.raises(ValueError,match='already'): engine.decide(approval['id'],True)
 
 
+@pytest.mark.parametrize('edit_mode',['unchanged','reply_text','legacy_body','legacy_unchanged'])
+@pytest.mark.parametrize('line_ending',['\r\n','\r','\n'])
+def test_reply_approval_preserves_frozen_history_across_browser_line_endings(tmp_path,monkeypatch,edit_mode,line_ending):
+    from cos import integrations
+    store=Store(tmp_path/'test.db'); monkeypatch.setattr(tools,'DATA',tmp_path)
+    history='\n\n----- Original message -----\nFrom: sender@example.com\n\nQuoted <history>\n'.replace('\n',line_ending)
+    def prepare(action,args):
+        return {'id':args['id'],'to':'sender@example.com','subject':'Re: Discussion','body':args['body']+history,'_reply_history':history}
+    monkeypatch.setattr(integrations,'communication',prepare)
+    job=store.create_job('Draft an email reply','Communications')
+    engine=Engine(store,Scripted(call('reply_email',{'id':'source','body':'My answer\r\nThanks'})))
+    engine.run(job['id']); approval=store.rows('SELECT * FROM approvals')[0]
+    sent=[]; monkeypatch.setattr(engine.tools,'execute',lambda job,action,args:sent.append(args) or {'executed':True})
+    reply='My answer\r\nThanks' if edit_mode in {'unchanged','legacy_unchanged'} else 'Edited answer'
+    edits=None if edit_mode=='unchanged' else {'reply_text':reply} if edit_mode=='reply_text' else {'body':(reply+history).replace('\r\n','\n').replace('\r','\n')}
+    engine.decide(approval['id'],True,edits)
+    assert sent[0]['body']==reply+history
+    assert sent[0]['_reply_history']==history
+    assert 'reply_text' not in sent[0]
+    assert store.one('SELECT status FROM approvals WHERE id=?',(approval['id'],))['status']=='executed'
+
+
+@pytest.mark.parametrize('edits',[
+    {'body':'Answer only'},
+    {'body':'Answer\nQuoted changed history'},
+    {'body':'Answer\nQuoted history\n'},
+    {'body':'Answer\nQuoted history','reply_text':'Answer'},
+    {'reply_text':None},
+    {'subject':'Different subject'},
+])
+def test_invalid_reply_edits_leave_approval_pending_and_never_execute(tmp_path,monkeypatch,edits):
+    store=Store(tmp_path/'test.db'); monkeypatch.setattr(tools,'DATA',tmp_path)
+    job=store.create_job('Draft an email reply','Communications')
+    args={'id':'source','to':'sender@example.com','subject':'Re: Discussion','body':'Answer\nQuoted history','_reply_history':'\nQuoted history'}
+    store.write('INSERT INTO approvals(id,job_id,tool,args,status) VALUES(?,?,?,?,?)',('reply',job['id'],'reply_email',json.dumps(args),'pending'))
+    engine=Engine(store,Scripted())
+    sent=[]; monkeypatch.setattr(engine.tools,'execute',lambda *a:sent.append(a))
+    with pytest.raises(ValueError):
+        engine.decide('reply',True,edits)
+    saved=store.one('SELECT status,args FROM approvals WHERE id=?',('reply',))
+    assert saved['status']=='pending'
+    assert json.loads(saved['args'])==args
+    assert sent==[]
+
+
 def test_permission_rejection_does_not_become_uncertain_or_retry(tmp_path,monkeypatch):
     from cos.integrations import CommunicationRejected
     store=Store(tmp_path/'test.db'); monkeypatch.setattr(tools,'DATA',tmp_path)
