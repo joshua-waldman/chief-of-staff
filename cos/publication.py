@@ -89,6 +89,7 @@ def prepare(store, job):
                 'head':before['head'],'tree_sha256':before['tree_sha256'],
                 'patch_sha256':digest(patch),'files':[], 'tests':tests,
                 'validated':bool(tests) and all(t['result']['exit_code']==0 and t['result']['validation']['unchanged'] for t in tests)}
+    manifest['supersedes'] = store.state('publication_integrated:'+job['id'],[])
     target = workspace(job['id'])/'publication'/('publication-'+uid()+'.zip')
     target.parent.mkdir(parents=True,exist_ok=True)
     try:
@@ -160,7 +161,9 @@ def for_handoff(store,job,file_ids):
             continue
         manifest=store.state('publication:'+digest(verified_source(store,file).read_bytes()),{})
         if manifest.get('job_id')==job['id'] and manifest.get('tree_sha256')==current['tree_sha256']:
-            return {'file_id':fid,'url':'/api/files/'+fid,'validated':manifest['validated']}
+            from .publication_completion import identity
+            return {'file_id':fid,'url':'/api/files/'+fid,'validated':manifest['validated'],
+                    'merged':store.state('publication_merged:'+identity(manifest),None)}
     if len(file_ids)>=16:
         raise ValueError('Leave one deliverable slot for the required publication package.')
     return prepare(store,job)
@@ -197,6 +200,9 @@ def apply_package(store, job, file_id):
     except OSError as error:
         raise ActionNotExecuted(str(error)) from error
     conflicts = [name for name in git_bytes(root,'diff','--name-only','--diff-filter=U','-z').decode('utf-8').split('\0') if name]
+    if result.returncode == 0 or conflicts:
+        from .publication_completion import identity
+        store.set_state('publication_integrated:'+job['id'],sorted({identity(manifest), *manifest.get('supersedes',[])}))
     return {'applied':result.returncode==0,'conflicts':conflicts,'base_commit':saved['base_commit'],
             'output':result.stderr.decode('utf-8',errors='replace')[-4000:],
             'instruction':'Resolve conflicts in this isolated checkout with staged apply_changes; run tests and prepare a new publication package. Earlier validation and approval do not cover this integration.'}

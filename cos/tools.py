@@ -64,8 +64,9 @@ COMMON = {'search_knowledge','suggest_knowledge','update_brief','list_files','re
 COMMON |= {'read_action_receipt','edit_file','search_commitments','create_owner_commitment'}
 COMMON.add('recover_inputs')
 for org in ('Engineering','Self-Improvement'):
-    ORG_ACTIONS[org] |= {'prepare_publication','validate_publication','apply_publication'}
+    ORG_ACTIONS[org] |= {'prepare_publication','validate_publication','apply_publication','verify_publication'}
 CATALOG += '''
+verify_publication {file_id,pr_number}: read GitHub to verify the attached tested package's exact committed and pushed branch was merged by this PR into the default branch, and compare merged source to the committed package. Saves server evidence for completion. Self-Improvement owner tasks and publication coordinators cannot finish until this succeeds for every change. Keep tasks open while children run, approvals are pending, or publication is unfinished. Delegated preparation may return its package to an open Self-Improvement parent; that parent retains publication responsibility. Do not finish with a publication-status report in place of a merged change.
 recover_inputs {file_ids?:[id],expected_sha256?:{file_id:sha256}}: discover or recover historical artifact links cited by this job or its attached text documents within the same owner task tree. Supply original hashes when the handoff specifies them: retained versions survive file regeneration. Server verifies hashes and attaches copies; never grants access to unrelated jobs. Call before asking the owner to reattach COS intermediates. An empty selection lists cited inputs. If exact bytes are truly lost, reconstruct from the current base, test, and prepare fresh approval.
 prepare_publication {}: save an immutable ZIP containing the isolated checkout's base commit, exact original/proposed files, binary Git patch, checksums and actual test receipts. Tests must run after apply_changes in the checkout. The package records whether tested source stayed unchanged. Explicitly select this ZIP in finish/file_ids and subsequent delegation.
 validate_publication {file_id}: verify an attached server-generated publication package and compare its base to the integration checkout. A changed base requires a new integration job/worktree, reapplication, conflict resolution, tests and a fresh package/approval. This check never authorizes publishing.
@@ -373,6 +374,9 @@ class Tools:
         if action=='recover_inputs':
             from .artifact_inputs import recover
             return recover(self.store,job,a.get('file_ids',[]),a.get('expected_sha256',{}))
+        if action=='verify_publication':
+            from .publication_completion import verify
+            return verify(self.store,job,a['file_id'],a['pr_number'])
         if action in {'prepare_publication','validate_publication','apply_publication'}:
             from . import publication
             if action=='apply_publication':
