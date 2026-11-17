@@ -25,6 +25,34 @@ def save_source(c, job_id, source, message_id, sender, subject, received, body, 
     if identity:
         c.execute('INSERT OR REPLACE INTO communication_sender_ids VALUES(?,?,?,?,?)',
                   (job_id,source,message_id,identity,sender))
+    if source=='email' and internet_id and not complete:
+        _reconcile_email_sources(c,job_id)
+
+
+def _reconcile_email_sources(c, job_id):
+    """Link unread envelopes only to unambiguous server-read RFC identities."""
+    unread=c.execute('''SELECT s.*,i.internet_id FROM communication_sources s
+        JOIN email_source_ids i ON i.job_id=s.job_id AND i.message_id=s.message_id
+        WHERE s.job_id=? AND s.source='email' AND s.complete=0 AND i.internet_id<>'' ''',(job_id,)).fetchall()
+    for source in unread:
+        candidates=c.execute('''SELECT s.*,i.canonical_id FROM communication_sources s
+            JOIN email_source_ids i ON i.job_id=s.job_id AND i.message_id=s.message_id
+            WHERE s.job_id=? AND s.source='email' AND s.complete=1
+            AND i.internet_id=? AND i.canonical_id<>'' ''',(job_id,source['internet_id'])).fetchall()
+        # Multiple mailbox items can share an RFC ID. Do not guess which copy
+        # an envelope represents, even when its subject or preview matches.
+        canonical_ids={row['canonical_id'] for row in candidates}
+        if len(canonical_ids)!=1:
+            continue
+        canonical=next(iter(canonical_ids))
+        body=next((row for row in candidates if row['message_id']==canonical),None)
+        if (body is None or not source['sender'] or not source['received'] or
+                source['sender'].casefold()!=body['sender'].casefold() or source['received']!=body['received']):
+            continue
+        save_source(c,job_id,'email',source['message_id'],body['sender'],body['subject'],body['received'],body['body'],
+                    internet_id=source['internet_id'])
+        c.execute('UPDATE email_source_ids SET canonical_id=? WHERE job_id=? AND message_id=?',
+                  (canonical,job_id,source['message_id']))
 
 
 def cache_source_read(store, job_id, action, args, result):
@@ -42,6 +70,7 @@ def cache_source_read(store, job_id, action, args, result):
                 c.execute('''INSERT INTO email_source_ids(job_id,message_id,canonical_id) VALUES(?,?,?)
                     ON CONFLICT(job_id,message_id) DO UPDATE SET canonical_id=excluded.canonical_id''',
                     (job_id,identity,canonical))
+            _reconcile_email_sources(c,job_id)
         elif action=='read_teams' and isinstance(result,list):
             from .teams_topics import scoped_messages
             result=scoped_messages(store,job_id,args['chat_id'],result)
@@ -81,21 +110,31 @@ def recover_email_questions(store, job_id=None, *, only_complete=False):
     query="SELECT * FROM jobs WHERE org='Communications' AND status='waiting_input'"
     for job in store.rows(query+(' AND id=?' if job_id else ''),(job_id,) if job_id else ()):
         question=job['question'].lower()
-        if not (re.search(r'(?:message|email|outlook|source).{0,30}\bid\b',question) and
+        if not (re.search(r'(?:message|email|outlook|source).{0,30}\bids?\b',question) and
                 any(word in question for word in ('malformed','invalid','source-read gate','unread','not found','unavailable'))):
             continue
         last=store.one("SELECT body FROM events WHERE job_id=? AND kind='tool_error' ORDER BY id DESC LIMIT 1",(job['id'],))
-        if not last or not last['body'].startswith('Cannot finish while source bodies remain unread.'):
+        gate='Cannot finish while source bodies remain unread.'
+        if not last or not (last['body'].startswith(gate) or
+                re.search(r'ErrorInvalidIdMalformed|ErrorInvalidId|ErrorItemNotFound|Graph API 404:',last['body'])):
+            continue
+        if not store.one("SELECT 1 FROM events WHERE job_id=? AND kind='tool_error' AND body LIKE ? LIMIT 1",
+                         (job['id'],gate+'%')):
             continue
         with store.lock,store.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             current=c.execute('SELECT * FROM jobs WHERE id=?',(job['id'],)).fetchone()
             state=json.loads(current['messages'])
             if (current['status']!='waiting_input' or current['question']!=job['question'] or
-                    not isinstance(state,dict) or (state.get('email_id_recovery') and not (only_complete and state['email_id_recovery']==1)) or state.get('waiting_action') or
+                    not isinstance(state,dict) or state.get('waiting_action') or
                     c.execute("SELECT 1 FROM approvals WHERE job_id=? AND status IN ('pending','executing','uncertain')",(job['id'],)).fetchone()):
                 continue
-            if only_complete and c.execute('SELECT 1 FROM communication_sources WHERE job_id=? AND complete=0',(job['id'],)).fetchone():
+            _reconcile_email_sources(c,job['id'])
+            incomplete=c.execute('SELECT 1 FROM communication_sources WHERE job_id=? AND complete=0',(job['id'],)).fetchone()
+            complete=c.execute("SELECT 1 FROM communication_sources WHERE job_id=? AND source='email' AND complete=1",(job['id'],)).fetchone()
+            if state.get('email_id_recovery') and not (state['email_id_recovery']==1 and complete and not incomplete):
+                continue
+            if only_complete and incomplete:
                 continue
             messages=state.setdefault('messages',[])
             call=state.get('waiting_call')
@@ -125,7 +164,7 @@ def recover_email_questions(store, job_id=None, *, only_complete=False):
                         resolved.append(failures.pop(key))
             if resolved:
                 state['resolved_errors']=(state.get('resolved_errors',[])+resolved)[-12:]
-            state['email_id_recovery']=2 if only_complete else 1
+            state['email_id_recovery']=2 if complete and not incomplete else 1
             stamp=now()
             c.execute("UPDATE jobs SET messages=?,status='queued',question='',step=0,updated=? WHERE id=?",(json.dumps(state),stamp,job['id']))
             row=c.execute('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],)).fetchone()
