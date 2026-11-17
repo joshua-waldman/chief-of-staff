@@ -791,6 +791,17 @@ executing and uncertain actions are never replayed. A previous preparation-revie
 stop is not repeatedly resumed automatically. Pending external-write approvals
 remain pending. Restart the server and refresh the browser after updating.
 
+### Jira comment reads
+
+Communications and other Jira readers can request `jira-issue` with args
+`["EX-123","--comments"]`, or `jira-comments` with args `["EX-123"]`.
+The latter supports `--limit` and `--order`; match the requested comment ID in
+the returned comments. Issue reads omit comments unless explicitly requested.
+Malformed positional lookups such as `["EX-123","comments","12345"]` are
+rejected locally with the correct syntax before any Jira request. A comment
+lookup failure does not mean an earlier successful issue read failed.
+Restart COS after updating, then resume a blocked job to retry its comment read.
+
 ### Optional Teams mark-as-read authentication
 
 A Teams summary can finish even if optional mark-as-read is rejected. The job keeps its summary and a cleanup warning; rejected actions remain recorded as not executed. On restart, COS repairs old informational jobs stuck solely on a definitive read rejection. New source activity, incomplete sources, unfinished delegated work, and uncertain action outcomes retain their existing handling. Nothing is replayed during repair.

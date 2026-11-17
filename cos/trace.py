@@ -116,7 +116,8 @@ def tool_call(fn):
                 value=a.get('to','')
                 meta['recipient_format']={'semicolons':value.count(';'),'commas':value.count(',')} if isinstance(value,str) else {'array_count':len(value) if isinstance(value,list) else 0}
             if action in {'jira_read','jira_write'}:
-                meta['jira_targets']=[v for v in [a.get('id',''),*a.get('args',[])] if isinstance(v,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{1,30}-[1-9][0-9]{0,12}',v)]
+                jira_args=a.get('args',[])
+                meta['jira_targets']=[v for v in [a.get('id',''),*(jira_args if isinstance(jira_args,list) else [])] if isinstance(v,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{1,30}-[1-9][0-9]{0,12}',v)]
                 if a.get('operation') in {'comment','edit','create'}:meta['operation']=a['operation']
                 if isinstance(a.get('command'),str) and re.fullmatch(r'(?:jira-|conf-)[a-z-]+|check',a['command']):meta['command']=a['command']
             emit('tool.started',meta)
