@@ -49,6 +49,30 @@ def test_source_linked_proposal_is_durable_and_idempotent(env):
     assert reopened.detail(item['id'])['deliverable']==args['deliverable']
 
 
+@pytest.mark.parametrize('closed', [False, True])
+def test_same_assignment_from_recap_reuses_legacy_record_with_longer_excerpt(env,closed):
+    from cos.commitments import digest,normalized
+    store,job,registry,args=env
+    item=registry.record(job,args)
+    legacy=digest(normalized(args['owner']),normalized(args['deliverable']),'global',
+        'recording-one',args['source_timestamp'],args['evidence'])
+    store.write('UPDATE commitments SET fingerprint=? WHERE id=?',(legacy,item['id']))
+    if closed:
+        item=review(registry,item,'dismiss',note='Owner dismissed this work')
+    recap=store.create_job('Meeting recap notification','Communications')
+    path=Path(store.one('SELECT path FROM files WHERE id=?',('transcript',))['path'])
+    store.write('INSERT INTO files VALUES(?,?,?,?,?,?)',('recap',recap['id'],path.name,str(path),'text/plain','now'))
+    store.set_state('meeting_sources:'+recap['id'],{'recap':store.state('meeting_sources:'+job['id'])['transcript']})
+    repeated=registry.record(recap,{**args,'source_file_id':'recap','evidence':path.read_text(encoding='utf-8')})
+    assert repeated['reused'] and repeated['id']==item['id']
+    assert repeated['status']==('dismissed' if closed else 'proposed')
+    assert len(repeated['evidence'])==2
+    assert repeated['version']==item['version']+1
+    assert repeated['history'][-1]['action']=='evidence_added'
+    assert registry.search(status='all')['total']==1
+    assert registry.record(recap,{**args,'source_file_id':'recap','evidence':path.read_text(encoding='utf-8')})['version']==repeated['version']
+
+
 @pytest.mark.parametrize('changes',[
     {'evidence':'[00:01:00] Invented assignment'},
     {'source_timestamp':'00:09:00'},

@@ -119,6 +119,41 @@ def test_download_failure_records_a_gap_instead_of_silently_ignoring_image(tmp_p
     assert store.rows('SELECT * FROM communication_sources')[0]['body'] == IMAGE
 
 
+def test_shared_documents_download_from_scoped_sources_and_do_not_count_as_unread_images(tmp_path,monkeypatch):
+    from cos import tools
+    store,job=setup_topic(tmp_path)
+    body=IMAGE+'<a href="https://amd.sharepoint.com/:b:/g/guide">Setup guide</a>'
+    store.write('UPDATE communication_sources SET body=? WHERE job_id=?',(body,job['id']))
+    def bridge(action,args):
+        assert args['messages']==[{'id':'image','content':body}]
+        target=Path(args['target']);target.mkdir(parents=True)
+        picture=target/'image.png';picture.write_bytes(PNG)
+        pdf=target/'guide.txt';pdf.write_text('Actual guide contents',encoding='utf-8')
+        return {'messages':[{'message_id':'image','saved':[str(picture)],'errors':[]}],
+            'artifacts':[{'message_id':'image','name':'guide.txt','source':'https://amd.sharepoint.com/guide',
+                'status':'downloaded','path':str(pdf)}]}
+    monkeypatch.setattr(tools,'communication',bridge)
+    executor=Tools(store);result=executor.execute(job,'teams_attachments',{'chat_id':'chat'})
+    assert len(result['files'])==2
+    image=next(f for f in result['files'] if f['name']=='image.png')
+    document=next(f for f in result['files'] if f['name']=='guide.txt')
+    assert executor.execute(job,'read_file',{'path':document['file_id']})['text']=='Actual guide contents'
+    assert pending_images(store,job['id'])==['image']
+    executor.execute(job,'read_file',{'path':image['file_id']})
+    assert pending_images(store,job['id'])==[]
+    # An unavailable document must not erase a successfully inspected screenshot.
+    from cos.teams_content import inspected_image
+    coverage=store.state('teams_images:'+job['id'])
+    coverage['image']['errors']=['Linked document unavailable']
+    coverage['image']['image_errors']=[]
+    store.set_state('teams_images:'+job['id'],coverage)
+    assert inspected_image(store,job['id'],'image')
+    # A document alone can never establish that the screenshot was inspected.
+    coverage['image']['files']=[document]
+    store.set_state('teams_images:'+job['id'],coverage)
+    assert not inspected_image(store,job['id'],'image')
+
+
 def test_media_guard_never_downloads_untrusted_host_and_keeps_other_images(tmp_path):
     class Client:
         calls = []

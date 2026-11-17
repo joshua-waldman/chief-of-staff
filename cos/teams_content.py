@@ -66,7 +66,8 @@ def download_images(client, messages, target):
     target = Path(target)
     target.mkdir(parents=True, exist_ok=True)
     records = []
-    client.get_skypetoken()
+    if any(parse(message['content']).images for message in messages):
+        client.get_skypetoken()
     for message in messages:
         record = {'message_id': message['id'], 'saved': [], 'errors': []}
         for index, image in enumerate(parse(message['content']).images):
@@ -97,6 +98,11 @@ def download_images(client, messages, target):
     return {'messages': records}
 
 
+def visual_files(record):
+    return [f for f in record.get('files', []) if Path(f.get('path') or f['name']).suffix.lower()
+        in {'.png','.jpg','.jpeg','.gif','.webp','.bmp','.tif','.tiff'}]
+
+
 def pending_images(store, job_id):
     """Require visual reads, or a recorded access gap, before finishing triage."""
     coverage = store.state('teams_images:' + job_id, {})
@@ -107,7 +113,7 @@ def pending_images(store, job_id):
             continue
         digest = hashlib.sha256(source['body'].encode()).hexdigest()
         record = coverage.get(source['message_id'], {})
-        if record.get('digest') != digest or any(f['file_id'] not in viewed for f in record.get('files', [])):
+        if record.get('digest') != digest or any(f['file_id'] not in viewed for f in visual_files(record)):
             pending.append(source['message_id'])
     return pending
 
@@ -119,8 +125,8 @@ def inspected_image(store, job_id, message_id):
     record = store.state('teams_images:' + job_id, {}).get(message_id, {})
     viewed = store.state('viewed_images:' + job_id, [])
     return (record.get('digest') == hashlib.sha256(source['body'].encode()).hexdigest()
-            and bool(record.get('files')) and not record.get('errors')
-            and all(f['file_id'] in viewed for f in record['files']))
+            and bool(visual_files(record)) and not record.get('image_errors',record.get('errors'))
+            and all(f['file_id'] in viewed for f in visual_files(record)))
 
 
 def empty_historical_gap(store, job, brief):
