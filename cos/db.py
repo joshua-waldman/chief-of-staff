@@ -23,6 +23,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS trace_events(id TEXT PRIMARY KEY,job_id TEXT,created TEXT,phase TEXT,payload TEXT);
             CREATE INDEX IF NOT EXISTS trace_job ON trace_events(job_id,created);
             CREATE TABLE IF NOT EXISTS artifact_provenance(file_id TEXT PRIMARY KEY,sha256 TEXT,size INTEGER,created TEXT);
+            CREATE TABLE IF NOT EXISTS artifact_versions(file_id TEXT,sha256 TEXT,size INTEGER,created TEXT,PRIMARY KEY(file_id,sha256));
+            INSERT OR IGNORE INTO artifact_versions SELECT file_id,sha256,size,created FROM artifact_provenance;
             CREATE TABLE IF NOT EXISTS knowledge(id TEXT PRIMARY KEY,kind TEXT,title TEXT,content TEXT,scope TEXT,status TEXT,source TEXT,source_job TEXT,created TEXT,updated TEXT,uses INTEGER,helpful INTEGER,fingerprint TEXT);
             CREATE UNIQUE INDEX IF NOT EXISTS knowledge_fingerprint ON knowledge(fingerprint);
             CREATE TABLE IF NOT EXISTS knowledge_targets(knowledge_id TEXT PRIMARY KEY,source TEXT NOT NULL,thread_id TEXT NOT NULL);

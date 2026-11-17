@@ -249,14 +249,15 @@ def test_feature_branch_creation_is_reviewed_and_never_overwrites(tmp_path,monke
     from cos import engineering
     repo=tmp_path/'repo';repo.mkdir()
     subprocess.run(['git','init',str(repo)],check=True,capture_output=True)
+    subprocess.run(['git','-C',str(repo),'-c','user.name=COS Tests','-c','user.email=cos-tests@example.invalid','commit','--allow-empty','-m','Initial source'],check=True,capture_output=True)
+    monkeypatch.setattr(tools,'DATA',tmp_path/'data')
     monkeypatch.setattr(engineering,'settings',lambda:{'projects':{'Synthetic':str(repo)},'engineering_workflows':{'*':{'require_ticket':True}}})
-    args={'name':'Filtering','ticket':'TEST-2'}; job={'project':'Synthetic'}
+    args={'name':'Filtering','ticket':'TEST-2'}; job={'project':'Synthetic','id':'featurejob'}
     args['branch']=engineering.branch_name(job,args)
     assert classify('create_feature_branch',args).approval
-    assert engineering.create_branch(job,args)['branch']=='codex/TEST-2-filtering'
+    assert engineering.create_branch(job,args)['branch']=='codex/TEST-2-filtering-featurej'
     engineering.verify_branch(job)
-    # An unborn repository has no existing branch ref until the first commit;
-    # validate the preview instead of committing synthetic history just for a test.
+    assert engineering.create_branch(job,args)['resumed']
     with pytest.raises(ValueError,match='preview'): engineering.create_branch(job,{**args,'branch':'different'})
 
 

@@ -563,13 +563,57 @@ or organization-specific keyword is supplied by this feature. For example:
 }
 ```
 
-`create_feature_branch` proposes `prefix + ticket + descriptive name` in the job's
-registered repository. It never resets or overwrites an existing branch. Configured
+`create_feature_branch` proposes `prefix + ticket + descriptive name + job suffix`
+in a job-owned Git worktree at `workspace/checkout`, pinned to the source checkout's
+HEAD at creation. Parallel features have separate files, indexes and branches;
+the running application's checkout stays on its current branch. A repeated call
+resumes that job's same feature; a new feature requires a new job. Worktree identity
+and the base commit are saved outside the agent-writable workspace and survive restart.
+It never resets or overwrites an existing branch. Configured
 branch requirements are checked for each target project before patch approval and
 again before application. Jira creation accepts an explicit parent or uses the
 configured default, checking live create metadata, hierarchy levels and same-project
 subtask restrictions. Unverifiable hierarchy blocks creation rather than guessing.
 An empty workflow configuration imposes no new project requirements.
+
+Self-Improvement must apply staged changes in its isolated checkout **before**
+running tests there. Autonomous patches and test commands cannot target the live
+application checkout. Applying an improvement prepares a feature; it no longer
+updates the running source. Publishing, integration into the release branch, and
+deployment retain their separate exact-action approvals.
+
+`prepare_publication` captures a self-contained ZIP with the base commit, original
+and proposed files (including additions/deletions/binaries), a binary Git patch,
+checksums and actual test receipts. A package is marked validated only when recorded
+checks passed against those same source bytes and the source stayed unchanged during
+testing. Finishing an implementation automatically retains and selects a current
+package if the agent omitted it, with an explicit validation status; an unvalidated
+draft cannot pass the publication gate. Pass the entire package through explicit
+`file_ids` inputs and outputs.
+`validate_publication` checks its server-owned identity and integration base. Native
+Git write commands require `publication_file_id`, execute only in the job's isolated
+checkout, and recheck tested bytes and base at proposal and execution time. This
+does not grant publication approval; opaque scripts retain effects review and
+exact-action approval.
+
+When concurrent work advances the base, preserve the package, create a fresh
+integration job/worktree, and use `apply_publication` for three-way application.
+Resolve reported conflicts in that isolated checkout, rerun checks, and prepare a
+new package for fresh publication approval. Integration cannot silently replace
+another feature or inherit the earlier package's validation. Worktrees and packages
+are retained; this workflow does not automatically delete unfinished features.
+
+Artifact registration retains checksum-addressed copies outside agent-writable
+workspaces, with version history when an artifact is regenerated. Transfers verify
+those copies and recover original bytes after source edits or deletion. Recovery
+archives keep their existing compressed storage instead of being duplicated.
+`recover_inputs` discovers historical links cited in a job or its attached text
+documents and attaches verified copies within the same owner task tree. Supply
+`expected_sha256` when a handoff specifies an older version. Links never grant
+access to unrelated jobs. Older artifacts without retained copies can be recovered
+only if their existing bytes match recorded checksums; otherwise COS must rebuild,
+test and prepare a fresh proposal, rather than ask the owner to recreate its
+intermediate files. This is an additive migration and does not replay old actions.
 
 Restart the server after updating source to load these capabilities and the additive
 conversation-binding table. Refresh the browser afterward. Installing this version
