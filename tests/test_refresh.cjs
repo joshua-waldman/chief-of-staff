@@ -87,6 +87,41 @@ function jobRefreshContext(){
  return {ctx,dialog,detail,writes:()=>writes,respond:(title='Title',extra={})=>resolveRequest({id:'job',title,display_name:title,org:'Engineering',status:'completed',approvals:[],files:[],children:[],events:[],...extra})};
 }
 
+test('reply approval separates editable text from escaped, included history',()=>{
+ const ctx={esc:x=>String(x??'').replace(/</g,'&lt;')};vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function approvalMessage('),source.indexOf('async function openJob(')),ctx);
+ const history='\r\n\r\nOriginal <message>\r\n',a={id:'reply',tool:'reply_email',args:JSON.stringify({body:'My answer\r\nThanks'+history,_reply_history:history})};
+ const html=ctx.approvalMessageView(a);
+ assert.match(html,/>Reply text<\/label>/);
+ assert.match(html,/<textarea[^>]*>My answer\r\nThanks<\/textarea>/);
+ assert.match(html,/Quoted conversation history \(included in the reply\)/);
+ assert.match(html,/Original &lt;message>/);
+ assert.ok(!html.includes('Original <message>'));
+ assert.equal(JSON.stringify(ctx.approvalEdits(a,'My answer\nThanks')),'{}');
+ assert.equal(JSON.stringify(ctx.approvalEdits(a,'Revised answer')),JSON.stringify({edited:{reply_text:'Revised answer'}}));
+ const mail={id:'mail',tool:'send_email',args:JSON.stringify({body:'Draft\r\nThanks'})};
+ assert.equal(JSON.stringify(ctx.approvalEdits(mail,'Draft\nThanks')),'{}');
+ assert.equal(JSON.stringify(ctx.approvalEdits(mail,'Final')),JSON.stringify({edited:{body:'Final'}}));
+ assert.match(ctx.approvalMessageView(mail),/Final message body/);
+});
+
+test('approval click skips unchanged edits, submits reply text changes and rejects without edits',async()=>{
+ for(const [decision,value,expected] of [['approve','Edited reply',{approved:true,edited:{reply_text:'Edited reply'}}],['approve','Answer',{approved:true}],['reject','Edited reply',{approved:false}]]){
+  const s=jobRefreshContext(),button={dataset:{[decision]:'reply'}},field={value};
+  const baseQuery=s.ctx.$;s.ctx.$=selector=>selector==='#body-reply'?field:baseQuery(selector);
+  s.ctx.document.querySelectorAll=selector=>selector==='[data-approve],[data-reject]'?[button]:[];
+  const pending=s.ctx.openJob('job');
+  s.respond('Reply',{approvals:[{id:'reply',tool:'reply_email',status:'pending',args:JSON.stringify({body:'Answer\r\nQuoted history',_reply_history:'\r\nQuoted history'})}]});
+  await pending;
+  const requests=[];s.ctx.api=async(path,body)=>{requests.push({path,body});return {}};
+  s.ctx.openJob=async()=>{};s.ctx.refresh=async()=>{};s.ctx.toast=()=>{};
+  await button.onclick();
+  assert.equal(requests[0].path,'approvals/reply');
+  assert.equal(JSON.stringify(requests[0].body),JSON.stringify(expected));
+  assert.equal(button.disabled,false);
+ }
+});
+
 test('unchanged main content keeps its DOM and scroll while header status updates',()=>{
  let writes=0;
  const main={dataset:{view:'acceptance'},scrollTop:0,set innerHTML(value){writes++;this.scrollTop=0}};

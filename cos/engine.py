@@ -17,7 +17,7 @@ from .policy import classify,research_delegation
 from .knowledge import Knowledge
 from .reviews import reply as review_reply,REVIEW_POLICY
 from .trace import emit,job_run,approval_call,failure
-from .mail import prepare as prepare_email,definitely_not_sent
+from .mail import prepare as prepare_email,definitely_not_sent,edit_reply
 from .conversations import deliver,deliver_waiting,reconcile_legacy,pending as conversation_pending,ready as conversation_ready,consumed as conversation_consumed
 from . import progress,recovery
 from .message_triage import PERSONAL_ACTION_POLICY
@@ -1284,13 +1284,18 @@ class Engine:
         args=json.loads(approval['args'])
         if edited_args is not None:
             # Only editable message content; destinations remain visible and immutable.
-            if approval['tool'] not in {'send_email','reply_email','send_teams'} or set(edited_args)-{'body','subject'}:
+            allowed_edits={'body','reply_text'} if approval['tool']=='reply_email' else {'body','subject'}
+            if approval['tool'] not in {'send_email','reply_email','send_teams'} or set(edited_args)-allowed_edits:
                 self.store.write("UPDATE approvals SET status='pending' WHERE id=?",(aid,))
                 raise ValueError('Only message subject and body may be edited here.')
-            args.update(edited_args)
-            if approval['tool']=='reply_email' and (set(edited_args)-{'body'} or not isinstance(args.get('body'),str) or not args['body'].endswith(args.get('_reply_history') or '\0')):
-                self.store.write("UPDATE approvals SET status='pending' WHERE id=?",(aid,))
-                raise ValueError('Keep the quoted conversation history intact. Use review direction to request a new preview.')
+            if approval['tool']=='reply_email':
+                try:
+                    args['body']=edit_reply(args,edited_args)
+                except ValueError:
+                    self.store.write("UPDATE approvals SET status='pending' WHERE id=?",(aid,))
+                    raise
+            else:
+                args.update(edited_args)
             self.store.write('UPDATE approvals SET args=? WHERE id=?',(json.dumps(args),aid))
         if approved and not wait:
             try:

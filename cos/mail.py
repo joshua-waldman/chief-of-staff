@@ -5,6 +5,25 @@ from email.utils import getaddresses
 class SendNotSubmitted(ValueError):
     pass
 
+def edit_reply(args, edits):
+    """Edit reply text while retaining the exact server-prepared history."""
+    history=args.get('_reply_history')
+    error='Keep the quoted conversation history intact. Use review direction to request a new preview.'
+    if not isinstance(history,str) or not history or not isinstance(args.get('body'),str) or not args['body'].endswith(history):
+        raise ValueError(error)
+    if set(edits)=={'reply_text'} and isinstance(edits['reply_text'],str):
+        return edits['reply_text']+history
+    if set(edits)=={'body'} and isinstance(edits['body'],str):
+        # Older clients submit the entire textarea. Browsers normalize CRLF/CR
+        # to LF; accept only that conversion and restore the frozen suffix.
+        normalize=lambda value:value.replace('\r\n','\n').replace('\r','\n')
+        body=normalize(edits['body']); suffix=normalize(history)
+        if body==normalize(args['body']):
+            return args['body']
+        if body.endswith(suffix):
+            return body[:-len(suffix)]+history
+    raise ValueError(error)
+
 ADDRESS=re.compile(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+\Z")
 
 def recipients(value):
