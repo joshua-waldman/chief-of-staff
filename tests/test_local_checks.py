@@ -153,6 +153,8 @@ def test_pending_self_improvement_check_is_retired_and_resumed(env):
 def test_staged_app_patch_runs_without_approval_with_backup(env, monkeypatch):
     root, store, build = env
     engine, job = build()
+    parent = store.create_job('Publish the prepared improvement','Self-Improvement')
+    store.write('UPDATE jobs SET parent_id=? WHERE id=?',(parent['id'],job['id']))
     target = root / 'module.py'
     target.write_text('old\n', encoding='utf-8')
     checkout=isolated(root,job)

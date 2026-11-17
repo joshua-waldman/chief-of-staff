@@ -234,6 +234,8 @@ class Store:
             job=c.execute('SELECT * FROM jobs WHERE id=?',(id,)).fetchone()
             if not job or job['status']=='cancelled':
                 return
+            from .publication_completion import validate_finish
+            validate_finish(c,job)
             c.execute("UPDATE jobs SET status='completed',result=?,question='',messages=?,step=?,updated=? WHERE id=?",
                 (summary,json.dumps({**state,'messages':[m for m in state.get('messages',[]) if not m.get('_cos_memory')]}),step,stamp,id))
             if not job['parent_id']:
