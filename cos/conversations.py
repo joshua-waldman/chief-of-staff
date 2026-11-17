@@ -144,9 +144,9 @@ def recover_email_questions(store, job_id=None, *, only_complete=False):
                     for x in messages[-1].get('tool_calls',[])):
                     continue
                 messages.append({'role':'tool','tool_call_id':state.pop('waiting_call'),
-                    'content':json.dumps({'automatic_recovery':True,'instruction':'Email source access now uses immutable IDs. Reuse complete cached bodies; read any remaining sources, reassess the brief and finish. No owner-supplied ID is needed.'})})
+                    'content':json.dumps({'automatic_recovery':True,'instruction':'Email source access now uses immutable IDs. Reuse complete cached bodies and read any remaining sources. The unread-source gate may have changed the brief decisions to unknown. Before finish, call update_brief with freshly assessed response_needed and action_needed decisions and the supported triage category. No owner-supplied ID is needed.'})})
             else:
-                state['followup']=state.get('followup','')+'\nAutomatic email ID recovery: use read_mail for unread sources, reuse complete cached bodies, reassess and finish.'
+                state['followup']=state.get('followup','')+'\nAutomatic email ID recovery: use read_mail for unread sources and reuse complete cached bodies. Before finish, call update_brief with freshly assessed response_needed, action_needed and triage_category; the previous unread-source gate may have reset the decisions to unknown.'
             # UI source loads can succeed after the agent stopped. Their saved
             # full bodies supersede matching access failures in its old context.
             from .recovery import target

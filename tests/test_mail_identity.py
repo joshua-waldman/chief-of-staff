@@ -310,6 +310,8 @@ def test_startup_reconciles_saved_search_read_after_malformed_retry(tmp_path,pre
     assert recovered['email_id_recovery']==2
     assert recovered['messages'][-1]['tool_call_id']=='ask'
     assert 'user_answer' not in recovered['messages'][-1]['content']
+    instruction=json.loads(recovered['messages'][-1]['content'])['instruction']
+    assert all(field in instruction for field in ('update_brief','response_needed','action_needed'))
     store.update(job['id'],status='waiting_input',question=job['question'])
     recover_email_questions(store)
     assert store.job(job['id'])['status']=='waiting_input'
