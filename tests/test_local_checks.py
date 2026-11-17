@@ -33,6 +33,18 @@ def env(tmp_path, monkeypatch):
         engine.stop()
 
 
+def isolated(root,job):
+    subprocess.run(['git','init','-b','main',str(root)],check=True,capture_output=True)
+    engineering.git(root,'config','user.name','COS Tests')
+    engineering.git(root,'config','user.email','cos-tests@example.invalid')
+    (root/'.gitignore').write_text('data/\n__pycache__/\n',encoding='utf-8')
+    engineering.git(root,'add','.')
+    engineering.git(root,'commit','--allow-empty','-m','Initial source')
+    args={'name':'Local checks'}
+    args['branch']=engineering.branch_name(job,args)
+    return __import__('pathlib').Path(engineering.create_branch(job,args)['path'])
+
+
 @pytest.mark.parametrize('command', [
     ['python', '-B', '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_reviews.py', '-v'],
     [r'C:\missing\.venv\Scripts\python.exe', '-m', 'unittest', 'discover', '-s', 'staged/tests', '-p', 'test_bridge.py', '-v'],
@@ -61,12 +73,14 @@ def test_external_gates_remain():
         assert classify(action, {}, 'Self-Improvement').approval
 
 
-def test_real_test_run_uses_running_python_and_app_cwd(env):
+def test_real_test_run_uses_running_python_and_isolated_cwd(env):
     root, store, build = env
     (root / 'tests').mkdir()
     (root / 'tests' / 'test_sample.py').write_text('import unittest\nclass Check(unittest.TestCase):\n    def test_ok(self): self.assertEqual(2 + 2, 4)\n', encoding='utf-8')
-    engine, job = build(
-        perform('run_command', {'command': [r'C:\missing\python.exe', '-B', '-m', 'unittest', 'discover', '-s', 'tests', '-v'], 'cwd': str(root)}),
+    engine, job = build()
+    checkout=isolated(root,job)
+    engine.provider=Scripted(
+        perform('run_command', {'command': [r'C:\missing\python.exe', '-B', '-m', 'unittest', 'discover', '-s', 'tests', '-v'], 'cwd': str(checkout)}),
         perform('finish', {'summary': 'Local checks passed.'}))
     engine.run(job['id'])
     assert store.job(job['id'])['status'] == 'completed'
@@ -138,10 +152,11 @@ def test_pending_self_improvement_check_is_retired_and_resumed(env):
 
 def test_staged_app_patch_runs_without_approval_with_backup(env, monkeypatch):
     root, store, build = env
-    monkeypatch.setattr(engineering, 'git', lambda *args: 'codex/local-checks')
     engine, job = build()
     target = root / 'module.py'
     target.write_text('old\n', encoding='utf-8')
+    checkout=isolated(root,job)
+    target=checkout/'module.py'
     source = tools.workspace(job['id']) / 'module.py'
     source.write_text('new\n', encoding='utf-8')
     engine.provider = Scripted(
@@ -150,6 +165,11 @@ def test_staged_app_patch_runs_without_approval_with_backup(env, monkeypatch):
     engine.run(job['id'])
     assert store.job(job['id'])['status'] == 'completed'
     assert target.read_text() == 'new\n'
+    assert (root/'module.py').read_text() == 'old\n'
+    state=session(store.job(job['id']))
+    assert state['deliverable_file_ids']
+    assert 'no passing validation' in store.job(job['id'])['result']
+    assert store.one('SELECT name FROM files WHERE id=?',(state['deliverable_file_ids'][0],))['name'].endswith('.zip')
     assert next((tools.workspace(job['id']) / 'backups').glob('*/*')).read_text() == 'old\n'
 
 
@@ -178,29 +198,31 @@ def test_unittest_zero_tests_is_not_success(env):
     (root / 'tests').mkdir()
     (root / 'tests' / 'test_sample.py').write_text('def test_pytest_only(): assert True\n', encoding='utf-8')
     engine, job = build()
-    result = engine.tools.execute(job, 'run_command', {'command': ['python', '-m', 'unittest', 'discover', '-s', 'tests'], 'cwd': str(root)})
+    checkout=isolated(root,job)
+    result = engine.tools.execute(job, 'run_command', {'command': ['python', '-m', 'unittest', 'discover', '-s', 'tests'], 'cwd': str(checkout)})
     assert result['exit_code'] != 0 and result['no_tests']
 
 
-def test_self_improvement_branch_creation_uses_app_root(env, monkeypatch):
+def test_self_improvement_branch_creation_keeps_app_branch(env, monkeypatch):
     root, store, build = env
+    subprocess.run(['git','init','-b','main',str(root)],check=True,capture_output=True)
+    engineering.git(root,'config','user.name','COS Tests')
+    engineering.git(root,'config','user.email','cos-tests@example.invalid')
+    engineering.git(root,'commit','--allow-empty','-m','Initial source')
     engine, job = build(perform('create_feature_branch', {'name': 'Local checks'}), perform('finish', {'summary': 'Created branch.'}))
-    calls = []
-    def git(path, *args):
-        calls.append((path, args))
-        return 'codex/local-checks'
-    monkeypatch.setattr(engineering, 'git', git)
     engine.run(job['id'])
     assert store.job(job['id'])['status'] == 'completed'
-    assert calls[0] == (root, ('switch', '-c', 'codex/local-checks'))
+    assert engineering.git(root,'branch','--show-current')=='main'
+    assert engineering.project_root(job)==tools.workspace(job['id'])/'checkout'
 
 
 def test_stale_source_hash_cannot_overwrite_app(env, monkeypatch):
     root, store, build = env
-    monkeypatch.setattr(engineering, 'git', lambda *args: 'codex/local-checks')
     engine, job = build()
     target = root / 'module.py'
     target.write_text('concurrent change', encoding='utf-8')
+    checkout=isolated(root,job)
+    target=checkout/'module.py'
     (tools.workspace(job['id']) / 'module.py').write_text('new', encoding='utf-8')
     with pytest.raises(ValueError, match='Target changed'):
         tools.prepare_changes(job, {'changes': [{'source': 'module.py', 'target': str(target), 'expected_sha256': 'stale'}]})

@@ -87,13 +87,15 @@ def test_failed_handoff_does_not_block_other_parents_or_dispatch_and_can_retry(e
     assert json.loads(receipt['content'])[0]['files'][0]['name'].endswith('.docx')
 
 
-def test_missing_child_file_is_isolated(env):
+def test_missing_child_file_recovers_retained_bytes(env):
     broken,_,ids=waiting_parent(env)
     healthy,_,_=waiting_parent(env,with_file=False)
     Path(env.one('SELECT path FROM files WHERE id=?',(ids[0],))['path']).unlink()
     Engine(env).release_parents()
-    assert env.job(broken['id'])['status']=='blocked'
+    assert env.job(broken['id'])['status']=='queued'
     assert env.job(healthy['id'])['status']=='queued'
+    returned=env.one('SELECT path FROM files WHERE job_id=?',(broken['id'],))
+    assert Path(returned['path']).read_bytes()==b'verified deliverable'
 
 
 def test_revision_requires_selected_file_and_rewrites_old_deliverable_link(env):

@@ -612,10 +612,14 @@ class Engine:
                 memory_instruction+=' Source access routing: do not ask for mail or repository locations before checking available source evidence. For mail/Teams delegate to Communications with source_only:true, including at the normal depth limit. For a missing repository URL, search local meeting knowledge and retrieve relevant original meeting chat messages to recover links and complete branch refs. Technology and Engineering have repository_search {name,owner?} and repository_read {repository,path?,ref?}; repository_connections {} shows configured owner/account routes. These authenticated GitHub GET tools are separate from public fetch_url host allowlisting and never switch the active account. Repository source readers may use Technology or Engineering with source_only:true even at the normal depth limit. If sign-in, SSO or routing is actually missing, identify that specific connection issue, not a missing document.'
                 if job['org']=='Engineering':
                     from .engineering import workflow
-                    memory_instruction+=' Owner-configured engineering workflow: '+json.dumps(workflow(job))+'. Use create_feature_branch before project edits when configured. For Jira creates use the configured defaults and verify hierarchy. Never invent a ticket key or parent. For existing staged files use edit_file with a small exact replacement and the current sha256; do not rewrite large files or reread the source tree before each edit. Save concrete function names, decisions and the next edit in update_brief, not merely a promise to implement.'
+                    memory_instruction+=' Owner-configured engineering workflow: '+json.dumps(workflow(job))+'. Use create_feature_branch before implementation: it returns an isolated job-owned worktree. Apply changes there before running tests there; never switch a shared checkout. Retain code for publication using prepare_publication, pass its ZIP explicitly between jobs, and use validate_publication before repository-write approval. If the integration base changed, reapply in a fresh integration worktree, resolve conflicts, test again, and prepare fresh exact approval. Use recover_inputs before asking the owner to recreate cited COS intermediates. For Jira creates use the configured defaults and verify hierarchy. Never invent a ticket key or parent. For existing staged files use edit_file with a small exact replacement and the current sha256; do not rewrite large files or reread the source tree before each edit. Save concrete function names, decisions and the next edit in update_brief, not merely a promise to implement.'
                 if job['org']=='Self-Improvement':
                     from .config import ROOT
-                    memory_instruction+=' Self-Improvement local workflow: application source root is '+str(ROOT)+'. Stage edits in this job workspace with write_file/edit_file, run tests with run_command using python -B -m pytest tests or python -B -m unittest discover -s tests, then apply_changes with current target hashes. These checks and staged application updates are autonomous. The server selects its running Python interpreter. Use pytest for pytest-style tests; unittest discovery may report zero tests. Create a new feature branch with create_feature_branch for each new feature. Correct not_executed errors and failing tests yourself, verify actual results, and return the final deliverable. Do not ask for routine verification or approval. External sends, publishing, merges and deployments retain approval requirements.'
+                    from .engineering import checkout
+                    isolated=checkout(job)
+                    memory_instruction+=' Self-Improvement local workflow: running application source is '+str(ROOT)+'. Never switch its branch or patch/test that shared checkout. First create_feature_branch: it creates a job-owned isolated Git worktree and returns its absolute path/base commit. Stage edits with write_file/edit_file, then apply_changes ONLY to that isolated worktree with current target hashes. AFTER applying, run tests there with run_command using python -B -m pytest tests (the server selects its interpreter). Then prepare_publication to retain exact original/proposed files, patch, hashes and test receipts; return its ZIP with finish file_ids. Pass this whole package as an explicit file input for publication and call validate_publication before proposing repository writes. If the base changed, create an integration job on the current base, reapply the saved patch, resolve conflicts, rerun tests and request fresh exact-action approval; never overwrite concurrent changes or reuse old publication approval. Use recover_inputs before asking the owner to reattach original COS intermediates. Correct not_executed errors and test failures yourself. Publishing, merges, deployment and external actions retain exact approval requirements.'
+                    if isolated:
+                        memory_instruction+=' This job isolated source: '+isolated['path']+'; base '+isolated['base_commit']+'.'
                 memory_instruction+=' Scheduling limits are automatic worker handoffs, not reasons to ask the owner to continue. Reuse verified prior findings for unchanged conversation history and attachments. Refresh the thread once per new activity batch as needed, inspect only new or changed attachments, then decide. Do not reread unchanged screenshots or replay completed work. If no reply or unresolved substantive action remains, update_brief with the reason and finish.'
                 if triage:
                     memory_instruction+='\nAuthenticated owner email: '+settings()['self_email']+'\n'+PERSONAL_ACTION_POLICY
@@ -750,6 +754,21 @@ class Engine:
                     if action=='ask_user':
                         from .briefs import validate_question
                         validate_question(args.get('question'))
+                        if allowed_job_action(job,'recover_inputs'):
+                            from .artifact_inputs import recover,local_ready
+                            candidates=recover(self.store,job,[])['available']
+                            missing=[f['file_id'] for f in candidates if not local_ready(self.store,id,f['file_id'])][:16]
+                            key=','.join(missing)
+                            if missing and key not in s.get('input_recovery_attempts',[]):
+                                s.setdefault('input_recovery_attempts',[]).append(key)
+                                try:
+                                    recovered=recover(self.store,job,missing)
+                                except (ValueError,OSError) as error:
+                                    recovered={'error':str(error),'instruction':'Original COS inputs could not be recovered. Rebuild the proposal against the current base, test and prepare fresh approval; do not ask the owner to recreate COS intermediate files.'}
+                                self.add_result(messages,call['id'],{'question_not_sent':True,'input_recovery':recovered,
+                                    'instruction':'Inspect recovered inputs and verify any specified original hashes with recover_inputs.expected_sha256 before continuing. Ask only for substantive information still missing.'})
+                                self.persist(id,s,step=step+1)
+                                continue
                         s['waiting_call']=call['id']
                         self.persist(id,s,status='waiting_input',question=args['question'],step=step+1)
                         self.store.event(id,'question','Chief of Staff needs your input: '+args['question'])
@@ -758,6 +777,13 @@ class Engine:
                     if action=='finish':
                         from .result_reviews import KINDS
                         from .delivery import validate_finish
+                        if job['org'] in {'Engineering','Self-Improvement'}:
+                            from .publication import for_handoff
+                            package=for_handoff(self.store,job,args.get('file_ids',[]))
+                            if package:
+                                args['file_ids']=list(dict.fromkeys([*args.get('file_ids',[]),package['file_id']]))
+                                validation='Recorded checks passed against unchanged source.' if package['validated'] else 'This package has no passing validation against unchanged source; testing is required before publication.'
+                                args['summary']+='\n\nPublication package: '+package['url']+'\n'+validation+' Publishing still requires exact-action approval.'
                         with self.store.connect() as delivery_connection:
                             validate_finish(delivery_connection,job,s,args)
                         if 'result_kind' in args and (not isinstance(args['result_kind'],str) or args['result_kind'] not in KINDS):
@@ -821,6 +847,8 @@ class Engine:
                     if action=='run_command':
                         from .skill_commands import prepare
                         args=prepare(job,args)
+                        from .publication import guard_command
+                        guard_command(self.store,job,args)
                         args.pop('_workspace_script_review',None)
                     args.pop('_preparation_review',None)
                     args.pop('_external_change_review',None)
@@ -849,12 +877,12 @@ class Engine:
                         return
                     self.store.event(id,'tool',action+' '+json.dumps({k:v for k,v in args.items() if k not in {'body','content','instructions'}})[:1600])
                     try:
-                        if action in {'jira_write','apply_changes','create_feature_branch','run_command'}:
+                        if action in {'jira_write','apply_changes','apply_publication','create_feature_branch','run_command'}:
                             self.store.write('INSERT OR IGNORE INTO action_verifications(action_id,started) VALUES(?,?)',(aid,now()))
                         result=self.tools.execute(job,action,args)
                         self.store.write("UPDATE approvals SET status='executed',result=? WHERE id=?",(json.dumps(result),aid))
                     except Exception as error:
-                        if action in {'jira_write','apply_changes','create_feature_branch','run_command'} and not isinstance(error,ActionNotExecuted):
+                        if action in {'jira_write','apply_changes','apply_publication','create_feature_branch','run_command'} and not isinstance(error,ActionNotExecuted):
                             self.store.write("UPDATE approvals SET status='uncertain',result=? WHERE id=?",(str(error)[:5000],aid))
                             self.persist(id,s,status='blocked',question='COS is automatically checking the action outcome.')
                             self.store.event(id,'uncertain','COS will check source evidence without repeating '+action)
@@ -990,11 +1018,12 @@ class Engine:
             self.store.event(job['id'],'delegated',t['org']+': '+t['request'][:200])
 
     def handoff_file(self,job_id,file,directory):
+        from .artifact_inputs import copy_verified
         # Source file IDs are globally unique. Keep physical paths compact even
         # when the app is installed in a long Windows user-profile directory.
         target=workspace(job_id)/directory/(file['id']+Path(file['name']).suffix)
         target.parent.mkdir(parents=True,exist_ok=True)
-        shutil.copy2(Path(file['path']),target)
+        copy_verified(self.store,file,target)
         return {**file_record(self.store,job_id,target,file['mime'],name=file['name']),'path':str(target)}
 
     def focus_returned_synthesis(self,job,state):
