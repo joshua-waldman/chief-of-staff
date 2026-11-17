@@ -225,3 +225,110 @@ def test_later_full_source_load_can_resolve_a_failed_automatic_retry(tmp_path):
     cache_source_read(store,job['id'],'read_mail',{'id':'stable'},{'id':'stable','body':'Full body'})
     assert store.job(job['id'])['status']=='queued'
     assert json.loads(store.job(job['id'])['messages'])['email_id_recovery']==2
+
+
+def envelope(store,job,identifier='original',internet='<notice@example.com>',sender='sender@example.com',date='2026-01-01T12:00:00Z'):
+    with store.connect() as c:
+        save_source(c,job['id'],'email',identifier,sender,'Update',date,'Preview',False,internet_id=internet)
+
+
+def full_read(store,job,identifier='search-result',internet='<notice@example.com>'):
+    result={'id':identifier,'internetMessageId':internet,'from':'sender@example.com',
+            'subject':'Update','date':'2026-01-01T12:00:00Z','body':'Full body'}
+    cache_source_read(store,job['id'],'read_mail',{'id':identifier},result)
+
+
+def test_search_result_reconciles_original_source_and_read_receipt(tmp_path):
+    from cos.recovery import record
+    store=Store(tmp_path/'test.db'); job=store.create_job('Triage this incoming email conversation.','Communications')
+    envelope(store,job)
+    envelope(store,job,'other','<other@example.com>')
+    full_read(store,job)
+    original=store.one("SELECT * FROM communication_sources WHERE message_id='original'")
+    assert original['complete']==1 and original['body']=='Full body'
+    assert store.one("SELECT canonical_id FROM email_source_ids WHERE message_id='original'")['canonical_id']=='search-result'
+    assert store.one("SELECT complete FROM communication_sources WHERE message_id='other'")['complete']==0
+    assert len(store.detail(job['id'])['source_messages'])==2
+    state={}
+    record(store,job['id'],state,'read_mail',{'id':'original'},'ErrorInvalidIdMalformed',error=True)
+    record(store,job['id'],state,'read_mail',{'id':'search-result'},{'id':'search-result'})
+    assert not state['active_errors']
+
+
+def test_new_envelope_reuses_previously_read_search_result(tmp_path):
+    store=Store(tmp_path/'test.db');job=store.create_job('Mail','Communications')
+    full_read(store,job)
+    envelope(store,job)
+    assert store.one("SELECT complete FROM communication_sources WHERE message_id='original'")['complete']==1
+    assert store.one("SELECT canonical_id FROM email_source_ids WHERE message_id='original'")['canonical_id']=='search-result'
+
+
+@pytest.mark.parametrize('internet,sender,date',[
+    ('','sender@example.com','2026-01-01T12:00:00Z'),
+    ('<other@example.com>','sender@example.com','2026-01-01T12:00:00Z'),
+    ('<notice@example.com>','other@example.com','2026-01-01T12:00:00Z'),
+    ('<notice@example.com>','sender@example.com','2026-01-02T12:00:00Z'),
+])
+def test_reconciliation_keeps_missing_or_conflicting_identity_unread(tmp_path,internet,sender,date):
+    store=Store(tmp_path/'test.db'); job=store.create_job('Mail','Communications')
+    envelope(store,job,internet=internet,sender=sender,date=date)
+    full_read(store,job)
+    assert store.one("SELECT complete FROM communication_sources WHERE message_id='original'")['complete']==0
+
+
+def test_reconciliation_rejects_duplicate_mailbox_items_with_same_rfc_id(tmp_path):
+    store=Store(tmp_path/'test.db'); job=waiting_job(store)
+    envelope(store,job,internet='')
+    full_read(store,job,'copy-one')
+    full_read(store,job,'copy-two')
+    envelope(store,job)
+    recover_email_questions(store,job['id'],only_complete=True)
+    assert store.one("SELECT complete FROM communication_sources WHERE message_id='original'")['complete']==0
+    assert store.job(job['id'])['status']=='waiting_input'
+
+
+@pytest.mark.parametrize('previous_retry',[False,True])
+def test_startup_reconciles_saved_search_read_after_malformed_retry(tmp_path,previous_retry):
+    store=Store(tmp_path/'test.db')
+    job=waiting_job(store,'The four email IDs are malformed. Can you provide canonical item IDs?')
+    # Existing jobs may have read the alternate ID before reconciliation existed.
+    full_read(store,job)
+    envelope(store,job)
+    # Simulate an envelope left incomplete by the previous implementation.
+    store.write("UPDATE communication_sources SET complete=0,body='Preview' WHERE job_id=? AND message_id='original'",(job['id'],))
+    store.write("UPDATE email_source_ids SET canonical_id='' WHERE job_id=? AND message_id='original'",(job['id'],))
+    state=json.loads(job['messages'])
+    if previous_retry:
+        state['email_id_recovery']=1
+    store.update(job['id'],status='waiting_input',question=job['question'],messages=json.dumps(state))
+    store.event(job['id'],'tool_error','ERROR: Graph API 400: ErrorInvalidIdMalformed')
+    recover_email_questions(store)
+    current=store.job(job['id'])
+    assert current['status']=='queued' and not current['question']
+    assert store.one("SELECT complete FROM communication_sources WHERE message_id='original'")['complete']==1
+    recovered=json.loads(current['messages'])
+    assert recovered['email_id_recovery']==2
+    assert recovered['messages'][-1]['tool_call_id']=='ask'
+    assert 'user_answer' not in recovered['messages'][-1]['content']
+    instruction=json.loads(recovered['messages'][-1]['content'])['instruction']
+    assert all(field in instruction for field in ('update_brief','response_needed','action_needed'))
+    store.update(job['id'],status='waiting_input',question=job['question'])
+    recover_email_questions(store)
+    assert store.job(job['id'])['status']=='waiting_input'
+
+
+@pytest.mark.parametrize('blocker',['pending','executing','uncertain','waiting_action','unrelated_error','no_gate'])
+def test_reconciliation_recovery_preserves_other_blockers(tmp_path,blocker):
+    store=Store(tmp_path/'test.db');job=waiting_job(store)
+    if blocker in {'pending','executing','uncertain'}:
+        store.write('INSERT INTO approvals(id,job_id,status) VALUES(?,?,?)',('approval',job['id'],blocker))
+    elif blocker=='waiting_action':
+        state=json.loads(job['messages']);state['waiting_action']={'action':'reply_email'}
+        store.update(job['id'],messages=json.dumps(state))
+    elif blocker=='unrelated_error':
+        store.event(job['id'],'tool_error','Graph API 403: denied')
+    else:
+        store.write('DELETE FROM events WHERE job_id=?',(job['id'],))
+        store.event(job['id'],'tool_error','ErrorInvalidIdMalformed')
+    recover_email_questions(store)
+    assert store.job(job['id'])['status']=='waiting_input'
