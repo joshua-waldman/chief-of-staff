@@ -93,6 +93,12 @@ Ask only for information not already available:
 - Which optional services are wanted: Microsoft mail/calendar/Teams, Atlassian,
   GitHub projects, browser work and sandbox execution. Do not enable everything.
 - Existing project paths when engineering work is requested. Check that they exist.
+- Whether to keep the built-in COS organizations alone or add organizations of
+  their own. Explain the defaults: Communications, Technology, Engineering,
+  Strategy and Self-Improvement. For each requested addition, collect a unique
+  name, leader title and purpose (the work it should handle). Reuse existing
+  organizations and choices; adding custom teams is optional. These are COS work
+  teams, separate from GitHub repository owners and account routes.
 
 Run the guided installer from the selected host checkout, passing answers so the
 agent does not block on invisible terminal prompts:
@@ -139,6 +145,38 @@ Open the host's loopback UI, normally `http://127.0.0.1:8765`. Under **Connectio
 
 An optional integration failure should not prevent delivery of the functioning
 base application. Report the specific incomplete service and actual next step.
+
+## Optional: add the user's organizations
+
+After gateway setup, inspect **Organizations** for existing names and purposes.
+Keep the built-in teams and existing custom teams; setup adds the user's selected
+teams without renaming or deleting others. If a requested name already exists,
+reuse it when its purpose matches; resolve a conflicting purpose with the user
+before proceeding. Do not add example teams unless the user chooses them.
+
+Use the app's existing Self-Improvement workflow to register the selected teams:
+submit a request explicitly directed to Self-Improvement with each agreed
+`name`, `leader` and `purpose`, asking it to use `create_organization` only for
+missing teams. This tool registers organizations in the COS store; there is no
+organization installer flag or editable organization list in `config.local.json`.
+For example, if selected: add Product Planning, led by Director of Product
+Planning, to define product priorities and prepare roadmap proposals. Do not
+create organizations by editing the live database or application source.
+
+Explain that custom teams receive the shared tools and can delegate to registered
+specialists. Their name, leader and purpose do not grant Engineering execution,
+Communications mail/Teams access or other built-in specialist capabilities.
+Inspect the current checkout's `cos/tools.py` capability rules before promising
+direct service access. Capability changes are separate feature work.
+
+Run this setup request only when the user is ready to connect the queue; do not
+resume unrelated pending work merely to register teams. If the queue must remain
+paused or the gateway is unavailable, retain the agreed definitions in the setup
+handoff as pending. After execution, verify each team and its purpose/leader in
+**Organizations** and confirm its registration in the app's routing choices
+(the host's `/api/status` organizations list). Registration alone does not prove
+that a specialist integration works. Preserve the user's queue and monitoring
+choices; do not enable monitoring to add teams.
 
 ## Optional desktop host and laptop setup
 
@@ -198,5 +236,6 @@ sign-in. Do not promise unattended boot-time operation or always-on availability
 
 Finish with the UI/icon location, authoritative host and data location (mark any
 unverified override), selected services that passed, optional work still pending,
-and how to start/stop/uninstall using the current README. Do not claim setup is
+selected custom organizations (or their pending definitions), and how to
+start/stop/uninstall using the current README. Do not claim setup is
 complete while gateway authentication or a required user sign-in remains pending.

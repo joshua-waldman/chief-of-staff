@@ -98,9 +98,14 @@ It optionally obtains the application itself: reuse existing files, clone the
 private repository, or download/extract an authenticated ZIP. The user may supply
 an organization-approved mirror and revision. A skill-hub installation does not
 grant access to the private repository, and laptop-only setup skips a full clone.
-It asks about optional desktop access and services, rather than enabling every
-integration. Private repository access, gateway credentials, MFA/device-code
-sign-in and corporate connectivity provisioning may require the owner or IT.
+It asks about optional desktop access, services and custom COS organizations.
+Keep the built-in teams or add your own with a name, leader title and purpose;
+the agent registers selected additions through Self-Improvement once the gateway
+and queue are ready, then verifies them in **Organizations**. Custom teams use
+shared tools and delegation; their definitions do not grant built-in specialist
+permissions. Existing teams are preserved. Private repository access, gateway
+credentials, MFA/device-code sign-in and corporate connectivity provisioning may
+require the owner or IT.
 The skill reports these as pending instead of claiming setup is complete. It does
 not require another installed skill just to begin; integration-specific helpers
 are discovered only when needed.
