@@ -13,6 +13,40 @@ class ContextWindowExceeded(RuntimeError):
     """The request must shrink before it can be retried."""
     pass
 
+
+def balance_legacy_finish(messages):
+    """Close old terminal turns for replay without claiming task completion.
+
+    Older engines saved finish without a tool receipt. Later recovery or owner
+    feedback can reopen those histories, even with system messages after finish.
+    Only finish is safe to close here; never invent an external action outcome.
+    Work on a new list so inference does not alter the durable history.
+    """
+    balanced=[]
+    for index,message in enumerate(messages):
+        balanced.append(message)
+        if message.get('role')!='assistant':
+            continue
+        receipts=set()
+        for following in messages[index+1:]:
+            if following.get('role')!='tool':
+                break
+            receipts.add(following.get('tool_call_id'))
+        for call in message.get('tool_calls',[]):
+            if call.get('id') in receipts:
+                continue
+            function=call.get('function',{})
+            try:
+                request=json.loads(function.get('arguments',''))
+            except (ValueError,TypeError):
+                continue
+            if function.get('name')=='perform' and isinstance(request,dict) and request.get('action')=='finish':
+                balanced.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps({
+                    'prior_turn_ended':True,'legacy_finish_receipt':True,
+                    'instruction':'This historical finish ended the prior turn. Work has resumed; reassess current directions and evidence. This receipt does not verify task completion or any external action.'})})
+    return balanced
+
+
 class Gateway:
     _lock = threading.Lock()
     _gates = {}
@@ -38,6 +72,7 @@ class Gateway:
             gate.release()
 
     def _complete(self,messages,role='worker',tools=None,*,timeout=180,attempts=3,max_tokens=4096):
+        messages=balance_legacy_finish(messages)
         s = settings()
         key = gateway_key()
         if not key:

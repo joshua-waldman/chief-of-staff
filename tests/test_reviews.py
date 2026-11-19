@@ -68,6 +68,9 @@ def test_feedback_reopens_completed_job_with_balanced_tool_history(setup):
     e.decide(a['id'],False)
     e.provider=Scripted(perform('finish',{'summary':'Closed without sending.'}))
     e.run(j['id'])
+    completed_messages=session(s.job(j['id']))['messages']
+    assert completed_messages[-1]['role']=='tool'
+    assert json.loads(completed_messages[-1]['content'])['completed'] is True
     submit(e,j['id'],'Explain why a response is unnecessary.')
     messages=session(s.job(j['id']))['messages']
     terminal=next(i for i,m in enumerate(messages) if m.get('tool_calls') and json.loads(m['tool_calls'][0]['function']['arguments'])['action']=='finish')
