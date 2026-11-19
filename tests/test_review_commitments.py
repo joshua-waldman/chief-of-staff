@@ -54,6 +54,19 @@ def test_semantic_candidates_use_saved_content_and_never_close_work(env):
     assert not store.rows('SELECT * FROM review_commitment_links')
 
 
+def test_returning_result_to_review_preserves_confirmed_commitment_and_evidence(env):
+    store, registry, item, job = env
+    confirm(store, job, item)
+    review = context(store, job)
+    before = registry.detail(item['id'])
+    links = store.rows('SELECT * FROM review_commitment_links')
+    store.reopen_result(job['id'], review['revision'], review['reviewed'])
+    assert registry.detail(item['id']) == before
+    assert before['status'] == 'completed'
+    assert store.rows('SELECT * FROM review_commitment_links') == links
+    assert store.pending_results()[0]['id'] == job['id']
+
+
 @pytest.mark.parametrize('relationship,status', [('fulfills', 'completed'), ('progress', 'open'), ('related', 'open')])
 def test_owner_confirmation_retains_bidirectional_snapshot_across_restart(env, relationship, status):
     store, registry, item, job = env
@@ -171,7 +184,7 @@ def test_endpoint_requires_owner_auth_and_records_explicit_choice(env, monkeypat
     review = context(store, job)
     client = TestClient(server.app)
     client.get('/')
-    payload = {'revision': review['revision'], 'commitments': [selection(item)], 'snapshot_fingerprint': review['commitments']['snapshot_fingerprint']}
+    payload = {'revision': review['revision'], 'acknowledgment': 'result_review', 'commitments': [selection(item)], 'snapshot_fingerprint': review['commitments']['snapshot_fingerprint']}
     url = '/api/jobs/'+job['id']+'/result-review'
     assert client.post(url, json=payload).status_code == 403
     assert client.post(url, json=payload, headers={'x-cos-token': server.TOKEN}).status_code == 200

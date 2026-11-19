@@ -43,7 +43,7 @@ test('combined review submits exact selected versions, relationships and snapsho
  vm.createContext(ctx);
  vm.runInContext(source.slice(source.indexOf(" if($('#review-result-commitments'))"),source.indexOf(" document.querySelectorAll('[data-summary-read]')")),ctx);
  await button.onclick();
- assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{path:'jobs/job/result-review',body:{revision:'saved',commitments:[{commitment_id:'one',version:4,relationship:'progress'}],snapshot_fingerprint:'digest'}}]);
+ assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{path:'jobs/job/result-review',body:{revision:'saved',acknowledgment:'result_review',commitments:[{commitment_id:'one',version:4,relationship:'progress'}],snapshot_fingerprint:'digest'}}]);
  assert.equal(button.disabled,false);
  ctx.document.querySelectorAll=()=>[];
  await assert.rejects(button.onclick(),/Select a commitment/);
@@ -135,4 +135,29 @@ test('review cards name generated content and separate thread handling from the 
  assert.match(detail,/Read these ranked choices/);
  assert.match(detail,/<details><summary>Thread handling context<\/summary>/);
  assert.match(detail,/does not send the draft or complete its underlying commitment/);
+});
+
+
+test('review acknowledgment and return controls use distinct version-bound requests',async()=>{
+ for(const [selector,review,expectedPath,expectedBody] of [
+  ['#mark-result-reviewed',{revision:'saved'},'jobs/job/result-review',{revision:'saved',acknowledgment:'result_review'}],
+  ['#reopen-result-review',{revision:'saved',reviewed:'timestamp'},'jobs/job/result-review/reopen',{revision:'saved',reviewed:'timestamp'}]
+ ]){
+  const button={},calls=[],ctx={j:{result_review:review},id:'job',$:s=>s===selector?button:null,
+   handle:fn=>fn,api:async(path,body)=>calls.push({path,body}),toast:()=>{},openJob:async()=>{},refresh:async()=>{}};
+  vm.createContext(ctx);
+  vm.runInContext(source.slice(source.indexOf(" if($('#reopen-result-review'))"),source.indexOf(" if($('#review-result-commitments'))")),ctx);
+  assert.equal(calls.length,0,'rendering a review must not acknowledge it');
+  await button.onclick();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{path:expectedPath,body:expectedBody}]);
+  assert.equal(button.disabled,false);
+ }
+});
+
+test('reviewed result exposes return to review without suggesting action replay',()=>{
+ const ctx=setup(),job={files:[],result_review:{summary:'Saved proposal',file_ids:[],completed:'today',reviewed:'later'}};
+ const html=ctx.returnedResultView(job);
+ assert.match(html,/id="reopen-result-review"/);
+ assert.match(html,/Return to Ready for review/);
+ assert.ok(!html.includes('id="mark-result-reviewed"'));
 });

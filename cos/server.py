@@ -114,10 +114,23 @@ def pending_results():
 @app.post('/api/jobs/{id}/result-review')
 async def result_review(id,request:Request):
     payload=await request.json()
+    if not isinstance(payload,dict) or payload.get('acknowledgment')!='result_review':
+        raise ValueError('Explicit result review acknowledgment is required. Action approval does not review a result.')
+    from .trace import CURRENT
+    request_id=CURRENT.get().get('request_id','')
     def operation():
         body=payload
-        return store.review_result(id,body.get('revision'),body.get('commitments'),body.get('snapshot_fingerprint'))
+        return store.review_result(id,body.get('revision'),body.get('commitments'),body.get('snapshot_fingerprint'),request_id=request_id)
     return await run_in_threadpool(operation)
+
+@app.post('/api/jobs/{id}/result-review/reopen')
+async def reopen_result_review(id,request:Request):
+    body=await request.json()
+    if not isinstance(body,dict):
+        raise ValueError('Choose the saved review to return.')
+    from .trace import CURRENT
+    request_id=CURRENT.get().get('request_id','')
+    return await run_in_threadpool(store.reopen_result,id,body.get('revision'),body.get('reviewed'),request_id=request_id)
 
 @app.get('/api/commitments')
 def commitment_list(q:str='',status:str='active',owner:str='',scope:str='',offset:int=0,limit:int=25):

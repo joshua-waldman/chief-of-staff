@@ -133,7 +133,7 @@ function returnedResultView(j){
  if(!r)return '';
  const files=(r.files||j.files).filter(f=>(r.file_ids.includes(f.id)||r.summary.includes('/api/files/'+f.id))&&f.purpose!=='recovery');
  const content=r.items?r.items.map(item=>'<article class="review-content"><p class="eyebrow">'+(item.kind==='document'?'Document to review':'Generated content to read')+'</p><h4>'+esc(item.title)+'</h4>'+jobFilesView(files.filter(f=>item.file_ids.includes(f.id)))+(item.content?'<div class="readable">'+resultSummary(item.content,files)+'</div>':'')+'</article>').join('')+(r.context?'<details><summary>Thread handling context</summary><div class="readable">'+resultSummary(r.context,files)+'</div></details>':''):'<div class="readable">'+resultSummary(r.summary,files)+'</div>'+jobFilesView(files);
- return '<section class="panel returned-result"><h3>'+(r.reviewed?'Reviewed result':'Completed · Ready for your review')+'</h3>'+(r.review_title?'<h2>'+esc(r.review_title)+'</h2><p>Read the content below and check any open questions or gaps. Send direction to COS if you want changes.</p>':'')+'<p class="small">Returned '+esc(date(r.completed))+'</p>'+(j.status&&j.status!=='completed'?'<p class="small">This saved result remains available while COS handles new activity.</p>':'')+content+reviewCommitmentView(r)+(r.reviewed?'<p class="small">Marked reviewed '+esc(date(r.reviewed))+'</p>':'<p class="small">Mark reviewed when you have read this content. This acknowledges your review; it does not send the draft or complete its underlying commitment.</p>'+btn('Mark reviewed','id="mark-result-reviewed"'))+'</section>';
+ return '<section class="panel returned-result"><h3>'+(r.reviewed?'Reviewed result':'Completed · Ready for your review')+'</h3>'+(r.review_title?'<h2>'+esc(r.review_title)+'</h2><p>Read the content below and check any open questions or gaps. Send direction to COS if you want changes.</p>':'')+'<p class="small">Returned '+esc(date(r.completed))+'</p>'+(j.status&&j.status!=='completed'?'<p class="small">This saved result remains available while COS handles new activity.</p>':'')+content+reviewCommitmentView(r)+(r.reviewed?'<p class="small">Review acknowledged '+esc(date(r.reviewed))+'</p>'+btn('Return to Ready for review','id="reopen-result-review"','secondary'):'<p class="small">Mark reviewed when you have read this content. This acknowledges your review; it does not send the draft or complete its underlying commitment.</p>'+btn('Mark reviewed','id="mark-result-reviewed"'))+'</section>';
 }
 function notifyResults(results){
  const revisions=new Set(results.map(r=>r.revision));
@@ -323,9 +323,13 @@ async function openJob(id,{background=false}={}){
  document.querySelectorAll('[data-approve],[data-reject]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{const aid=b.dataset.approve||b.dataset.reject,body=$('#body-'+aid),approval=j.approvals.find(a=>a.id===aid);await api('approvals/'+aid,{approved:!!b.dataset.approve,...(b.dataset.approve&&body?approvalEdits(approval,body.value):{})});toast(b.dataset.approve?'Approval recorded. The action will finish in the background.':'Action rejected; COS will revise it.');await Promise.all([openJob(id),refresh(true)])}finally{b.disabled=false}}));
  bindReview(id);
  bindJobRename(j);
+ if($('#reopen-result-review'))$('#reopen-result-review').onclick=handle(async()=>{
+  const button=$('#reopen-result-review');button.disabled=true;
+  try{await api('jobs/'+id+'/result-review/reopen',{revision:j.result_review.revision,reviewed:j.result_review.reviewed});toast('Result returned to Ready for review. Actions and commitments are unchanged.');await Promise.all([openJob(id),refresh(true)]);}finally{button.disabled=false;}
+ });
  if($('#mark-result-reviewed'))$('#mark-result-reviewed').onclick=handle(async()=>{
   const button=$('#mark-result-reviewed');button.disabled=true;
-  try{await api('jobs/'+id+'/result-review',{revision:j.result_review.revision});toast('Result marked reviewed');await Promise.all([openJob(id),refresh(true)]);}finally{button.disabled=false;}
+  try{await api('jobs/'+id+'/result-review',{revision:j.result_review.revision,acknowledgment:'result_review'});toast('Result marked reviewed');await Promise.all([openJob(id),refresh(true)]);}finally{button.disabled=false;}
  });
  if($('#review-result-commitments'))$('#review-result-commitments').onclick=handle(async()=>{
   const button=$('#review-result-commitments');
@@ -335,7 +339,7 @@ async function openJob(id,{background=false}={}){
   });
   if(!commitments.length)throw Error('Select a commitment, or use Mark reviewed.');
   button.disabled=true;
-  try{await api('jobs/'+id+'/result-review',{revision:j.result_review.revision,commitments,snapshot_fingerprint:j.result_review.commitments.snapshot_fingerprint});toast('Result reviewed and commitments updated');await Promise.all([openJob(id),refresh(true)]);}finally{button.disabled=false;}
+  try{await api('jobs/'+id+'/result-review',{revision:j.result_review.revision,acknowledgment:'result_review',commitments,snapshot_fingerprint:j.result_review.commitments.snapshot_fingerprint});toast('Result reviewed and commitments updated');await Promise.all([openJob(id),refresh(true)]);}finally{button.disabled=false;}
  });
  document.querySelectorAll('[data-review-open-commitment]').forEach(button=>button.onclick=handle(async()=>{
   commitmentDetail=await api('commitments/'+encodeURIComponent(button.dataset.reviewOpenCommitment));commitmentMergeTarget=null;

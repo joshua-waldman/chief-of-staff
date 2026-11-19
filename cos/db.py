@@ -304,7 +304,7 @@ class Store:
                 row['items']=[{key:item[key] for key in ('title','kind','file_ids')} for item in review['items']]
         return rows
 
-    def review_result(self,id,revision,commitments=None,snapshot_fingerprint=None):
+    def review_result(self,id,revision,commitments=None,snapshot_fingerprint=None,*,request_id=''):
         with self.lock,self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             row=c.execute('''SELECT r.*,j.status FROM result_reviews r JOIN jobs j ON j.id=r.job_id
@@ -318,7 +318,27 @@ class Store:
                 stamp=now()
                 c.execute('UPDATE result_reviews SET reviewed=? WHERE job_id=?',(stamp,id))
                 c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
-                    (id,'result_reviewed','Owner marked the returned result reviewed.',stamp))
+                    (id,'result_reviewed',json.dumps({'action':'mark_reviewed','revision':revision,
+                        'source':'result_review_endpoint' if request_id else 'local_call',
+                        'request_id':request_id}),stamp))
+        return {'ok':True}
+
+    def reopen_result(self,id,revision,reviewed,*,request_id=''):
+        """Restore a saved review without running work or undoing external actions."""
+        with self.lock,self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute('''SELECT r.*,j.status,j.parent_id FROM result_reviews r
+                JOIN jobs j ON j.id=r.job_id WHERE r.job_id=?''',(id,)).fetchone()
+            if (not row or not row['eligible'] or row['status']=='cancelled'
+                    or row['parent_id'] or row['revision']!=revision
+                    or not reviewed or row['reviewed']!=reviewed):
+                raise ValueError('This review has changed. Open the latest reviewed result before returning it to review.')
+            c.execute('UPDATE result_reviews SET reviewed=NULL WHERE job_id=?',(id,))
+            c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
+                (id,'result_review_reopened',json.dumps({'action':'return_to_review',
+                    'revision':revision,'previous_reviewed':reviewed,
+                    'source':'result_review_endpoint' if request_id else 'local_call',
+                    'request_id':request_id}),now()))
         return {'ok':True}
 
     def state(self,key,default=None):

@@ -172,10 +172,91 @@ def test_result_endpoints_require_session_token_and_current_revision(setup, monk
     assert client.get('/api/status').json()['ready_for_review'] == 1
     assert client.post(path, json={'revision': review['revision']}).status_code == 403
     headers = {'x-cos-token': server.TOKEN}
-    assert client.post(path, json={'revision': 'stale'}, headers=headers).status_code == 400
-    assert client.post(path, json={'revision': review['revision']}, headers=headers).status_code == 200
+    assert client.post(path, json={'revision': 'stale', 'acknowledgment': 'result_review'}, headers=headers).status_code == 400
+    assert client.post(path, json={'revision': review['revision'], 'acknowledgment': 'result_review'}, headers=headers).status_code == 200
     assert client.get('/api/results').json() == []
     assert client.get('/api/status').json()['ready_for_review'] == 0
+
+
+def test_approval_and_result_acknowledgment_are_separate_and_auditable(setup, monkeypatch):
+    store, engine = setup
+    monkeypatch.setattr(server, 'store', store)
+    monkeypatch.setattr(server, 'engine', engine)
+    calls = []
+    monkeypatch.setattr(engine.tools, 'execute', lambda job, action, args:
+                        calls.append(action) or {'key': 'TEST-123', 'id': '123'})
+    parent = store.create_job('Prepare ticket and correction proposal', 'Strategy')
+    child = store.create_job('Create the proposed ticket', 'Engineering', parent_id=parent['id'])
+    engine.provider = Scripted(perform('jira_write', {'operation': 'create', 'project': 'TEST',
+        'type': 'Task', 'summary': 'Test ticket', 'body': 'Problem statement'}))
+    engine.run(child['id'])
+    approval = store.one("SELECT * FROM approvals WHERE job_id=? AND status='pending'", (child['id'],))
+    assert approval
+    client = TestClient(server.app)
+    client.get('/')
+    headers = {'x-cos-token': server.TOKEN}
+    # Run the real approval handler synchronously to deterministically inspect its effects.
+    monkeypatch.setattr(engine.approval_pool, 'submit', lambda fn, *args: fn(*args))
+    assert client.post('/api/approvals/'+approval['id'], json={'approved': True}, headers=headers).status_code == 200
+    assert calls == ['jira_write']
+    assert not store.rows("SELECT * FROM events WHERE kind='result_reviewed'")
+    review = finish(store, engine, parent, '## Ticket correction proposal\nReview the created ticket.', result_kind='generated_content')
+    assert [r['id'] for r in store.pending_results()] == [parent['id']]
+    path = '/api/jobs/'+parent['id']+'/result-review'
+    assert client.post(path, json={'revision': review['revision'], 'approved': True}, headers=headers).status_code == 400
+    assert not store.result_review(parent['id'])['reviewed']
+    response = client.post(path, json={'revision': review['revision'], 'acknowledgment': 'result_review'}, headers=headers)
+    assert response.status_code == 200
+    event = store.one("SELECT * FROM events WHERE kind='result_reviewed'")
+    audit = json.loads(event['body'])
+    assert audit == {'action': 'mark_reviewed', 'revision': review['revision'],
+                     'source': 'result_review_endpoint', 'request_id': response.headers['x-request-id']}
+    assert calls == ['jira_write']
+
+
+def test_return_to_review_is_version_checked_durable_and_does_not_run_work(setup, monkeypatch):
+    store, engine = setup
+    monkeypatch.setattr(server, 'store', store)
+    job = store.create_job('Prepare a result', 'Strategy')
+    review = finish(store, engine, job)
+    store.review_result(job['id'], review['revision'])
+    reviewed = store.result_review(job['id'])['reviewed']
+    before = store.job(job['id'])
+    client = TestClient(server.app)
+    path = '/api/jobs/'+job['id']+'/result-review/reopen'
+    payload = {'revision': review['revision'], 'reviewed': reviewed}
+    assert client.post(path, json=payload).status_code == 401
+    client.get('/')
+    assert client.post(path, json=payload).status_code == 403
+    headers = {'x-cos-token': server.TOKEN}
+    for invalid in [[], {}, {**payload, 'revision': 'old'}, {**payload, 'reviewed': 'old'}]:
+        assert client.post(path, json=invalid, headers=headers).status_code == 400
+    response = client.post(path, json=payload, headers=headers)
+    assert response.status_code == 200
+    assert client.post(path, json=payload, headers=headers).status_code == 400
+    assert store.job(job['id']) == before
+    restored = Store(store.path)
+    assert restored.pending_results()[0]['revision'] == review['revision']
+    assert restored.result_review(job['id'])['summary'] == review['summary']
+    event = restored.one("SELECT body FROM events WHERE kind='result_review_reopened'")
+    assert json.loads(event['body'])['request_id'] == response.headers['x-request-id']
+    restored.review_result(job['id'], review['revision'])
+    restored.complete_result(job['id'], {'result_kind': 'generated_content'}, 'New revision', 3)
+    with pytest.raises(ValueError):
+        restored.reopen_result(job['id'], review['revision'], reviewed)
+    assert restored.pending_results()[0]['summary'] == 'New revision'
+
+
+def test_cancelled_result_cannot_be_returned_to_review(setup):
+    store, engine = setup
+    job = store.create_job('Prepare result', 'Strategy')
+    review = finish(store, engine, job)
+    store.review_result(job['id'], review['revision'])
+    reviewed = store.result_review(job['id'])['reviewed']
+    engine.cancel(job['id'])
+    with pytest.raises(ValueError):
+        store.reopen_result(job['id'], review['revision'], reviewed)
+    assert not store.pending_results()
 
 
 @pytest.mark.parametrize('kind', [None, 'triage', 'action_receipt'])
