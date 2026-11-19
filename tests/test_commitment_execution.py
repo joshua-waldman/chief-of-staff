@@ -140,6 +140,9 @@ def test_confirmed_execution_gets_a_slot_ahead_of_background_triage(env):
     engine=Engine(store,Scripted())
     try:
         assert engine.ready_jobs(1)[0]['id']==item['execution']['job_id']
+        store.update(item['execution']['job_id'],status='waiting_children')
+        child=store.create_job('Resolve the execution input','Communications',parent_id=item['execution']['job_id'])
+        assert engine.ready_jobs(1)[0]['id']==child['id']
     finally:engine.stop()
 
 

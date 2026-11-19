@@ -451,7 +451,12 @@ class Engine:
         # A yielded job goes behind other ready work, rather than monopolizing
         # every worker because it was created first.
         self.release_capacity()
-        candidates=self.store.rows("SELECT * FROM jobs WHERE status='queued' ORDER BY CASE WHEN org='Communications' THEN 0 ELSE 1 END,CASE WHEN EXISTS(SELECT 1 FROM commitment_execution x WHERE x.job_id=jobs.id) THEN 0 ELSE 1 END,CASE WHEN json_valid(messages) THEN COALESCE(json_extract(messages,'$.delivery_ready'),0) ELSE 0 END DESC,updated,created,id")
+        candidates=self.store.rows("""WITH RECURSIVE execution_jobs(id) AS (
+            SELECT job_id FROM commitment_execution UNION
+            SELECT j.id FROM jobs j JOIN execution_jobs x ON j.parent_id=x.id)
+            SELECT * FROM jobs WHERE status='queued' ORDER BY CASE WHEN org='Communications' THEN 0 ELSE 1 END,
+            CASE WHEN id IN (SELECT id FROM execution_jobs) THEN 0 ELSE 1 END,
+            CASE WHEN json_valid(messages) THEN COALESCE(json_extract(messages,'$.delivery_ready'),0) ELSE 0 END DESC,updated,created,id""")
         return [job for job in candidates if job['id'] not in held and session(job).get('recovery_retry_at',0)<=time.time() and conversation_ready(self.store,job['id']) and not self.capacity_waiting(job)][:limit]
 
     def dispatch_jobs(self):
