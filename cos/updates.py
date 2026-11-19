@@ -238,6 +238,7 @@ class Updates:
 
     def prepare(self, release, current, engine, port):
         try:
+            from .update_worker import process_identity
             work = DATA / 'updates' / (str(time.time_ns()))
             self.work = work
             stage = work / 'source'
@@ -259,7 +260,8 @@ class Updates:
             shutil.copy2(ROOT / 'cos/update_worker.py', work / 'worker.py')
             plan = {'root': str(ROOT), 'data': str(DATA), 'database': str(engine.store.path),
                     'stage': str(stage), 'current': current, 'release': release,
-                    'baseline': baseline, 'port': port, 'python': sys.executable}
+                    'baseline': baseline, 'port': port, 'python': sys.executable,
+                    'server': process_identity()}
             (work / 'plan.json').write_text(json.dumps(plan), encoding='utf-8')
             with update_gate.lock:
                 update_gate.pending = True

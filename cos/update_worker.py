@@ -11,6 +11,60 @@ import time
 import urllib.request
 
 
+def windows_process(pid, terminate=False):
+    """Open one PID and read its creation time, so PID reuse cannot target another app."""
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, *([ctypes.POINTER(wintypes.FILETIME)] * 4)]
+    kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    handle = kernel.OpenProcess(0x1000 | (1 if terminate else 0), False, pid)
+    if not handle:
+        if ctypes.get_last_error() in {87, 1168}:
+            return kernel, None, None
+        raise RuntimeError('Could not verify the COS server process; no process was terminated.')
+    times = [wintypes.FILETIME() for _ in range(4)]
+    if not kernel.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]):
+        kernel.CloseHandle(handle)
+        raise RuntimeError('Could not read the COS server process identity.')
+    created = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+    return kernel, handle, created
+
+
+def process_identity(pid=None):
+    pid = pid or os.getpid()
+    if os.name != 'nt':
+        return {'pid': pid, 'created': None}
+    kernel, handle, created = windows_process(pid)
+    if handle:
+        kernel.CloseHandle(handle)
+    return {'pid': pid, 'created': created}
+
+
+def terminate_server(identity):
+    if not identity:
+        return
+    import ctypes
+    from ctypes import wintypes
+    kernel, handle, created = windows_process(identity['pid'], terminate=True)
+    if not handle:
+        return
+    try:
+        if created != identity['created']:
+            raise RuntimeError('Server PID was reused; refusing to terminate a different process.')
+        code = wintypes.DWORD()
+        if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+            raise RuntimeError('Could not check the verified server process state.')
+        if code.value == 259 and not kernel.TerminateProcess(handle, 0):
+            raise RuntimeError('Could not stop the verified COS server process.')
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def run(args, **kwargs):
     result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             timeout=600, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), **kwargs)
@@ -50,7 +104,7 @@ def health(port, sha, trial, timeout=90):
             with urllib.request.urlopen('http://127.0.0.1:' + str(port) + '/healthz', timeout=2) as response:
                 status = json.load(response)
                 if status.get('sha') == sha and status.get('trial') is trial:
-                    return
+                    return status
         except Exception:
             pass
         time.sleep(1)
@@ -117,13 +171,17 @@ def install(plan, work):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
     stopped = changed = dependencies = activated = False
+    server_identity = plan.get('server')
     try:
         task(root, 'stop')
         stopped = True
+        # Some Windows task hosts leave child processes alive. Only stop the exact
+        # server that drained its work, never an arbitrary process on the app port.
+        terminate_server(server_identity)
         # Task Scheduler stops the supervisor process tree. Wait for the listener to close.
         wait_stopped(plan['port'])
         backup_database(database, work / 'database.sqlite3')
-        trial.write_text('Update validation: background work is disabled.', encoding='utf-8')
+        trial.write_text(json.dumps({'identity_file': str(work / 'trial-process.json')}), encoding='utf-8')
         changed = True
         if current['kind'] == 'git':
             git('checkout', '--detach', release['sha'])
@@ -139,8 +197,10 @@ def install(plan, work):
         run([plan['python'], '-m', 'pip', 'install', '-r', str(root / 'requirements.txt')])
         marker.write_text(json.dumps({'tag': release['tag'], 'sha': release['sha']}), encoding='utf-8')
         task(root, 'start')
-        health(plan['port'], release['sha'], True)
+        trial_status = health(plan['port'], release['sha'], True)
+        server_identity = trial_status.get('process') if trial_status else None
         task(root, 'stop')
+        terminate_server(server_identity)
         wait_stopped(plan['port'])
         trial.unlink()
         # Past this boundary work can resume. Do not restore an older database after actions run.
@@ -153,6 +213,9 @@ def install(plan, work):
             raise RuntimeError('Release installed, but restart needs attention. Background work may have resumed; database was not rolled back.') from None
         if stopped:
             task(root, 'stop')
+            if changed and (work / 'trial-process.json').exists():
+                server_identity = json.loads((work / 'trial-process.json').read_text(encoding='utf-8'))
+            terminate_server(server_identity)
             wait_stopped(plan['port'])
         if changed:
             if current['kind'] == 'git':

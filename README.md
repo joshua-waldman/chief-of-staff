@@ -191,6 +191,11 @@ credentials and private data are preserved. The existing queue/monitoring choice
 are retained. The helper verifies task ownership and declines foreground runs or
 another installation's task.
 
+If Windows leaves the task's child server running, the updater stops only the
+already-drained server identified by its PID and Windows creation time. It applies
+the same identity check to the isolated startup trial; it never kills an arbitrary
+process just because it is listening on COS's port.
+
 Startup failures before background work resumes attempt to restore the previous
 code, database and requirements. Dependency restoration can require network access.
 After normal work resumes, COS does not automatically restore an older database.

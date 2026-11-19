@@ -123,7 +123,8 @@ def status():
 
 @app.get('/healthz')
 def health():
-    return {'sha':installed().get('sha'), 'trial':TRIAL}
+    from .update_worker import process_identity
+    return {'sha':installed().get('sha'), 'trial':TRIAL, 'process':process_identity()}
 
 @app.get('/api/updates')
 def update_status():

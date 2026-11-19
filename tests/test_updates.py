@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import sqlite3
 import subprocess
+import os
+import sys
 import threading
 import zipfile
 
@@ -343,3 +345,56 @@ def test_fresh_release_zip_is_recognized_without_a_version_marker(updater,tmp_pa
     assert updater.check()['state']=='current'
     (tmp_path/'run.py').write_bytes(b'older source\n')
     assert updater.check()['state']=='available'
+
+
+@pytest.mark.skipif(os.name!='nt',reason='Windows process identity API')
+def test_windows_shutdown_verifies_creation_time_before_stopping_exact_child():
+    child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        identity=update_worker.process_identity(child.pid)
+        assert identity['created']
+        with pytest.raises(RuntimeError,match='PID was reused'):
+            update_worker.terminate_server({**identity,'created':identity['created']+1})
+        assert child.poll() is None
+        update_worker.terminate_server(identity)
+        assert child.wait(timeout=10)==0
+    finally:
+        if child.poll() is None:child.terminate();child.wait(timeout=10)
+
+
+def test_failed_trial_uses_boot_identity_when_health_never_succeeds(installation,monkeypatch):
+    root,work,plan,actions=installation
+    identity={'pid':12345,'created':67890}
+    stopped=[]
+    monkeypatch.setattr(update_worker,'terminate_server',lambda item:stopped.append(item))
+    def fail(*args):
+        (work/'trial-process.json').write_text(json.dumps(identity))
+        raise RuntimeError('Trial startup failed')
+    monkeypatch.setattr(update_worker,'health',fail)
+    with pytest.raises(RuntimeError,match='Trial startup failed'):
+        update_worker.install(plan,work)
+    assert identity in stopped
+    assert (root/'run.py').read_text()=='old'
+
+
+@pytest.mark.parametrize('valid',[True,False])
+def test_trial_boot_records_identity_only_inside_update_directory(tmp_path,monkeypatch,valid):
+    import runpy
+    from types import SimpleNamespace
+    from cos import config
+    monkeypatch.setattr(config,'DATA',tmp_path/'data')
+    identity_file=tmp_path/('data/updates/attempt' if valid else 'elsewhere')/'trial-process.json'
+    identity_file.parent.mkdir(parents=True)
+    (tmp_path/'.cos-update-trial').write_text(json.dumps({'identity_file':str(identity_file)}))
+    runs=[]
+    monkeypatch.setitem(sys.modules,'uvicorn',SimpleNamespace(run=lambda *args,**kwargs:runs.append(kwargs)))
+    monkeypatch.setattr(sys,'argv',['run.py'])
+    script=Path(__file__).resolve().parents[1]/'run.py'
+    if valid:
+        runpy.run_path(str(script),run_name='__main__')
+        assert json.loads(identity_file.read_text())['pid']==os.getpid()
+        assert runs[0]['host']=='127.0.0.1'
+    else:
+        with pytest.raises(RuntimeError,match='Invalid update trial'):
+            runpy.run_path(str(script),run_name='__main__')
+        assert not identity_file.exists() and not runs
