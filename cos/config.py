@@ -25,7 +25,7 @@ DEFAULTS = {
     'engineering_workflows': {},
     'skill_roots': [str(Path.home()/'.claude/skills'), str(Path.home()/'.codex/skills')],
     'mcp_configs': [str(Path(os.environ.get('LOCALAPPDATA', '')) / 'Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude-3p/claude_desktop_config.json')],
-    'mcp_enabled': [], 'research_hosts': ['amd.com', 'llm.amd.com'],
+    'mcp_enabled': [], 'research_access': 'public', 'research_hosts': ['amd.com', 'llm.amd.com'],
 }
 
 def settings():
@@ -42,6 +42,14 @@ def save_settings(changes):
     if set(changes) - allowed:
         raise ValueError('Unknown setting')
     s = {**settings(), **changes}
+    if s['research_access'] not in ('public', 'restricted'):
+        raise ValueError('Research access must be public or restricted.')
+    if not isinstance(s['research_hosts'], list) or any(
+            not isinstance(host, str) or not host.strip() or
+            any(char in host for char in '/:@?#*') or any(char.isspace() for char in host)
+            for host in s['research_hosts']):
+        raise ValueError('Research hosts must be a list of exact hostnames.')
+    s['research_hosts'] = sorted({host.lower().rstrip('.') for host in s['research_hosts']})
     from .engineering import validate_workflows
     validate_workflows(s['engineering_workflows'],s['projects'])
     from .github import validate_accounts

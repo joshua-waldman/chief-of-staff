@@ -2,29 +2,21 @@
 import ipaddress
 import re
 import socket
-from urllib.parse import parse_qsl, urljoin, urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from .config import settings
 
 
-def validate_url(url, *, dns=True):
+def validate_url(url, *, dns=True, check_hosts=True):
     u = urlparse(url)
-    if u.scheme != 'https' or not u.hostname or u.username or u.password or u.fragment or u.port not in (None, 443):
-        raise ValueError('Research requires HTTPS without credentials, fragments or custom ports.')
-    if u.hostname not in settings()['research_hosts']:
+    if u.scheme != 'https' or not u.hostname or u.username or u.password or u.port not in (None, 443):
+        raise ValueError('Research requires HTTPS without credentials or custom ports.')
+    config = settings()
+    if check_hosts and config.get('research_access', 'public') == 'restricted' and u.hostname not in config['research_hosts']:
         hint = (' For GitHub source evidence, use repository_connections, repository_search and repository_read with the repository owner account; public host allowlisting does not control those authenticated reads.'
                 if u.hostname in {'github.com','api.github.com','raw.githubusercontent.com'} else '')
         raise ValueError('Add this exact research host in Connections before retrieval.'+hint)
-    if u.query:
-        # Only documented display selectors, never arbitrary source text or secrets.
-        pairs = parse_qsl(u.query, keep_blank_values=True, strict_parsing=True)
-        choices = {'view': {'graph-rest-1.0', 'graph-rest-beta'},
-                   'tabs': {'http', 'csharp', 'go', 'java', 'javascript', 'php', 'powershell', 'python'}}
-        if (u.hostname != 'learn.microsoft.com' or not u.path.startswith('/en-us/graph/') or
-                len({k for k, _ in pairs}) != len(pairs) or
-                any(k not in choices or v not in choices[k] for k, v in pairs)):
-            raise ValueError('Research query strings allow only Microsoft Learn Graph view and tabs selectors.')
     if dns:
         addresses = socket.getaddrinfo(u.hostname, 443)
         if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):

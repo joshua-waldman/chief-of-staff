@@ -56,6 +56,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, 'ROOT', tmp_path)
     monkeypatch.setattr(config, 'DATA', tmp_path / 'data')
     monkeypatch.setattr(tools, 'DATA', tmp_path / 'data')
+    monkeypatch.setitem(config.DEFAULTS, 'research_access', 'restricted')
     monkeypatch.setitem(config.DEFAULTS, 'research_hosts', ['learn.microsoft.com', 'docs.example.com'])
     monkeypatch.setattr(research.socket, 'getaddrinfo', lambda *a: [(2, 1, 6, '', ('20.70.246.20', 443))])
     return Store(tmp_path / 'test.db')
@@ -78,8 +79,6 @@ def test_learn_redirect_and_display_selectors(env, monkeypatch):
 
 @pytest.mark.parametrize('destination', [
     'https://other.example.com/page', 'http://learn.microsoft.com/page',
-    URL + '?secret=private', URL + '?view=graph-rest-1.0&view=graph-rest-beta',
-    URL + '?tabs=arbitrary', 'https://docs.example.com/?view=graph-rest-beta',
     'https://user:pass@learn.microsoft.com/page', 'https://learn.microsoft.com:8443/page',
 ])
 def test_unsafe_redirect_never_contacted(env, monkeypatch, destination):

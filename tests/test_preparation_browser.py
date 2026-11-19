@@ -15,8 +15,7 @@ from cos.db import Store
 def test_navigation_blocks_mutating_transport_until_external_change_approval(tmp_path, monkeypatch, action, token, blocked):
     from cos import tools
     monkeypatch.setattr(tools, 'DATA', tmp_path / 'data')
-    monkeypatch.setattr(browser, 'settings', lambda: {'research_hosts': ['amd.com']})
-    monkeypatch.setattr(browser, 'validate_url', lambda url: url)
+    monkeypatch.setattr(browser, 'validate_url', lambda url, **kwargs: url)
     routes = []
     socket = SimpleNamespace(closed=False)
     socket.close = lambda: setattr(socket, 'closed', True)

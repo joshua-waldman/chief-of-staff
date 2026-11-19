@@ -5,6 +5,8 @@
     "Example Project": "C:/Projects/ExampleProject"
   },
   "monitor_enabled": false,
+  "research_access": "public",
+  "research_hosts": ["amd.com", "llm.amd.com"],
   "teams_auth": {},
   "capacity_recovery_seconds": 900,
   "model_parallel_requests": 1,
