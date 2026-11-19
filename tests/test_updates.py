@@ -398,3 +398,23 @@ def test_trial_boot_records_identity_only_inside_update_directory(tmp_path,monke
         with pytest.raises(RuntimeError,match='Invalid update trial'):
             runpy.run_path(str(script),run_name='__main__')
         assert not identity_file.exists() and not runs
+
+
+def test_background_checker_monitors_helper_without_a_browser(updater,monkeypatch):
+    calls=[]
+    monkeypatch.setattr(updater,'check',lambda:calls.append('check'))
+    monkeypatch.setattr(updater,'snapshot',lambda:calls.append('snapshot'))
+    class Event:
+        waits=0
+        def is_set(self):return False
+        def wait(self,seconds):
+            assert seconds==5
+            self.waits+=1
+            return self.waits==2
+    updater.stop_event=Event()
+    class Thread:
+        def __init__(self,target,**kwargs):self.target=target
+        def start(self):self.target()
+    monkeypatch.setattr(updates.threading,'Thread',Thread)
+    updater.start()
+    assert calls==['check','snapshot']

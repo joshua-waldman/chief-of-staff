@@ -205,7 +205,11 @@ class Updates:
         def loop():
             while not self.stop_event.is_set():
                 self.check()
-                self.stop_event.wait(INTERVAL)
+                # Recover a failed helper even if the owner closed the browser.
+                for _ in range(INTERVAL // 5):
+                    if self.stop_event.wait(5):
+                        return
+                    self.snapshot()
         threading.Thread(target=loop, daemon=True, name='cos-release-check').start()
 
     def remind(self):
