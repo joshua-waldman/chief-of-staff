@@ -141,3 +141,18 @@ def test_confirmed_execution_gets_a_slot_ahead_of_background_triage(env):
     try:
         assert engine.ready_jobs(1)[0]['id']==item['execution']['job_id']
     finally:engine.stop()
+
+
+def test_copied_primary_inputs_have_verified_bytes_for_delegation(env,tmp_path):
+    from cos.tools import file_record,selected_files
+    store,registry=env
+    source=store.create_job('Source meeting','Communications')
+    path=tmp_path/'transcript.txt';path.write_text('Verified meeting assignment',encoding='utf-8')
+    original=file_record(store,source['id'],path)
+    store.write('''INSERT INTO commitment_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                ('evidence','commitment',source['id'],original['file_id'],'meeting','https://example.com','2026-11-19','00:01:00','Assignment','assignment','evidence-fingerprint',0,now()))
+    item=accept(registry)
+    jid=item['execution']['job_id']
+    copied=store.one('SELECT * FROM files WHERE job_id=?',(jid,))
+    assert copied['id']!=original['file_id']
+    assert selected_files(store,jid,[copied['id']])[0]['id']==copied['id']

@@ -73,8 +73,13 @@ def ensure(connection, identity, restart=False):
         target=workspace(job_id)/'inputs'/(file_id+path.suffix)
         target.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(path,target)
+        from .artifact_inputs import retain
+        sha,size=retain(job_id,target)
+        local_id=uid()
         connection.execute('INSERT INTO files VALUES(?,?,?,?,?,?)',
-                           (uid(),job_id,file['name'],str(target),file['mime'],stamp))
+                           (local_id,job_id,file['name'],str(target),file['mime'],stamp))
+        connection.execute('INSERT INTO artifact_provenance VALUES(?,?,?,?)',(local_id,sha,size,stamp))
+        connection.execute('INSERT INTO artifact_versions VALUES(?,?,?,?)',(local_id,sha,size,stamp))
     connection.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
                        (job_id, 'commitment_execution', 'Execution linked to commitment '+identity, stamp))
     connection.execute('INSERT INTO job_briefs VALUES(?,?,?)', (job_id, json.dumps({
