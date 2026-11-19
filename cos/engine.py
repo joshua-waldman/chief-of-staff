@@ -820,6 +820,7 @@ class Engine:
                                 covered={child['id']:work_version(child,child_state) for child,child_state in delegated_work(delivery_connection,job)}
                             s['delivered_versions']={**s.get('delivered_versions',{}),**covered}
                         recovery.clear_status(self.store,id,args['summary'][:2000],next_step='The result and any deliverables are available for optional review.')
+                        self.add_result(messages,call['id'],{'completed':True})
                         self.store.complete_result(id,s,args['summary'],step+1)
                         self.store.event(id,'completed',args['summary'])
                         review_reply(self.store,id,args['summary'])

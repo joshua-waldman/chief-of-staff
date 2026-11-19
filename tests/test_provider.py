@@ -10,6 +10,48 @@ class FakeResponse:
     def json(self):return self.data
 
 
+@pytest.mark.parametrize('model',['gpt-6-sol','other-model'])
+def test_reopened_legacy_finish_gets_receipt_before_recovery_directions(monkeypatch,model):
+    import copy
+    requests=[]
+    monkeypatch.setattr(provider,'gateway_key',lambda:'test-secret')
+    monkeypatch.setattr(provider,'settings',lambda:{**provider.DEFAULTS,'models':{'worker':model}})
+    def post(url,**kwargs):
+        requests.append(kwargs['json'])
+        return FakeResponse({'status':'completed','output':[],
+                             'choices':[{'message':{'role':'assistant','content':'OK'}}]})
+    monkeypatch.setattr(provider.httpx,'post',post)
+    arguments=json.dumps({'action':'finish','arguments':{'summary':'Prior report'}})
+    history=[{'role':'assistant','content':None,'tool_calls':[{
+        'id':'terminal','type':'function','function':{'name':'perform','arguments':arguments}}],
+        '_responses_model':model,'_responses_output':[{'type':'function_call',
+            'call_id':'terminal','name':'perform','arguments':arguments}]},
+        {'role':'system','content':'Publication remains unfinished.'},
+        {'role':'user','content':'Resume using saved results.'}]
+    original=copy.deepcopy(history)
+    Gateway().complete(history,tools=SCHEMA)
+    items=requests[0].get('input',requests[0].get('messages'))
+    receipt=items[1]
+    assert receipt.get('call_id',receipt.get('tool_call_id'))=='terminal'
+    result=json.loads(receipt.get('output',receipt.get('content')))
+    assert result['prior_turn_ended'] is True and 'completed' not in result
+    assert items[2]['role']=='system' and items[3]['role']=='user'
+    assert history==original
+
+
+def test_legacy_finish_repair_is_idempotent_and_never_invents_action_outcomes():
+    def call(action,id):
+        return {'role':'assistant','tool_calls':[{'id':id,'function':{
+            'name':'perform','arguments':json.dumps({'action':action})}}]}
+    history=[call('send_email','send'),{'role':'user','content':'Continue'},
+             call('finish','done'),{'role':'tool','tool_call_id':'done','content':'{"completed":false}'},
+             call('finish','legacy'),{'role':'system','content':'Reopened'}]
+    balanced=provider.balance_legacy_finish(history)
+    assert provider.balance_legacy_finish(balanced)==balanced
+    assert [m['tool_call_id'] for m in balanced if m['role']=='tool']==['done','legacy']
+    assert next(m for m in balanced if m.get('tool_call_id')=='done')['content']=='{"completed":false}'
+
+
 @pytest.mark.parametrize('output',[[],[{'type':'function_call','call_id':'partial','name':'perform','arguments':'{"action":"write_file"'}]])
 def test_incomplete_responses_are_marked_for_inference_recovery(monkeypatch,output):
     monkeypatch.setattr(provider,'gateway_key',lambda:'test-secret')
