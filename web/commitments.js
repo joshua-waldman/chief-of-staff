@@ -36,7 +36,14 @@ function renderCommitments(resetFields=false){
 }
 
 function commitmentSummary(item){
- return '<article class="panel'+commitmentTimingClass(item)+'">'+commitmentTimingBadge(item)+readable('Owner',item.owner)+readable('Deliverable',item.deliverable)+readable('Scope',item.scope)+readable('Status',commitmentLabels[item.status]||item.status)+readable('Timing',commitmentDeadline(item))+(item.deadline_basis?readable('Date interpretation',item.deadline_basis):'')+'</article>';
+ return '<article class="panel'+commitmentTimingClass(item)+'">'+commitmentTimingBadge(item)+readable('Owner',item.owner)+readable('Deliverable',item.deliverable)+readable('Scope',item.scope)+readable('Status',commitmentLabels[item.status]||item.status)+readable('Timing',commitmentDeadline(item))+(item.deadline_basis?readable('Date interpretation',item.deadline_basis):'')+commitmentExecution(item)+'</article>';
+}
+
+function commitmentExecution(item){
+ const work=item.execution;
+ if(!work)return '';
+ const status=work.status==='completed'?'Delivered — verify fulfillment':work.status.replaceAll('_',' ');
+ return '<div class="panel">'+readable('Execution',status)+(work.next_step?readable('Next action',work.next_step):'')+btn('Open execution task','data-job="'+esc(work.job_id)+'"','secondary')+'</div>';
 }
 
 function commitmentSources(item){
@@ -61,8 +68,8 @@ function commitmentDetailView(item){
  html+='<div class="field"><label for="cm-note">Verification note or reason</label><textarea id="cm-note" maxlength="1500" placeholder="Explain completion, dismissal or reopening. A completion note is your confirmation that the work was done."></textarea></div>';
  const completions=item.evidence.filter(e=>e.kind==='completion');
  if(item.status==='open'&&completions.length)html+='<div class="field"><label for="cm-completion-evidence">Evidence you reviewed for completion</label><select id="cm-completion-evidence"><option value="">Use my verification note instead</option>'+completions.map(e=>'<option value="'+esc(e.id)+'">'+esc((e.meeting_date||'Unknown date')+' · '+e.source_timestamp+' · '+e.excerpt.slice(0,120))+'</option>').join('')+'</select></div>';
- html+='<p class="small">These controls update the register only. Sending, scheduling, sharing and delegated work keep their own approval requirements.</p><div class="row">';
- if(item.status==='proposed')html+=btn('Confirm assignment','data-cm-action="accept"');
+ html+='<p class="small">Confirming starts the linked execution task. COS carries out research and preparation; external changes require exact-action approval. Closing a commitment stops unfinished linked work.</p><div class="row">';
+ if(item.status==='proposed')html+=btn('Confirm assignment and start execution','data-cm-action="accept"');
  if(item.status==='open')html+=btn('Confirm completed','data-cm-action="complete"');
  if(active)html+=btn('Dismiss commitment','data-cm-action="dismiss"','secondary');
  if(['completed','dismissed'].includes(item.status))html+=btn('Reopen commitment','data-cm-action="reopen"','secondary');
@@ -77,7 +84,7 @@ function commitmentDetailView(item){
 }
 
 function commitmentsView(){
- return intro('Commitments that stay connected.','Review meeting assignments, preserve uncertain dates, and reconcile evidence across meetings.')+'<p>New assignments are proposals until you confirm them. Source evidence never closes work automatically.</p><div class="toolbar"><form id="cm-search-form"><label for="cm-query">Search commitments</label><input id="cm-query" value="'+esc(commitmentQuery)+'"><label for="cm-filter">Status</label><select id="cm-filter">'+Object.entries({active:'Proposed and open',all:'All records',...commitmentLabels}).map(([value,label])=>'<option value="'+value+'" '+(value===commitmentFilter?'selected':'')+'>'+esc(label)+'</option>').join('')+'</select>'+btn('Search','type="submit"')+'</form></div><div id="cm-list">'+(commitmentPage.items.length?commitmentPage.items.map(item=>'<article class="panel'+commitmentTimingClass(item)+'"><div class="section-title"><h2>'+esc(item.deliverable)+'</h2><span class="tag">'+esc(commitmentLabels[item.status])+'</span></div>'+commitmentTimingBadge(item)+'<p>'+esc(item.owner)+' · '+esc(item.scope)+'</p><p>'+esc(commitmentDeadline(item))+'</p>'+(item.completion_pending?'<p class="warning">Completion evidence needs review.</p>':'')+btn('Review record','data-cm-open="'+esc(item.id)+'"','secondary')+'</article>').join(''):'<div class="panel empty">No commitments match this view. Ask COS to review a meeting transcript and propose explicit owner commitments.</div>')+'</div><div class="row"><p>'+commitmentPage.total+' matching records</p>'+(commitmentPage.offset?btn('Previous','data-cm-page="'+Math.max(0,commitmentPage.offset-commitmentPage.limit)+'"','secondary'):'')+(commitmentPage.offset+commitmentPage.limit<commitmentPage.total?btn('Next','data-cm-page="'+(commitmentPage.offset+commitmentPage.limit)+'"','secondary'):'')+'</div>'+(commitmentDetail?commitmentDetailView(commitmentDetail):'');
+ return intro('Commitments that stay connected.','Review meeting assignments, preserve uncertain dates, and reconcile evidence across meetings.')+'<p>New assignments are proposals until you confirm them. Source evidence never closes work automatically.</p><div class="toolbar"><form id="cm-search-form"><label for="cm-query">Search commitments</label><input id="cm-query" value="'+esc(commitmentQuery)+'"><label for="cm-filter">Status</label><select id="cm-filter">'+Object.entries({active:'Proposed and open',all:'All records',...commitmentLabels}).map(([value,label])=>'<option value="'+value+'" '+(value===commitmentFilter?'selected':'')+'>'+esc(label)+'</option>').join('')+'</select>'+btn('Search','type="submit"')+'</form></div><div id="cm-list">'+(commitmentPage.items.length?commitmentPage.items.map(item=>'<article class="panel'+commitmentTimingClass(item)+'"><div class="section-title"><h2>'+esc(item.deliverable)+'</h2><span class="tag">'+esc(commitmentLabels[item.status])+'</span></div>'+commitmentTimingBadge(item)+'<p>'+esc(item.owner)+' · '+esc(item.scope)+'</p><p>'+esc(commitmentDeadline(item))+'</p>'+(item.completion_pending?'<p class="warning">Completion evidence needs review.</p>':'')+commitmentExecution(item)+btn('Review record','data-cm-open="'+esc(item.id)+'"','secondary')+'</article>').join(''):'<div class="panel empty">No commitments match this view. Ask COS to review a meeting transcript and propose explicit owner commitments.</div>')+'</div><div class="row"><p>'+commitmentPage.total+' matching records</p>'+(commitmentPage.offset?btn('Previous','data-cm-page="'+Math.max(0,commitmentPage.offset-commitmentPage.limit)+'"','secondary'):'')+(commitmentPage.offset+commitmentPage.limit<commitmentPage.total?btn('Next','data-cm-page="'+(commitmentPage.offset+commitmentPage.limit)+'"','secondary'):'')+'</div>'+(commitmentDetail?commitmentDetailView(commitmentDetail):'');
 }
 
 async function reviewCommitment(action){

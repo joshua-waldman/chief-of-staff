@@ -65,6 +65,8 @@ class Store:
             c.executescript(guidance_schema)
             from .commitments import SCHEMA as commitment_schema
             c.executescript(commitment_schema)
+            from .commitment_execution import SCHEMA as execution_schema
+            c.executescript(execution_schema)
             from .review_commitments import SCHEMA as review_commitment_schema
             c.executescript(review_commitment_schema)
             from .schedules import SCHEMA as schedule_schema
@@ -193,6 +195,11 @@ class Store:
         j['children'] = self.rows('SELECT '+columns+' FROM jobs WHERE parent_id=? ORDER BY created',(id,))
         from .briefs import detail_brief
         j['brief']=detail_brief(self,j)
+        from .commitment_execution import execution
+        linked=self.rows('''SELECT DISTINCT c.id,c.deliverable,c.status FROM commitments c
+            JOIN commitment_evidence e ON e.commitment_id=c.id
+            WHERE e.source_job=?''',(id,))
+        j['commitment_actions']=[{**item,'execution':execution(self,item['id'])} for item in linked]
         j['review_messages']=self.rows('SELECT * FROM review_messages WHERE job_id=? ORDER BY id',(id,))
         j['result_review']=self.result_review(id) if j['status']!='cancelled' else None
         if j['result_review']:

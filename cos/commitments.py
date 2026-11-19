@@ -162,6 +162,8 @@ class Commitments:
                     (identity,*[data[key] for key in ('owner','deliverable','scope','deadline_text','deadline_date','deadline_certainty','deadline_basis')],'proposed',fingerprint,1,stamp,stamp))
                 evidence_id,_=add_source(c,identity,source,'assignment')
                 history(c,identity,'proposed','agent',details={'evidence_id':evidence_id})
+            from .commitment_execution import ensure
+            ensure(c,identity)
         result=self.detail(identity)
         result['reused']=reused
         return result
@@ -190,6 +192,8 @@ class Commitments:
                 link['files']=json.loads(link['files'])
                 evidence['review_snapshot']=link
         row['history']=self.store.rows('SELECT * FROM commitment_history WHERE commitment_id=? ORDER BY id',(identity,))
+        from .commitment_execution import execution
+        row['execution']=execution(self.store,identity)
         row['completion_pending']=row['status'] in {'proposed','open'} and any(e['kind']=='completion' and not e['reviewed'] for e in row['evidence'])
         row['possible_matches']=self.matches(row) if row['status']!='merged' else []
         return row
@@ -217,7 +221,10 @@ class Commitments:
         rows=[r for r in rows if (status=='all' or r['status']==status or status=='active' and r['status'] in {'proposed','open'})
               and (not owner or normalized(owner)==normalized(r['owner'])) and (not scope or r['scope'] in {'global',scope})
               and (not terms or terms.intersection(words(r['owner']+' '+r['deliverable']+' '+r['scope'])))]
-        for row in rows: row['completion_pending']=bool(row['completion_pending'] and row['status'] in {'proposed','open'})
+        from .commitment_execution import execution
+        for row in rows:
+            row['completion_pending']=bool(row['completion_pending'] and row['status'] in {'proposed','open'})
+        for row in rows[offset:offset+limit]: row['execution']=execution(self.store,row['id'])
         return {'items':rows[offset:offset+limit],'total':len(rows),'offset':offset,'limit':limit}
 
     def attention_count(self):
@@ -273,6 +280,11 @@ class Commitments:
                 changes=args.get('fields')
                 if not isinstance(changes,dict) or not changes or set(changes)-FIELDS: raise ValueError('Provide supported commitment fields to edit.')
                 data=fields(changes,{key:row[key] for key in FIELDS})
+                if any(data[k]!=row[k] for k in ('owner','deliverable','scope')):
+                    running=c.execute('''SELECT j.status,j.step FROM commitment_execution x
+                        JOIN jobs j ON j.id=x.job_id WHERE x.commitment_id=?''',(identity,)).fetchone()
+                    if running and running['step'] and running['status'] not in {'cancelled','completed'}:
+                        raise ValueError('Stop the linked execution task before changing its confirmed owner, deliverable or scope.')
                 c.execute('UPDATE commitments SET '+','.join(key+'=?' for key in sorted(FIELDS))+',version=version+1,updated=? WHERE id=?',(*[data[key] for key in sorted(FIELDS)],stamp,identity))
                 details={'before':{key:row[key] for key in FIELDS},'after':data}
             else:
@@ -290,4 +302,20 @@ class Commitments:
                 if action in {'complete','dismiss'}:
                     c.execute("UPDATE commitment_evidence SET reviewed=1 WHERE commitment_id=? AND kind='completion'",(identity,))
             history(c,identity,action,'owner',note,details)
+            from .commitment_execution import ensure,stop
+            if action in {'complete','dismiss','merge'}:
+                stop(c,identity)
+            execution_id=ensure(c,identity,restart=action=='reopen')
+            if execution_id and note and action in {'accept','reopen'}:
+                # Preserve authenticated owner direction as direction, not merely
+                # audit text. Fresh jobs have not yet built their message context.
+                saved=c.execute('SELECT messages FROM jobs WHERE id=?',(execution_id,)).fetchone()
+                state=json.loads(saved['messages'])
+                state=state if isinstance(state,dict) else {'messages':state}
+                state.setdefault('messages',[])
+                if state['messages']:
+                    state['messages'].append({'role':'user','content':'Owner commitment direction: '+note})
+                else:
+                    state['followup']='Owner commitment direction: '+note
+                c.execute('UPDATE jobs SET messages=? WHERE id=?',(json.dumps(state),execution_id))
         return self.detail(identity)

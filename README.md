@@ -673,8 +673,15 @@ transcription is unavailable; meeting speech uses the separate transcript tool.
 The additive database tables are created on server restart. Existing summaries and
 planning files are retained; no bulk conversion or historical assignment is inferred
 on startup. To populate older meetings, ask COS to reread their registered transcripts
-and propose commitments for review. The register is local memory: accepting a record
-does not send messages, schedule meetings, create tickets or approve delegated work.
+and propose commitments for review. Each new meeting proposal has a linked execution task waiting for confirmation.
+Confirming an assignment queues that task and preserves your direction. The scheduler
+also recovers confirmed legacy commitments without an execution task. Execution
+reuses available source documents and prior deliverables, performs preparation, and
+brings concrete external actions for exact approval. The register shows execution
+status and the next action. A plan alone cannot finish an execution task; a specific
+dependency remains visible until resolved. Delivery and owner verification of
+fulfillment are separate. Dismissal, completion and merging stop unfinished linked
+work; cancellation and already delivered work are never automatically replayed.
 
 ## Source map
 
