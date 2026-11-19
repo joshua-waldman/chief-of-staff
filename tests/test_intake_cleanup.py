@@ -219,6 +219,22 @@ def test_teams_waits_for_unhandled_sibling_then_cleans_up(tmp_path, writes):
     assert writes == [('mark_teams_read', {'chat_id': 'chat'})]
 
 
+@pytest.mark.parametrize('uncertain', [False, True])
+def test_teams_coalesces_ignored_topics_into_one_chat_write(tmp_path, writes, monkeypatch, uncertain):
+    store, monitor, _, _ = teams_setup(tmp_path)
+    ingest(monitor, message('1', 'Budget update'), message('2', 'Release update'))
+    assert len(receipts(store)) == 2
+    if uncertain:
+        def timeout(action, args):
+            writes.append((action, args))
+            raise TimeoutError('Response unavailable')
+        monkeypatch.setattr(cleanup, 'communication', timeout)
+    cleanup.drain(store, limit=1)
+    cleanup.drain(store)
+    assert writes == [('mark_teams_read', {'chat_id': 'chat'})]
+    assert all(r['status'] == ('uncertain' if uncertain else 'executed') for r in receipts(store))
+
+
 @pytest.mark.parametrize('state', [
     {'state': 'scanning', 'active_source': 'teams', 'sources': {'teams': {'state': 'watching'}}},
     {'state': 'needs_attention', 'sources': {'teams': {'state': 'needs_attention'}}},

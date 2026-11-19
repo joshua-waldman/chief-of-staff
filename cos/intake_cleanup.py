@@ -111,7 +111,20 @@ def drain(store, limit=12):
             if row['source'] == 'teams' and not chat_ready(c, row['source_id']):
                 c.execute("UPDATE intake_cleanup SET status='deferred',updated=? WHERE id=?", (now(), row['id']))
                 continue
-            c.execute("UPDATE intake_cleanup SET status='executing',updated=? WHERE id=?", (now(), row['id']))
+            claimed = [row]
+            if row['source'] == 'teams':
+                # One transport write covers every pending topic in this chat.
+                # Claim them together so a timeout cannot leave another queued
+                # copy of the same chat-wide operation available for execution.
+                for other in c.execute("""SELECT * FROM intake_cleanup WHERE source='teams'
+                        AND source_id=? AND id<>? AND status IN ('pending','deferred')""",
+                        (row['source_id'], row['id'])).fetchall():
+                    if current_decision(c, json.loads(other['decision'])) and untouched(c, other['job_id']):
+                        claimed.append(other)
+                    else:
+                        finish(c, other, 'cancelled', 'Guidance or conversation changed before cleanup.')
+            c.executemany("UPDATE intake_cleanup SET status='executing',updated=? WHERE id=?",
+                          [(now(), item['id']) for item in claimed])
         action, args = (('delete_email', {'id': row['source_id']}) if row['source'] == 'email'
                         else ('mark_teams_read', {'chat_id': row['source_id']}))
         try:
@@ -124,4 +137,5 @@ def drain(store, limit=12):
         except Exception as error:
             status, detail = 'uncertain', str(error)[-4000:]+' Outcome unknown; not repeated automatically.'
         with store.lock, store.connect() as c:
-            finish(c, row, status, detail)
+            for item in claimed:
+                finish(c, item, status, detail)
