@@ -271,6 +271,11 @@ function approvalEdits(a,value){
  if(normalize(value)===normalize(text))return {};
  return {edited:history?{reply_text:value}:{body:value}};
 }
+function intakeCleanupView(j){
+ if(!j.intake_cleanup?.length)return '';
+ const states={pending:'Queued',deferred:'Waiting for all chat topics to finish and Teams collection to complete',executing:'In progress',failed_not_executed:'Failed; no change made',uncertain:'Outcome unknown; will not repeat automatically',cancelled:'Cancelled because guidance or conversation changed'};
+ return '<section class="panel"><h3>Automatic intake cleanup</h3>'+j.intake_cleanup.map(r=>'<p>'+esc(r.source==='email'?'Email: ':'Teams: ')+esc(r.status==='executed'?(r.source==='email'?'Moved to Deleted Items':'Marked chat as read'):(states[r.status]||r.status))+' <span class="small">'+esc(date(r.updated))+'</span></p>'+(['failed_not_executed','uncertain'].includes(r.status)?'<details><summary>Cleanup details</summary><p>'+esc(r.result)+'</p></details>':'')).join('')+'</section>';
+}
 async function openJob(id,{background=false}={}){
  const wasOpening=!background&&(selected!==id||!$('#job-dialog').open);
  const generation=background?(openJob.generation||0):(openJob.generation=(openJob.generation||0)+1);
@@ -293,7 +298,7 @@ async function openJob(id,{background=false}={}){
  (j.org==='Communications'?'<section class="panel"><h3>Source email / conversation</h3><div class="form-grid">'+readable('From',b.email_from)+readable('Subject',b.email_subject)+readable('Received',b.email_received)+'</div>'+readable('Email summary',b.email_excerpt)+'<div class="form-grid">'+readable('Response needed',({yes:'Yes',no:'No',unknown:'Not yet determined'})[b.response_needed]||'Not yet determined')+readable('Why',b.response_reason)+'</div><div class="form-grid">'+readable('Action needed',({yes:'Yes',no:'No',unknown:'Not yet determined'})[b.action_needed]||'Not yet determined')+readable('Action rationale',b.action_reason)+'</div>'+readable('Requested work',b.requested_action)+readable('Action plan',b.action_plan)+(b.uncertainties?readable('Still unverified',b.uncertainties):'')+'</section>':'')+
  (b.proposed_body?'<section class="panel"><h3>'+(j.status==='completed'?'Response text':'Proposed response')+'</h3>'+readable('To',b.proposed_to)+readable('Subject',b.proposed_subject)+readable(j.status==='completed'?'Message text':'Draft reply',b.proposed_body,'proposed-reply')+'<p class="small">'+(j.status==='completed'?'See the result below for the execution outcome and receipt.':'A draft is not a sent message. Sending requires approval of the exact action below.')+'</p></section>':'')+
  (j.status==='completed'&&j.optional_read_warning?'<section class="warning"><h3>Optional cleanup unavailable</h3><p>'+esc(j.optional_read_warning)+'</p>'+btn('Open Connections','data-go="connections"','secondary')+'</section>':'')+
- capacityView(j)+
+ intakeCleanupView(j)+capacityView(j)+
  (j.question&&!j.approvals.some(a=>a.status==='uncertain')&&['waiting_input','blocked','failed'].includes(j.status)?'<section class="warning"><h3>Decision or information needed</h3>'+(j.question.length>650?'<p>'+esc(b.next_step||'Review the details and reply below.')+'</p><details><summary>Full agent question and supporting context</summary><div class="readable">'+esc(j.question)+'</div></details>':'<div class="readable">'+esc(j.question)+'</div>')+'</section>':'')+
  (j.org!=='Communications'&&!j.approvals.some(a=>a.status==='uncertain')&&['waiting_input','blocked','failed'].includes(j.status)?'<form id="answer-form"><div class="field"><label for="answer">Reply to your Chief of Staff</label><textarea id="answer" required placeholder="Provide the missing information or instructions to retry…"></textarea></div>'+btn('Send follow-up & resume','type="submit"')+'</form>':'')+
  (j.read_targets||[]).map(t=>btn(t.label,'data-summary-read="'+esc(t.args.id||t.args.chat_id)+'" data-read-tool="'+esc(t.tool)+'"','secondary')).join('')+

@@ -28,3 +28,16 @@ def synthetic_teams_router(monkeypatch):
                 'message_ids': [str(m['id']) for m in payload['messages']],
             }]})}, {}
     monkeypatch.setattr(teams_topics, 'Gateway', Provider)
+
+
+@pytest.fixture(autouse=True)
+def synthetic_teams_intake(monkeypatch):
+    """Tests opt into ignore decisions explicitly; never contact a live classifier."""
+    from cos import teams_intake
+    class Provider:
+        def __init__(self, store):
+            pass
+
+        def complete(self, *args, **kwargs):
+            return {'content': '{"decisions":[]}'}, {}
+    monkeypatch.setattr(teams_intake, 'Gateway', Provider)

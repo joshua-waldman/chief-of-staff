@@ -63,6 +63,8 @@ class Store:
             ''')
             from .guidance_targets import SCHEMA as guidance_schema
             c.executescript(guidance_schema)
+            from .intake_cleanup import SCHEMA as intake_cleanup_schema
+            c.executescript(intake_cleanup_schema)
             from .commitments import SCHEMA as commitment_schema
             c.executescript(commitment_schema)
             from .commitment_execution import SCHEMA as execution_schema
@@ -195,6 +197,7 @@ class Store:
             j['events'] = self.rows('SELECT * FROM events WHERE job_id=? ORDER BY id',(id,))
         approval_filter=" AND status IN ('pending','executing','uncertain','verification_inconclusive')" if compact else ''
         j['approvals'] = self.rows('SELECT a.*,v.evidence AS verification_evidence FROM approvals a LEFT JOIN action_verifications v ON v.action_id=a.id WHERE job_id=?'+approval_filter+' ORDER BY created',(id,))
+        j['intake_cleanup'] = self.rows('SELECT source,status,result,created,updated FROM intake_cleanup WHERE job_id=? ORDER BY created DESC LIMIT 50',(id,))
         j['files'] = self.rows('SELECT * FROM files WHERE job_id=?',(id,))
         from .tools import is_recovery_file
         archived=self.state('recovery_archive:'+id,{}).get('members',{})
