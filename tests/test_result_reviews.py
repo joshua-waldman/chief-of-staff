@@ -259,6 +259,28 @@ def test_cancelled_result_cannot_be_returned_to_review(setup):
     assert not store.pending_results()
 
 
+def test_returned_delegated_snapshot_survives_legacy_reconciliation(setup):
+    store, engine = setup
+    parent = store.create_job('Triage this incoming conversation', 'Communications')
+    child = store.create_job('Prepare the requested proposal', 'Strategy', parent_id=parent['id'])
+    finish(store, engine, child, '## Correction proposal\nRead this draft.', result_kind='generated_content')
+    # Reproduce a historical director closure, bypassing today's synthesis gate.
+    store.complete_result(parent['id'], {'messages': [], 'result_kind': 'triage',
+        'deliverable_file_ids': []}, 'No further reply needed.', 2)
+    review = store.result_review(parent['id'])
+    store.review_result(parent['id'], review['revision'])
+    reviewed = store.result_review(parent['id'])['reviewed']
+    store.reopen_result(parent['id'], review['revision'], reviewed)
+    restored = Store(store.path)
+    assert restored.pending_results()[0]['revision'] == review['revision']
+    assert restored.result_review(parent['id'])['summary'] == review['summary']
+    # A later acknowledgment or replacement still retires the restored snapshot.
+    restored.review_result(parent['id'], review['revision'])
+    assert not Store(store.path).pending_results()
+    restored.complete_result(parent['id'], {'result_kind': 'triage'}, 'Routine notice.', 3)
+    assert not Store(store.path).pending_results()
+
+
 @pytest.mark.parametrize('kind', [None, 'triage', 'action_receipt'])
 def test_routine_message_finishes_stay_in_history_not_review(setup, kind):
     store, engine = setup
