@@ -10,7 +10,7 @@
   return '<p role="status">'+escape(messages[state] || '')+'</p>'+
    (status.current?'<p class="small">Installed: '+escape(status.current.tag || 'Unversioned installation')+'</p>':'')+
    (release.tag?'<details><summary>What’s new in '+escape(release.tag)+'</summary><pre class="update-notes">'+escape(release.notes)+'</pre></details>':'')+
-   (state==='available'?'<p>Installation waits for active work, backs up the database, and restarts COS.</p><button type="button" data-update="install">Update and restart</button> <button type="button" class="secondary" data-update="remind">Remind me tomorrow</button> ':'')+
+   (state==='available'?'<p>Installation waits for active work, backs up the database, and restarts COS.</p><button type="button" class="primary" data-update="install">Update and restart</button> <button type="button" class="secondary" data-update="remind">Remind me tomorrow</button> ':'')+
    (!working(state)?'<button type="button" class="secondary" data-update="check">Check for updates</button>':'');
  }
  if (typeof module !== 'undefined' && module.exports) { module.exports = {content, working}; return; }
