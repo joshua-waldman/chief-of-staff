@@ -101,6 +101,26 @@ def branch_name(job,a):
     return rule.get('branch_prefix','codex/')+(ticket+'-' if ticket else '')+slug+suffix
 
 
+def verified_base(job, root, args):
+    """Require an exact current origin/main before a fresh-base worktree.
+
+    Never fetch, switch or reset the running checkout. Git ls-remote is read-only.
+    """
+    reference = args.get('base_ref')
+    expected = args.get('base_commit')
+    if not reference and expected is None:
+        return git(root, 'rev-parse', '--verify', 'HEAD')
+    if job.get('org') != 'Self-Improvement' or reference != 'origin/main' or not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{40}', expected):
+        raise ValueError('Fresh base requires Self-Improvement, base_ref origin/main and its exact 40-character base_commit.')
+    local = git(root, 'rev-parse', '--verify', 'refs/remotes/origin/main')
+    if local != expected:
+        raise ValueError('Local origin/main differs from the requested base; refresh source evidence and start a fresh job.')
+    remote = git(root, 'ls-remote', '--exit-code', 'origin', 'refs/heads/main').split()
+    if len(remote) != 2 or remote != [expected, 'refs/heads/main']:
+        raise ValueError('Remote main differs from the requested base; refresh the remote-tracking ref outside this checkout and start a fresh job.')
+    return expected
+
+
 def create_branch(job,a):
     from .tools import workspace
     name=branch_name(job,a); root=source_root(job)
@@ -110,6 +130,8 @@ def create_branch(job,a):
         if saved:
             if saved['branch'] != name:
                 raise ValueError('This job already owns another feature; delegate a new job for a new feature.')
+            if saved.get('base_ref', '') != a.get('base_ref', '') or (a.get('base_commit') and a['base_commit'] != saved['base_commit']):
+                raise ValueError('This job already owns a checkout at another base; use a fresh job.')
             return {**saved, 'created':False, 'resumed':True}
         target = (workspace(job['id'])/'checkout').resolve()
         if target.exists():
@@ -122,9 +144,12 @@ def create_branch(job,a):
             if saved['branch']!=name or saved['source']!=str(root) or saved['path']!=str(target) or saved['job_id']!=job['id']:
                 raise ValueError('A different feature checkout is reserved for this job.')
         else:
+            base = verified_base(job, root, a)
             saved = {'job_id':job['id'], 'project':job.get('project',''), 'source':str(root),
-                     'path':str(target), 'branch':name, 'base_commit':git(root,'rev-parse','--verify','HEAD'),
+                     'path':str(target), 'branch':name, 'base_commit':base,
                      'common_dir':git(root,'rev-parse','--path-format=absolute','--git-common-dir')}
+            if a.get('base_ref'):
+                saved['base_ref'] = a['base_ref']
             temporary = path.with_suffix('.tmp')
             temporary.write_text(json.dumps(saved),encoding='utf-8')
             temporary.replace(pending)

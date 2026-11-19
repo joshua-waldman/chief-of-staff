@@ -85,6 +85,54 @@ def test_parallel_features_never_share_files_or_switch_running_checkout(env):
     assert validate_tests(store,*second)['exit_code']==0
 
 
+def test_explicit_remote_main_base_without_mutating_shared_checkout(env, tmp_path):
+    live,store = env
+    remote = tmp_path/'remote.git'
+    subprocess.run(['git','init','--bare',str(remote)],check=True,capture_output=True)
+    git(live,'remote','add','origin',str(remote))
+    git(live,'push','-u','origin','main')
+    old = git(live,'rev-parse','HEAD')
+    git(live,'checkout','-b','advanced')
+    (live/'module.py').write_text('value = 2\n',encoding='utf-8')
+    git(live,'add','module.py')
+    git(live,'commit','-m','Advance remote')
+    newer = git(live,'rev-parse','HEAD')
+    git(live,'push','origin','HEAD:main')
+    git(live,'checkout','main')
+    assert git(live,'rev-parse','HEAD') == old
+    assert git(live,'rev-parse','refs/remotes/origin/main') == newer
+    job = store.create_job('Fresh base', 'Self-Improvement')
+    args = {'name':'Fresh base','base_ref':'origin/main','base_commit':newer}
+    args['branch'] = engineering.branch_name(job,args)
+    result = engineering.create_branch(job,args)
+    checkout = Path(result['path'])
+    assert result['base_commit'] == newer
+    assert git(checkout,'rev-parse','HEAD') == newer
+    assert git(live,'rev-parse','HEAD') == old
+    assert git(live,'branch','--show-current') == 'main'
+    assert engineering.create_branch(job,args)['resumed']
+    with pytest.raises(ValueError,match='another base'):
+        engineering.create_branch(job,{**args,'base_ref':''})
+
+
+def test_fresh_base_refuses_stale_or_arbitrary_commit(env, tmp_path):
+    live,store = env
+    remote = tmp_path/'remote.git'
+    subprocess.run(['git','init','--bare',str(remote)],check=True,capture_output=True)
+    git(live,'remote','add','origin',str(remote))
+    git(live,'push','-u','origin','main')
+    old = git(live,'rev-parse','HEAD')
+    job = store.create_job('Reject stale base','Self-Improvement')
+    args = {'name':'Reject stale base','base_ref':'origin/main','base_commit':'0'*40}
+    args['branch'] = engineering.branch_name(job,args)
+    with pytest.raises(ValueError,match='Local origin/main differs'):
+        engineering.create_branch(job,args)
+    with pytest.raises(ValueError,match='requires Self-Improvement'):
+        engineering.create_branch(job,{**args,'base_ref':'origin/other','base_commit':old})
+    assert not engineering.workspace_metadata(job).exists()
+    assert not engineering.workspace_metadata(job).with_suffix('.pending.json').exists()
+
+
 def test_restart_resumes_owned_worktree_and_cannot_repurpose_job(env):
     _,store = env
     job,root = feature(store)
