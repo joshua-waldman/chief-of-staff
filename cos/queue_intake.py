@@ -97,6 +97,8 @@ class QueueIntake:
                 c.execute("UPDATE jobs SET status='completed',result=?,question='',updated=? WHERE id=? AND status='queued'", (reason, stamp, id))
                 c.execute('INSERT OR REPLACE INTO job_briefs VALUES(?,?,?)', (id, json.dumps(brief), stamp))
                 c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)', (id, 'intake_ignored', 'Queue admission: '+reason, stamp))
+                from .intake_cleanup import schedule
+                schedule(c, id, 'email', '', [m['id'] for m in emails], decision)
                 closed += 1
         if len(self.checked) > 1000:
             self.checked = {id: self.checked[id] for id in eligible if id in self.checked}

@@ -348,3 +348,22 @@ test('failed optional cleanup is escaped and preserves completed summary display
  assert.match(s.detail.html,/Missing permission &lt;script>/);
  assert.ok(!s.detail.html.includes('Decision or information needed'));
 });
+
+test('automatic intake cleanup shows real outcomes and escapes failures without approval controls',async()=>{
+ const s=jobRefreshContext();
+ s.ctx.esc=x=>String(x??'').replace(/</g,'&lt;');
+ const pending=s.ctx.openJob('job');
+ s.respond('Ignored at intake',{intake_cleanup:[
+  {source:'email',status:'executed'},
+  {source:'teams',status:'deferred'},
+  {source:'teams',status:'uncertain',result:'Timed out <script>'}
+ ]});
+ await pending;
+ assert.match(s.detail.html,/Automatic intake cleanup/);
+ assert.match(s.detail.html,/Moved to Deleted Items/);
+ assert.match(s.detail.html,/Waiting for all chat topics to finish/);
+ assert.match(s.detail.html,/Outcome unknown; will not repeat automatically/);
+ assert.match(s.detail.html,/Timed out &lt;script>/);
+ assert.ok(!s.detail.html.includes('data-approve='));
+ assert.ok(!s.detail.html.includes('<script>'));
+});

@@ -128,6 +128,12 @@ def read_targets(store, job):
     """Offer optional read approvals only for completed informational sources."""
     if job['org'] != 'Communications' or job['status'] != 'completed':
         return []
+    if store.one("SELECT 1 FROM intake_cleanup WHERE job_id=? AND status IN ('pending','deferred','executing','uncertain')", (job['id'],)):
+        return []
+    from .intake_cleanup import untouched
+    with store.connect() as c:
+        if untouched(c, job['id']) and c.execute("SELECT 1 FROM intake_cleanup WHERE job_id=? AND status='executed'", (job['id'],)).fetchone():
+            return []
     row = store.one('SELECT body FROM job_briefs WHERE job_id=?', (job['id'],))
     brief = json.loads(row['body']) if row else {}
     if category(brief) not in {'reading','ignore'}:
