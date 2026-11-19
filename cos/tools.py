@@ -36,7 +36,7 @@ finish {summary,final_output?:boolean,result_kind?:strategy|generated_content|tr
 list_skills {} / read_skill {name}: read instructions before using an installed skill.
 create_skill {name,description,instructions}: writes a local reusable skill.
 create_organization {name,leader,purpose}: adds an organization.
-fetch_url {url}: retrieve an explicitly allowed research host with validated redirects. Microsoft Learn Graph view/tabs selectors are supported; other queries are rejected. Never send AMD material as URL parameters.
+fetch_url {url}: retrieve public HTTPS pages with validated redirects. Public web is enabled by default; restricted mode requires exact configured hosts. Ordinary query parameters are supported. Never send confidential AMD material or credentials in URLs.
 mail_attachments {id}: download and register email attachments for read_file. teams_attachments {chat_id}: download images and SharePoint documents from this topic's saved source messages for read_file; returns source IDs and explicit access gaps.
 search_mail {query}; read_mail {id}; list_chats {}; read_teams {chat_id}; meeting_artifacts {chat_id}: discover shared meeting files and download documents for read_file (25 MB per file). Audio/video stays metadata-only. Follow scan_incomplete coverage limits.
 meeting_transcripts {chat_id,date?:YYYY-MM-DD}: use Claude's meeting-recap Stream helper with existing Teams credentials to read transcripts attached to recordings, then try shared transcript files. Defaults to the newest recording date; pass date for a specific meeting occurrence. Returns job-local files for read_file, source links and access diagnostics. A recording or recap metadata is not transcript text. Cannot transcribe video/audio.

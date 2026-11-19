@@ -1,10 +1,11 @@
 """Browser work uses a separate Edge profile and the same approval broker as other tools."""
 import os
 import threading
+from tempfile import TemporaryDirectory
+from contextlib import nullcontext
 from pathlib import Path
 from urllib.parse import urlparse
 from .tools import workspace,file_record
-from .config import settings
 from .research import validate_url
 
 LOCK=threading.Lock()
@@ -14,12 +15,14 @@ def browser_action(store,job,action,args):
     validate_url(url)
     read_only=action=='browser_read' or bool(args.get('_preparation_review'))
     profile=Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'AMD-ChiefOfStaff/browser'
-    with LOCK,sync_playwright() as p:
-        browser=p.chromium.launch_persistent_context(str(profile),channel='msedge',headless=action=='browser_read',accept_downloads=False)
+    # Automatic research never inherits cookies from reviewed interactive work.
+    # Reviewed browser_action navigation retains its existing signed-in profile.
+    profile_context=TemporaryDirectory(prefix='cos-research-') if action=='browser_read' else nullcontext(str(profile))
+    with LOCK, profile_context as active_profile, sync_playwright() as p:
+        browser=p.chromium.launch_persistent_context(active_profile,channel='msedge',headless=action=='browser_read',accept_downloads=False,service_workers='block')
         try:
             page=browser.pages[0] if browser.pages else browser.new_page()
-            # Only configured hosts and AMD/Microsoft SSO can be contacted. Third-party page content cannot open arbitrary destinations.
-            allowed=set(settings()['research_hosts'])
+            # Validate every network request, including subframes and CDN resources.
             def guard(route):
                 if read_only and route.request.method not in {'GET','HEAD','OPTIONS'}:
                     route.abort()
@@ -27,16 +30,15 @@ def browser_action(store,job,action,args):
                 target=urlparse(route.request.url)
                 host=target.hostname or ''
                 sso = host in {'login.microsoftonline.com','amdsso.okta.com','ok14static.oktacdn.com'}
-                if route.request.is_navigation_request() and route.request.frame == page.main_frame and not (action=='browser_action' and sso and target.scheme=='https'):
-                    try:
-                        validate_url(route.request.url)
-                    except ValueError:
-                        route.abort()
-                        return
-                if target.scheme in {'data','blob'} or host in allowed or host.endswith('.amd.com') or host in {'login.microsoftonline.com','amdsso.okta.com','ok14static.oktacdn.com'}:
+                if target.scheme in {'data','blob'}:
                     route.continue_()
-                else:
+                    return
+                try:
+                    validate_url(route.request.url, check_hosts=not (sso and action=='browser_action'))
+                except (ValueError, OSError):
                     route.abort()
+                    return
+                route.continue_()
             browser.route('**/*',guard)
             if read_only:
                 # WebSocket messages can mutate business state without an HTTP

@@ -15,8 +15,7 @@ from cos.db import Store
 def test_navigation_blocks_mutating_transport_until_external_change_approval(tmp_path, monkeypatch, action, token, blocked):
     from cos import tools
     monkeypatch.setattr(tools, 'DATA', tmp_path / 'data')
-    monkeypatch.setattr(browser, 'settings', lambda: {'research_hosts': ['amd.com']})
-    monkeypatch.setattr(browser, 'validate_url', lambda url: url)
+    monkeypatch.setattr(browser, 'validate_url', lambda url, **kwargs: url)
     routes = []
     socket = SimpleNamespace(closed=False)
     socket.close = lambda: setattr(socket, 'closed', True)
@@ -59,9 +58,14 @@ def test_navigation_blocks_mutating_transport_until_external_change_approval(tmp
 
     context = Context()
 
+    profiles = []
+    def launch(profile, **kwargs):
+        profiles.append(profile)
+        return context
+
     class Playwright:
         def __enter__(self):
-            return SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=lambda *args, **kwargs: context))
+            return SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=launch))
 
         def __exit__(self, *args):
             pass
@@ -73,3 +77,9 @@ def test_navigation_blocks_mutating_transport_until_external_change_approval(tmp
     assert routes[0].continued and not routes[0].aborted
     assert all(route.aborted == blocked for route in routes[1:])
     assert socket.closed == blocked
+
+    if action == 'browser_action':
+        assert Path(profiles[0]).name == 'browser'
+    else:
+        assert Path(profiles[0]).name.startswith('cos-research-')
+        assert not Path(profiles[0]).exists()

@@ -110,7 +110,7 @@ def test_account_routes_validate():
 
 def test_blocked_public_github_fetch_points_to_authenticated_route(monkeypatch):
     from cos import research
-    monkeypatch.setattr(research, 'settings', lambda: {'research_hosts': []})
+    monkeypatch.setattr(research, 'settings', lambda: {'research_access': 'restricted', 'research_hosts': []})
     with pytest.raises(ValueError, match='repository_read'):
         research.validate_url(LINK, dns=False)
 
