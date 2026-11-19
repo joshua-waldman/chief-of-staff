@@ -15,8 +15,9 @@ def browser_action(store,job,action,args):
     validate_url(url)
     read_only=action=='browser_read' or bool(args.get('_preparation_review'))
     profile=Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'AMD-ChiefOfStaff/browser'
-    # Research never inherits signed-in cookies or credentials from interactive work.
-    profile_context=TemporaryDirectory(prefix='cos-research-') if read_only else nullcontext(str(profile))
+    # Automatic research never inherits cookies from reviewed interactive work.
+    # Reviewed browser_action navigation retains its existing signed-in profile.
+    profile_context=TemporaryDirectory(prefix='cos-research-') if action=='browser_read' else nullcontext(str(profile))
     with LOCK, profile_context as active_profile, sync_playwright() as p:
         browser=p.chromium.launch_persistent_context(active_profile,channel='msedge',headless=action=='browser_read',accept_downloads=False,service_workers='block')
         try:
@@ -33,7 +34,7 @@ def browser_action(store,job,action,args):
                     route.continue_()
                     return
                 try:
-                    validate_url(route.request.url, check_hosts=not (sso and not read_only))
+                    validate_url(route.request.url, check_hosts=not (sso and action=='browser_action'))
                 except (ValueError, OSError):
                     route.abort()
                     return
