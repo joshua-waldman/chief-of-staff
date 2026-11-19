@@ -327,3 +327,19 @@ def test_prepare_failure_never_leaves_maintenance_enabled(updater,monkeypatch):
     updater.prepare({'tag':'v1.1.0','sha':'b'*40},{},None,8765)
     assert updater.snapshot()['state']=='error'
     assert not update_gate.pending
+
+
+def test_fresh_release_zip_is_recognized_without_a_version_marker(updater,tmp_path,monkeypatch):
+    import hashlib
+    (tmp_path/'run.py').write_bytes(b'release source\n')
+    blob=b'release source\n'
+    oid=hashlib.sha1(b'blob '+str(len(blob)).encode()+b'\0'+blob).hexdigest()
+    monkeypatch.setattr(updates,'installed',lambda:{'kind':'zip','tag':None,'sha':None})
+    def get(endpoint):
+        if endpoint=='/releases/latest':return response()
+        if endpoint.startswith('/commits/'):return {'sha':'b'*40}
+        return {'tree':[{'path':'run.py','sha':oid,'type':'blob'}]}
+    monkeypatch.setattr(updates,'get_json',get)
+    assert updater.check()['state']=='current'
+    (tmp_path/'run.py').write_bytes(b'older source\n')
+    assert updater.check()['state']=='available'

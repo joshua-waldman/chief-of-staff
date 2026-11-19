@@ -118,6 +118,22 @@ def tree_digest():
             for p in paths if p.is_file() and source_path(p.relative_to(ROOT).as_posix())}
 
 
+def zip_matches(commit):
+    """GitHub source ZIPs have no .git/version marker; recognize an unchanged release."""
+    tree = get_json('/git/trees/' + commit + '?recursive=1')
+    if tree.get('truncated'):
+        return False
+    files = {item['path']: item['sha'] for item in tree.get('tree', [])
+             if item.get('type') == 'blob' and source_path(item.get('path', ''))}
+    if not files or set(files) != set(tree_digest()):
+        return False
+    for name, expected in files.items():
+        content = (ROOT / name).read_bytes()
+        if hashlib.sha1(b'blob ' + str(len(content)).encode('ascii') + b'\0' + content).hexdigest() != expected:
+            return False
+    return True
+
+
 class Updates:
     def __init__(self):
         self.lock = threading.RLock()
@@ -172,6 +188,8 @@ class Updates:
             commit = get_json('/commits/' + tag)['sha']
             if not re.fullmatch('[0-9a-f]{40}', commit):
                 raise ValueError('GitHub returned an invalid release commit.')
+            if current['kind'] == 'zip' and not current['sha'] and zip_matches(commit):
+                current = {**current, 'tag': tag, 'sha': commit}
             available = commit != current['sha'] and (
                 not version(current['tag']) or version(tag) > version(current['tag']))
             with self.lock:
@@ -212,7 +230,9 @@ class Updates:
                 branch = git('branch', '--show-current')
                 if branch not in {'', 'main', 'master'} or git('status', '--porcelain'):
                     raise ValueError('Automatic updates require a clean main/release checkout. Preserve local changes and leave the feature branch first.')
-            self.state.update(state='preparing', error='')
+            self.helper = None
+            self.work = None
+            self.state.update(state='preparing', error='', attention=False)
             threading.Thread(target=self.prepare, args=(dict(release), current, engine, port), daemon=True, name='cos-update-prepare').start()
         return self.snapshot()
 
