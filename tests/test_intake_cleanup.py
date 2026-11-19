@@ -222,6 +222,7 @@ def test_teams_waits_for_unhandled_sibling_then_cleans_up(tmp_path, writes):
 @pytest.mark.parametrize('state', [
     {'state': 'scanning', 'active_source': 'teams', 'sources': {'teams': {'state': 'watching'}}},
     {'state': 'needs_attention', 'sources': {'teams': {'state': 'needs_attention'}}},
+    {'state': 'watching', 'sources': {'teams': {'state': 'watching'}}, 'limitations': [{'chat_id': 'chat', 'reason': 'Unavailable context'}]},
     {},
 ])
 def test_teams_waits_for_complete_collection(tmp_path, writes, state):
@@ -243,6 +244,26 @@ def test_teams_waits_for_topic_migration(tmp_path, writes):
     cleanup.drain(store)
     assert not writes and receipts(store)[0]['status'] == 'deferred'
     store.write("UPDATE teams_topic_migrations SET status='completed'")
+    cleanup.drain(store)
+    assert len(writes) == 1
+
+
+def test_teams_restart_requires_fresh_collection_even_with_saved_watching_status(tmp_path, writes, monkeypatch):
+    store, monitor, _, _ = teams_setup(tmp_path)
+    ingest(monitor, message('1', 'Budget update'))
+    # Exercise startup without launching real worker/network threads.
+    launched = []
+    class Thread:
+        def __init__(self, **kwargs):
+            launched.append(kwargs)
+        def start(self):
+            pass
+    monkeypatch.setattr('cos.monitor.threading.Thread', Thread)
+    monitor.start()
+    assert len(launched) == 2
+    cleanup.drain(store)
+    assert not writes and receipts(store)[0]['status'] == 'deferred'
+    store.set_state('intake_cleanup_teams_collected', True)
     cleanup.drain(store)
     assert len(writes) == 1
 

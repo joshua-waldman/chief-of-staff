@@ -111,6 +111,7 @@ def response(emails=None,messages=None,failures=None):
 
 def test_teams_failure_does_not_block_email_and_recovery_deduplicates(tmp_path,monkeypatch):
     m=setup_monitor(tmp_path,monkeypatch)
+    m.store.set_state('intake_cleanup_teams_collected',False)
     email={'id':'mail','from':{'emailAddress':{'address':'other@amd.com'}},'subject':'An ask'}
     message={'id':'m','chat_id':'chat','owner':False,'text':'An ask'}
     broken=True
@@ -125,12 +126,14 @@ def test_teams_failure_does_not_block_email_and_recovery_deduplicates(tmp_path,m
     assert calls==['email','teams']
     assert m.store.state('monitor_checkpoint_email')!=SINCE
     assert m.store.state('monitor_checkpoint_teams')==SINCE
+    assert m.store.state('intake_cleanup_teams_collected') is False
     assert m.store.state('monitor_checkpoint')==SINCE
     assert m.store.state('monitor_status')['attention_required']
     assert len(m.store.rows('SELECT * FROM jobs'))==2
     broken=False
     m.tick()
     assert m.store.state('monitor_checkpoint_teams')!=SINCE
+    assert m.store.state('intake_cleanup_teams_collected') is True
     assert not m.store.state('monitor_status')['attention_required']
     assert 'error' not in m.store.state('monitor_status')
     assert len(m.store.rows('SELECT * FROM jobs'))==2

@@ -24,6 +24,8 @@ class Monitor:
 
     def start(self):
         from .intake_cleanup import recover
+        # A persisted watching status may predate hours of uncollected activity.
+        self.store.set_state('intake_cleanup_teams_collected',False)
         recover(self.store)
         threading.Thread(target=self.cleanup_loop,daemon=True,name='cos-intake-cleanup').start()
         threading.Thread(target=self.loop,daemon=True,name='cos-monitor').start()
@@ -289,6 +291,8 @@ class Monitor:
                 else:
                     self.store.set_state(key,started)
                     sources[source]={'state':'watching','last_poll':now(),'last_attempt':now(),'new_jobs':added}
+                    if source=='teams':
+                        self.store.set_state('intake_cleanup_teams_collected',True)
             except CapacityDelayed as error:
                 paused=bool(error.state.get('paused'))
                 message=('Message processing is paused after repeated model capacity limits. Review gateway capacity and retry an affected job to resume model requests.' if paused else

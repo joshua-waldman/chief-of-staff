@@ -53,10 +53,15 @@ def untouched(c, job_id):
 def chat_ready(c, chat_id):
     # The transport API marks a whole chat. Every known topic must be handled,
     # and a partial/ongoing poll cannot establish that all activity was ingested.
+    fresh = c.execute("SELECT value FROM state WHERE key='intake_cleanup_teams_collected'").fetchone()
+    if fresh and json.loads(fresh['value']) is not True:
+        return False
     row = c.execute("SELECT value FROM state WHERE key='monitor_status'").fetchone()
     status = json.loads(row['value']) if row else {}
     if (status.get('sources', {}).get('teams', {}).get('state') != 'watching'
         or status.get('active_source') == 'teams' and status.get('state') == 'scanning'):
+        return False
+    if any(item.get('chat_id') == chat_id for item in status.get('limitations', [])):
         return False
     if c.execute("SELECT 1 FROM teams_topic_migrations WHERE chat_id=? AND status<>'completed'", (chat_id,)).fetchone():
         return False
