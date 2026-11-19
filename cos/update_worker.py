@@ -57,10 +57,22 @@ def health(port, sha, trial, timeout=90):
     raise RuntimeError('Updated application did not pass its startup health check.')
 
 
+def wait_stopped(port):
+    import socket
+    for _ in range(30):
+        with socket.socket() as sock:
+            sock.settimeout(1)
+            if sock.connect_ex(('127.0.0.1', port)) != 0:
+                return
+        time.sleep(1)
+    raise RuntimeError('COS did not stop; release files cannot be safely replaced.')
+
+
 def install(plan, work):
     root, stage = Path(plan['root']), Path(plan['stage'])
     current, release = plan['current'], plan['release']
     database = Path(plan['database'])
+    data = Path(plan.get('data', str(database.parent)))
     marker, trial = root / '.cos-release.json', root / '.cos-update-trial'
     previous_marker = marker.read_bytes() if marker.exists() else None
     previous_trial = trial.exists()
@@ -86,8 +98,10 @@ def install(plan, work):
         # Never let a release track private runtime paths or symbolic links.
         for line in git('ls-tree', '-r', release['sha']).splitlines():
             metadata, name = line.split('\t', 1)
+            destination = safe_path(root, name).resolve()
             if metadata.split()[0] not in {'100644', '100755'} or name.split('/')[0].casefold() in {
-                    'data', '.venv', '.git', 'config.local.json', '.cos-release.json', '.cos-update-trial'}:
+                    'data', '.venv', '.git', 'config.local.json', '.cos-release.json', '.cos-update-trial'} or (
+                    destination == database.resolve() or destination.is_relative_to(data.resolve()) and data.resolve() != root.resolve()):
                 raise RuntimeError('Release contains a protected runtime path or link.')
     names = sorted(set(baseline) | {p.relative_to(stage).as_posix() for p in stage.rglob('*') if p.is_file()})
     backup = work / 'backup'
@@ -95,6 +109,9 @@ def install(plan, work):
     # Validate every destination before stopping or changing the app.
     for name in names:
         path = safe_path(root, name)
+        if path.resolve() == database.resolve() or (
+                data.resolve() != root.resolve() and path.resolve().is_relative_to(data.resolve())):
+            raise RuntimeError('Release source overlaps the configured runtime data directory.')
         if path.exists():
             target = backup / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -104,14 +121,7 @@ def install(plan, work):
         task(root, 'stop')
         stopped = True
         # Task Scheduler stops the supervisor process tree. Wait for the listener to close.
-        for _ in range(30):
-            import socket
-            with socket.socket() as sock:
-                if sock.connect_ex(('127.0.0.1', plan['port'])) != 0:
-                    break
-            time.sleep(1)
-        else:
-            raise RuntimeError('COS did not stop; no release files were installed.')
+        wait_stopped(plan['port'])
         backup_database(database, work / 'database.sqlite3')
         trial.write_text('Update validation: background work is disabled.', encoding='utf-8')
         changed = True
@@ -131,6 +141,7 @@ def install(plan, work):
         task(root, 'start')
         health(plan['port'], release['sha'], True)
         task(root, 'stop')
+        wait_stopped(plan['port'])
         trial.unlink()
         # Past this boundary work can resume. Do not restore an older database after actions run.
         activated = True
@@ -142,6 +153,7 @@ def install(plan, work):
             raise RuntimeError('Release installed, but restart needs attention. Background work may have resumed; database was not rolled back.') from None
         if stopped:
             task(root, 'stop')
+            wait_stopped(plan['port'])
         if changed:
             if current['kind'] == 'git':
                 git('checkout', branch or '--detach', *([] if branch else [current['sha']]))

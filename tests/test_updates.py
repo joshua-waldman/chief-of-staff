@@ -139,6 +139,7 @@ def installation(tmp_path, monkeypatch):
         def __enter__(self): return self
         def __exit__(self,*args): pass
         def connect_ex(self,*args): return 1
+        def settimeout(self,*args): pass
     monkeypatch.setattr(socket,'socket',Socket)
     return root,work,plan,actions
 
@@ -261,6 +262,7 @@ def test_real_git_checkout_and_rollback_preserve_branch_and_private_files(tmp_pa
         def __enter__(self):return self
         def __exit__(self,*args):pass
         def connect_ex(self,*args):return 1
+        def settimeout(self,*args):pass
     monkeypatch.setattr(socket,'socket',Socket)
     def health(*args):
         if startup_fails:raise RuntimeError('Startup failure')
