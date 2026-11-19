@@ -93,11 +93,21 @@ class Store:
             if 'eligible' not in {row['name'] for row in c.execute('PRAGMA table_info(result_reviews)')}:
                 c.execute('ALTER TABLE result_reviews ADD COLUMN eligible INTEGER NOT NULL DEFAULT 1')
             from .result_reviews import eligible, reconcile, routine_triage
+            # An explicit return restores this exact snapshot. Historical review
+            # cutoffs may exclude its old children; do not reclassify that saved
+            # content from the director's later triage state on restart.
+            restored_reviews={row['job_id'] for row in c.execute('''SELECT r.job_id
+                FROM result_reviews r WHERE r.eligible=1 AND r.reviewed IS NULL
+                AND EXISTS(SELECT 1 FROM events e WHERE e.job_id=r.job_id
+                    AND e.kind='result_review_reopened'
+                    AND CASE WHEN json_valid(e.body) THEN json_extract(e.body,'$.revision') END=r.revision)''')}
             # Inspect the saved snapshot, not a later conversation result. Never
             # acknowledge review or alter obligations when removing triage noise.
             for saved in c.execute('''SELECT j.*,r.summary AS review_summary,r.file_ids AS review_files
                     FROM result_reviews r JOIN jobs j ON j.id=r.job_id
                     WHERE r.eligible=1 AND r.reviewed IS NULL''').fetchall():
+                if saved['id'] in restored_reviews:
+                    continue
                 try:
                     state=json.loads(saved['messages'])
                     if not isinstance(state,dict):
@@ -111,6 +121,8 @@ class Store:
             old_results=c.execute('''SELECT j.*,r.job_id AS review_job_id FROM jobs j LEFT JOIN result_reviews r ON r.job_id=j.id
                 WHERE j.status='completed' AND j.parent_id IS NULL AND r.reviewed IS NULL''').fetchall()
             for job in old_results:
+                if job['id'] in restored_reviews:
+                    continue
                 try:
                     state=json.loads(job['messages'])
                 except (ValueError,TypeError):
@@ -304,7 +316,7 @@ class Store:
                 row['items']=[{key:item[key] for key in ('title','kind','file_ids')} for item in review['items']]
         return rows
 
-    def review_result(self,id,revision,commitments=None,snapshot_fingerprint=None):
+    def review_result(self,id,revision,commitments=None,snapshot_fingerprint=None,*,request_id=''):
         with self.lock,self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             row=c.execute('''SELECT r.*,j.status FROM result_reviews r JOIN jobs j ON j.id=r.job_id
@@ -318,7 +330,27 @@ class Store:
                 stamp=now()
                 c.execute('UPDATE result_reviews SET reviewed=? WHERE job_id=?',(stamp,id))
                 c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
-                    (id,'result_reviewed','Owner marked the returned result reviewed.',stamp))
+                    (id,'result_reviewed',json.dumps({'action':'mark_reviewed','revision':revision,
+                        'source':'result_review_endpoint' if request_id else 'local_call',
+                        'request_id':request_id}),stamp))
+        return {'ok':True}
+
+    def reopen_result(self,id,revision,reviewed,*,request_id=''):
+        """Restore a saved review without running work or undoing external actions."""
+        with self.lock,self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute('''SELECT r.*,j.status,j.parent_id FROM result_reviews r
+                JOIN jobs j ON j.id=r.job_id WHERE r.job_id=?''',(id,)).fetchone()
+            if (not row or not row['eligible'] or row['status']=='cancelled'
+                    or row['parent_id'] or row['revision']!=revision
+                    or not reviewed or row['reviewed']!=reviewed):
+                raise ValueError('This review has changed. Open the latest reviewed result before returning it to review.')
+            c.execute('UPDATE result_reviews SET reviewed=NULL WHERE job_id=?',(id,))
+            c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
+                (id,'result_review_reopened',json.dumps({'action':'return_to_review',
+                    'revision':revision,'previous_reviewed':reviewed,
+                    'source':'result_review_endpoint' if request_id else 'local_call',
+                    'request_id':request_id}),now()))
         return {'ok':True}
 
     def state(self,key,default=None):
