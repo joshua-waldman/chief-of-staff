@@ -20,6 +20,7 @@ from .trace import emit,job_run,approval_call,failure
 from .mail import prepare as prepare_email,definitely_not_sent,edit_reply
 from .conversations import deliver,deliver_waiting,reconcile_legacy,pending as conversation_pending,ready as conversation_ready,consumed as conversation_consumed
 from . import progress,recovery
+from .update_gate import background
 from .message_triage import PERSONAL_ACTION_POLICY
 from .job_names import NAMING_POLICY
 from .briefs import TIMING_POLICY
@@ -488,36 +489,40 @@ class Engine:
     def loop(self):
         while not self.stop_event.wait(.5):
             try:
-                if settings().get('queue_paused',False):
-                    continue
-                from .action_verification import dispatch as verify_actions
-                verify_actions(self)
-                self.schedules.tick()
-                from .commitment_execution import reconcile as reconcile_commitments
-                reconcile_commitments(self.store)
-                deliver_waiting(self.store)
-                self.release_parents()
-                with self.lock:
-                    available=settings()['parallel_agents']-len(self.active)
-                if available<=0:
-                    continue
-                # Apply the same KB gate to old queued mail, outside the worker
-                # lock and before any model/tool orchestration starts.
-                self.queue_intake.check(self.ready_jobs(25))
-                with self.lock:
-                    # Disconnect may arrive while intake is checking the queue.
-                    if settings().get('queue_paused',False):
-                        continue
-                    available=settings()['parallel_agents']-len(self.active)
-                    if available<=0:
-                        continue
-                    for job in self.dispatch_jobs():
-                        if job['id'] in self.active:
-                            continue
-                        self.active.add(job['id'])
-                        self.pool.submit(self.run,job['id'])
+                self.dispatch_tick()
             except Exception:
                 log.exception('Scheduler failure')
+
+    @background
+    def dispatch_tick(self):
+        if settings().get('queue_paused',False):
+            return
+        from .action_verification import dispatch as verify_actions
+        verify_actions(self)
+        self.schedules.tick()
+        from .commitment_execution import reconcile as reconcile_commitments
+        reconcile_commitments(self.store)
+        deliver_waiting(self.store)
+        self.release_parents()
+        with self.lock:
+            available=settings()['parallel_agents']-len(self.active)
+        if available<=0:
+            return
+        # Apply the same KB gate to old queued mail, outside the worker
+        # lock and before any model/tool orchestration starts.
+        self.queue_intake.check(self.ready_jobs(25))
+        with self.lock:
+            # Disconnect may arrive while intake is checking the queue.
+            if settings().get('queue_paused',False):
+                return
+            available=settings()['parallel_agents']-len(self.active)
+            if available<=0:
+                return
+            for job in self.dispatch_jobs():
+                if job['id'] in self.active:
+                    continue
+                self.active.add(job['id'])
+                self.pool.submit(self.run,job['id'])
 
     def route(self,job):
         orgs=self.store.rows('SELECT name,purpose FROM organizations')

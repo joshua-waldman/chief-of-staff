@@ -24,3 +24,5 @@ tbody tr.timing-soon:hover{background:#fff4dc}tbody tr.timing-overdue:hover{back
 
 .timing-badge.timing-neutral{background:#f0f3f1;color:#52645a;border-color:#dbe3de}
 .timing-cell{min-width:180px;max-width:280px}.timing-reason{white-space:normal;line-height:1.5}
+
+.release-notice{margin:16px 32px 0}.release-notice[hidden]{display:none}.update-notes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:20rem;overflow:auto;font:inherit}.release-notice button{margin-top:8px}
