@@ -7,6 +7,7 @@ from .config import gateway_key, settings
 from .db import now
 from .provider import Gateway
 from .trace import emit
+from .update_gate import background
 
 ATTENTION = {'waiting_input', 'awaiting_approval', 'blocked', 'failed', 'capacity_paused'}
 TIMING_FIELDS = {'time_sensitive', 'timing_reason', 'deadline_at'}
@@ -73,6 +74,7 @@ class TimingAssessor:
         self.provider = provider or Gateway(store)
         self.stop_event = threading.Event()
 
+    @background
     def assess_pending(self, limit=4):
         batch = []
         for row in self.store.rows("SELECT id FROM jobs WHERE status IN ('waiting_input','awaiting_approval','blocked','failed','capacity_paused') ORDER BY updated DESC,id"):

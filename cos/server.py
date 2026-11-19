@@ -24,6 +24,8 @@ from .integrations import skill_inventory,mcp_inventory,auth_status,skill_dir,te
 from .tools import file_record,workspace,safe_name
 from .provider import Gateway
 from .trace import emit,context,failure,bundle
+from .updates import Updates, installed
+from . import update_gate
 
 TOKEN=secrets.token_urlsafe(32)
 store=Store()
@@ -31,14 +33,22 @@ engine=Engine(store)
 monitor=Monitor(store)
 timing_assessor=TimingAssessor(store)
 auth={'running':False,'output':''}
+updates=Updates()
+TRIAL=(ROOT/'.cos-update-trial').exists()
 
 @asynccontextmanager
 async def lifespan(app):
+    if TRIAL:
+        update_gate.pending=True
+        yield
+        return
     emit('server.started',{'source_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/'cos').glob('*.py')},'models':settings()['models'],'parallel_agents':settings()['parallel_agents']})
     engine.start()
     monitor.start()
     timing_assessor.start()
+    updates.start()
     yield
+    updates.stop_event.set()
     timing_assessor.stop_event.set()
     monitor.stop_event.set()
     engine.stop()
@@ -59,7 +69,14 @@ async def local_security(request,call_next):
             return JSONResponse({'error':'Open the local application first'},status_code=401)
         if request.method not in {'GET','HEAD'} and not secrets.compare_digest(request.headers.get('x-cos-token',''),TOKEN):
             return JSONResponse({'error':'Missing request token'},status_code=403)
-    response=await call_next(request)
+    mutation=request.url.path.startswith('/api/') and request.method not in {'GET','HEAD'}
+    if mutation and not update_gate.enter():
+        return JSONResponse({'error':'COS is waiting to install an update. New changes are temporarily paused.'},status_code=503)
+    try:
+        response=await call_next(request)
+    finally:
+        if mutation:
+            update_gate.leave()
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['Referrer-Policy']='no-referrer'
     response.headers['X-Frame-Options']='DENY'
@@ -103,6 +120,30 @@ def status():
     from .commitments import Commitments
     commitment_count=Commitments(store).attention_count()
     return {'ready_for_review':store.one("SELECT COUNT(*) AS n FROM result_reviews r JOIN jobs j ON j.id=r.job_id WHERE r.eligible=1 AND r.reviewed IS NULL AND j.status<>'cancelled' AND j.parent_id IS NULL")['n'],'commitments_attention':commitment_count,'gateway_configured':bool(gateway_key()),'jobs':len([j for j in jobs if not j['parent_id']]),'running':sum(j['status']=='running' for j in jobs),'needs_attention':commitment_count+sum(j['status'] in {'waiting_input','awaiting_approval','blocked','failed'} for j in jobs)+int(monitor_attention)+int(any(j['status']=='capacity_paused' for j in jobs)),'monitor_attention':monitor_attention,'completed':sum(j['status']=='completed' for j in jobs),'monitor':monitoring,'settings':config,'queue_active':active,'organizations':store.rows('SELECT * FROM organizations ORDER BY created')}
+
+@app.get('/healthz')
+def health():
+    from .update_worker import process_identity
+    return {'sha':installed().get('sha'), 'trial':TRIAL, 'process':process_identity()}
+
+@app.get('/api/updates')
+def update_status():
+    return updates.snapshot()
+
+@app.post('/api/updates/check')
+def check_updates():
+    return updates.check()
+
+@app.post('/api/updates/remind')
+def remind_update():
+    return updates.remind()
+
+@app.post('/api/updates/install')
+async def install_update(request:Request):
+    body=await request.json()
+    if not isinstance(body,dict) or body.get('acknowledgment')!='update_and_restart':
+        raise ValueError('Explicit update and restart acknowledgment is required.')
+    return await run_in_threadpool(updates.request,body.get('tag'),body.get('sha'),engine,request.url.port or 80)
 
 @app.get('/api/results')
 def pending_results():

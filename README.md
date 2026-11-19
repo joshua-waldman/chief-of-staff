@@ -158,6 +158,61 @@ Deployment means running this app on your own Windows machine. The server binds 
 
 Use `Start-ChiefOfStaff.ps1 -Stop` before updates or to stop the background task until the next sign-in. Run the launcher again to start it immediately. For development, stop the task first and use `Start-ChiefOfStaff.ps1 -Foreground`; Ctrl+C stops that foreground instance. Server logs are saved in `data/launcher/`, retaining the current and previous run. To remove automatic startup permanently, stop the app and delete your `ChiefOfStaff-<Windows user SID>` task in Task Scheduler. Re-running the normal launcher registers it again. A changed port takes effect after stopping the existing task and launching again with `-Port`.
 
+### Stable release updates
+
+COS checks GitHub for a stable release at startup and every 12 hours while it is
+running. **Check for updates** in the sidebar also checks immediately. Development
+commits on `main`, draft releases and previews do not trigger an update. Releases
+must use a stable version tag such as `v1.2.3`. The notice includes release notes,
+**Update and restart**, and **Remind me tomorrow**. Installation always requires
+the owner's click; no model or background release check installs code.
+
+For this private repository, sign in with GitHub CLI and map `joshua-waldman` to
+the account with repository access under **Connections → GitHub accounts**.
+Public repositories can be checked without sign-in. Connection failures do not
+stop COS; use the manual check to see details. No published release is also shown
+as unavailable rather than treated as an update.
+
+Automatic installation requires the Windows host to be running through its normal
+scheduled task. Git installations must have a clean `main`, `master`, or detached
+release checkout, with the official repository as `origin`; local changes and
+feature branches are refused. Updates fetch and check out the exact published
+tag's commit, leaving Git installations detached at that release. ZIP installations
+download the exact release commit and replace application source files. Back up
+custom source edits before using a ZIP installation's updater.
+
+COS downloads and validates the release before pausing new work. It allows active
+workers, monitoring, assessments and approved actions to finish, waiting up to
+30 minutes before deferring the update. It then starts a separate hidden helper
+that stops the scheduled task, backs up SQLite consistently, installs the source
+and Python requirements, and validates startup with background work disabled.
+After validation it restarts normally and the browser reconnects. Configuration,
+credentials and private data are preserved. The existing queue/monitoring choices
+are retained. The helper verifies task ownership and declines foreground runs or
+another installation's task.
+
+If Windows leaves the task's child server running, the updater stops only the
+already-drained server identified by its PID and Windows creation time. It applies
+the same identity check to the isolated startup trial; it never kills an arbitrary
+process just because it is listening on COS's port.
+
+Startup failures before background work resumes attempt to restore the previous
+code, database and requirements. Dependency restoration can require network access.
+After normal work resumes, COS does not automatically restore an older database.
+Recovery logs, source/database backups and `result.json` are retained in
+`<COS_DATA_DIR>/updates/<attempt>/` (normally `data/updates/`). If recovery itself
+fails, preserve this directory and inspect the logs before restarting. A remaining
+`.cos-update-trial` file deliberately disables background work until recovery is
+complete. Locked files, unavailable dependencies or Windows policies that prevent
+the detached helper can prevent installation; the updater does not bypass them.
+
+To publish: merge and validate the intended code, create a new immutable version
+tag such as `v1.2.3`, and publish a GitHub Release for that tag with release notes.
+Designate it the latest stable release. Keep previews marked as prereleases and
+never move a published version tag. New users should install a release tag/ZIP;
+users of an older version without this updater need one manual update to obtain
+it. Publishing a release is separate from merging a PR.
+
 ### Desktop icons
 
 After the normal launcher has registered COS to start at Windows sign-in, run

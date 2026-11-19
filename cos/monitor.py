@@ -9,6 +9,7 @@ from .db import now,uid
 from .trace import emit
 from .teams_content import text as teams_text
 from .capacity import CapacityDelayed
+from .update_gate import background
 
 class Monitor:
     def __init__(self,store):
@@ -31,16 +32,20 @@ class Monitor:
         threading.Thread(target=self.loop,daemon=True,name='cos-monitor').start()
 
     def cleanup_loop(self):
-        from .intake_cleanup import drain
         while not self.stop_event.wait(2):
             if settings().get('queue_paused',False):
                 continue
             try:
                 # Complete the entire routing batch before considering chat-wide reads.
-                with self.teams_ingestion_lock:
-                    drain(self.store,limit=1)
+                self.cleanup_tick()
             except Exception as error:
                 emit('intake.cleanup_failed',{'error':str(error)[-1000:]},store=self.store)
+
+    @background
+    def cleanup_tick(self):
+        from .intake_cleanup import drain
+        with self.teams_ingestion_lock:
+            drain(self.store,limit=1)
 
     def enqueue_once(self,source,item_id,request,org,aliases=()):
         # Queue insertion and deduplication commit atomically.
@@ -325,18 +330,22 @@ class Monitor:
 
     def loop(self):
         while not self.stop_event.is_set():
-            if gateway_key() and not settings().get('queue_paused',False):
-                try:
-                    from .teams_migration import migrate
-                    with self.teams_ingestion_lock:
-                        migrate(self,limit=1)
-                except Exception as error:
-                    self.store.set_state('teams_topic_migration_status',{'error':type(error).__name__,'updated':now()})
-            if settings()['monitor_enabled']:
-                try:
-                    self.tick()
-                except Exception as error:
-                    self.store.set_state('monitor_status',{**self.store.state('monitor_status',{}),'state':'needs_attention','attention_required':True,'error':str(error)[-2500:],'last_attempt':now()})
-            else:
-                self.store.set_state('monitor_status',{'state':'paused'})
+            self.poll_tick()
             self.stop_event.wait(settings()['poll_seconds'])
+
+    @background
+    def poll_tick(self):
+        if gateway_key() and not settings().get('queue_paused',False):
+            try:
+                from .teams_migration import migrate
+                with self.teams_ingestion_lock:
+                    migrate(self,limit=1)
+            except Exception as error:
+                self.store.set_state('teams_topic_migration_status',{'error':type(error).__name__,'updated':now()})
+        if settings()['monitor_enabled']:
+            try:
+                self.tick()
+            except Exception as error:
+                self.store.set_state('monitor_status',{**self.store.state('monitor_status',{}),'state':'needs_attention','attention_required':True,'error':str(error)[-2500:],'last_attempt':now()})
+        else:
+            self.store.set_state('monitor_status',{'state':'paused'})
