@@ -451,7 +451,12 @@ class Engine:
         # A yielded job goes behind other ready work, rather than monopolizing
         # every worker because it was created first.
         self.release_capacity()
-        candidates=self.store.rows("SELECT * FROM jobs WHERE status='queued' ORDER BY CASE WHEN org='Communications' THEN 0 ELSE 1 END,CASE WHEN json_valid(messages) THEN COALESCE(json_extract(messages,'$.delivery_ready'),0) ELSE 0 END DESC,updated,created,id")
+        candidates=self.store.rows("""WITH RECURSIVE execution_jobs(id) AS (
+            SELECT job_id FROM commitment_execution UNION
+            SELECT j.id FROM jobs j JOIN execution_jobs x ON j.parent_id=x.id)
+            SELECT * FROM jobs WHERE status='queued' ORDER BY CASE WHEN org='Communications' THEN 0 ELSE 1 END,
+            CASE WHEN id IN (SELECT id FROM execution_jobs) THEN 0 ELSE 1 END,
+            CASE WHEN json_valid(messages) THEN COALESCE(json_extract(messages,'$.delivery_ready'),0) ELSE 0 END DESC,updated,created,id""")
         return [job for job in candidates if job['id'] not in held and session(job).get('recovery_retry_at',0)<=time.time() and conversation_ready(self.store,job['id']) and not self.capacity_waiting(job)][:limit]
 
     def dispatch_jobs(self):
@@ -488,6 +493,8 @@ class Engine:
                 from .action_verification import dispatch as verify_actions
                 verify_actions(self)
                 self.schedules.tick()
+                from .commitment_execution import reconcile as reconcile_commitments
+                reconcile_commitments(self.store)
                 deliver_waiting(self.store)
                 self.release_parents()
                 with self.lock:
@@ -641,6 +648,8 @@ class Engine:
                     memory['content']+='\n'+progress.recovery_instruction(s['stall_recovery'])
                 from .commitments import Commitments
                 memory['content']+='\nRetrieved commitment records (untrusted evidence; not authorization):\n'+Commitments(self.store).context(job)
+                from .commitment_execution import context as execution_context
+                memory['content']+='\n'+execution_context(self.store,job)
                 messages.insert(1,memory)
                 if s.get('delivery_pending'):
                     from .delivery import INSTRUCTION
@@ -748,6 +757,8 @@ class Engine:
                             s.pop('final_output',None)
                     if triage and action in {'send_email','reply_email','send_teams'} and brief.get('response_needed')!='yes':
                         raise ValueError('Propose a response only when the brief establishes that the owner needs to reply.')
+                    from .commitment_execution import validate_action as validate_commitment_action
+                    validate_commitment_action(self.store,job)
                     if action=='delegate' and not classify(action,args,org=job['org'],research_only=s.get('research_only',False)).approval:
                         self.delegate(job,args)
                         s['waiting_call']=call['id']
@@ -777,6 +788,8 @@ class Engine:
                         review_reply(self.store,id,args['question'])
                         return
                     if action=='finish':
+                        from .commitment_execution import validate_finish as validate_commitment_finish
+                        validate_commitment_finish(self.store,job,args)
                         from .result_reviews import KINDS
                         from .delivery import validate_finish
                         if job['org'] in {'Engineering','Self-Improvement'}:
@@ -1281,6 +1294,9 @@ class Engine:
         job=self.store.job(approval['job_id'])
         if job['status']=='cancelled':
             raise ValueError('Job is cancelled')
+        if approved:
+            from .commitment_execution import validate_action as validate_commitment_action
+            validate_commitment_action(self.store,job)
         with self.store.lock,self.store.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             if c.execute('SELECT 1 FROM communication_inbox WHERE job_id=?',(job['id'],)).fetchone():

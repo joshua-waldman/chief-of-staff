@@ -63,6 +63,7 @@ ORG_ACTIONS = {
 COMMON = {'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','delegate','ask_user','finish','list_skills','read_skill','mcp_list_tools','mcp_call'}
 COMMON |= {'read_action_receipt','edit_file','search_commitments','create_owner_commitment'}
 COMMON.add('recover_inputs')
+CATALOG += '\nFor linked commitment execution jobs, finish additionally requires commitment_outcome:"delivered" and commitment_evidence naming the actual output or verified execution evidence. A checklist or plan alone is insufficient; use ask_user for a specific remaining dependency.\n'
 for org in ('Engineering','Self-Improvement'):
     ORG_ACTIONS[org] |= {'prepare_publication','validate_publication','apply_publication','verify_publication'}
 CATALOG += '''
