@@ -264,6 +264,21 @@ def test_teams_waits_for_topic_migration(tmp_path, writes):
     assert len(writes) == 1
 
 
+def test_teams_completed_migration_does_not_leave_archived_chat_blocking_new_topics(tmp_path, writes):
+    store, monitor, _, _ = teams_setup(tmp_path)
+    ingest(monitor, message('1', 'Budget update'))
+    legacy = store.create_job('Historical mixed chat', 'Communications')
+    store.update(legacy['id'], status='cancelled')
+    store.write("INSERT INTO communication_threads VALUES('teams','chat',?)", (legacy['id'],))
+    store.write('INSERT INTO teams_topic_migrations(chat_id,job_ids,status,updated) VALUES(?,?,?,?)',
+                ('chat', json.dumps([legacy['id']]), 'completed', 'now'))
+    cleanup.drain(store)
+    assert not writes  # A genuinely unhandled/cancelled legacy chat still blocks.
+    store.event(legacy['id'], 'topic_migrated', 'History preserved in replacement topics')
+    cleanup.drain(store)
+    assert writes == [('mark_teams_read', {'chat_id': 'chat'})]
+
+
 def test_teams_restart_requires_fresh_collection_even_with_saved_watching_status(tmp_path, writes, monkeypatch):
     store, monitor, _, _ = teams_setup(tmp_path)
     ingest(monitor, message('1', 'Budget update'))

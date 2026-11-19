@@ -72,6 +72,7 @@ def chat_ready(c, chat_id):
          OR EXISTS(SELECT 1 FROM approvals a WHERE a.job_id=j.id AND a.status IN ('pending','executing','uncertain','verification_inconclusive')))
         UNION ALL SELECT 1 FROM communication_threads ct JOIN jobs j ON j.id=ct.job_id
         WHERE ct.source='teams' AND ct.thread_id=? AND
+        NOT EXISTS(SELECT 1 FROM events e WHERE e.job_id=j.id AND e.kind='topic_migrated') AND
         (j.status<>'completed' OR EXISTS(SELECT 1 FROM communication_inbox i WHERE i.job_id=j.id)
          OR EXISTS(SELECT 1 FROM approvals a WHERE a.job_id=j.id AND a.status IN ('pending','executing','uncertain','verification_inconclusive')))
         LIMIT 1''',
