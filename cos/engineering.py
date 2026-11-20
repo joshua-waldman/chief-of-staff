@@ -2,7 +2,6 @@
 from .processes import background_options
 import re
 import os
-import base64
 import subprocess
 import json
 import threading
@@ -104,12 +103,19 @@ def branch_name(job,a):
 
 
 def remote_default_commit(root, repository=None):
-    """Resolve the configured origin's default branch via its routed GitHub account.
+    """Resolve the configured origin's default branch via its routed account.
 
     The API pins the commit independently of local tracking refs.
     """
     from . import github
+    from .repositories import is_github
     remote = git(root, 'remote', 'get-url', 'origin')
+    if not is_github(remote):
+        from .stash import Repository
+        repo = Repository(remote)
+        if repository is not None and repo.url != repository:
+            raise ValueError('The job origin no longer matches its reserved Stash repository.')
+        return repo.url, repo.default()[1]
     if remote.startswith('git@github.com:'):
         remote = 'https://github.com/'+remote.split(':', 1)[1]
     found, _ = github.repository_target(remote)
@@ -134,8 +140,16 @@ def acquire_remote_commit(root, repository, sha):
             return
     except ValueError:
         pass
-    from . import github
-    token = github._token(github._account(repository.split('/')[0]))
+    from .repositories import git_credentials
+    url, authorization = git_credentials(repository)
+    authenticated_git(root, url, authorization, ['fetch', '--no-tags',
+        '--no-recurse-submodules', '--no-write-fetch-head', url, sha])
+    if git(root, 'rev-parse', '--verify', sha+'^{commit}') != sha:
+        raise ValueError('Acquired remote commit did not match the pinned identity.')
+
+
+def authenticated_git(root, url, authorization, command):
+    """Use a routed HTTPS credential only in the child environment."""
     # Credentials live only in the child environment, never argv, Git config,
     # URLs or error output. Disable helpers, redirects and recursive fetches.
     env = dict(os.environ)
@@ -146,24 +160,21 @@ def acquire_remote_commit(root, repository, sha):
             env.pop(key, None)
     options = [('credential.helper', ''), ('http.extraHeader', ''),
                ('gc.auto', '0'), ('maintenance.auto', 'false'),
-               ('http.https://github.com/.extraHeader', 'Authorization: Basic '+
-                base64.b64encode(('x-access-token:'+token).encode()).decode()),
+               ('http.'+url+'.extraHeader', 'Authorization: '+authorization),
                ('http.followRedirects', 'false')]
     env.update(GIT_CONFIG_COUNT=str(len(options)), GIT_TERMINAL_PROMPT='0')
     for i, (key, value) in enumerate(options):
         env['GIT_CONFIG_KEY_'+str(i)] = key
         env['GIT_CONFIG_VALUE_'+str(i)] = value
     try:
-        result = subprocess.run(['git', '-C', str(root), 'fetch', '--no-tags',
-            '--no-recurse-submodules', '--no-write-fetch-head',
-            'https://github.com/'+repository+'.git', sha],
+        result = subprocess.run(['git', '-C', str(root), *command],
             capture_output=True, timeout=120, env=env, **background_options())
         if result.returncode:
-            raise ValueError('Authenticated remote commit acquisition failed; check repository access and retry.')
+            if command[0]=='fetch':
+                raise ValueError('Authenticated remote commit acquisition failed; check repository access and retry.')
+            raise ValueError('Authenticated Git operation failed; check repository permissions and connection.')
     except (OSError, subprocess.TimeoutExpired):
-        raise ValueError('Authenticated remote commit acquisition did not complete; retry with the same base.') from None
-    if git(root, 'rev-parse', '--verify', sha+'^{commit}') != sha:
-        raise ValueError('Acquired remote commit did not match the pinned identity.')
+        raise ValueError('Authenticated Git operation did not complete; verify remote state before retrying.') from None
 
 
 def current_base(saved):

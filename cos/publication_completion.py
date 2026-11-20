@@ -1,4 +1,4 @@
-"""Keep self-improvement delivery open until GitHub confirms the packaged change merged."""
+"""Keep self-improvement delivery open until the repository server confirms the packaged change merged."""
 import hashlib
 import json
 from pathlib import Path
@@ -70,6 +70,17 @@ def verify(store, job, file_id, pr_number):
     if head == manifest['base_commit'] or git(root,'status','--porcelain'):
         raise ValueError('Commit the exact tested package before verifying publication.')
     remote = git(root,'remote','get-url','origin')
+    from .repositories import is_github
+    if not is_github(remote):
+        from .stash import Repository, verify_merge
+        if saved.get('remote_repository') and Repository(remote).url!=saved['remote_repository']:
+            raise ValueError('The job origin no longer matches its reserved Stash repository.')
+        receipt = {**verify_merge(remote,pr_number,manifest['branch'],head,manifest['files']),
+                   'verified_at':now()}
+        for key in {identity(manifest), *manifest.get('supersedes',[])}:
+            store.set_state('publication_merged:'+key,receipt)
+        store.event(job['id'],'publication_verified',json.dumps(receipt))
+        return receipt
     if remote.startswith('git@github.com:'):
         remote = 'https://github.com/'+remote.split(':',1)[1]
     repository,_ = github.repository_target(remote)

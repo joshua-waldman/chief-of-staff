@@ -437,6 +437,69 @@ When research needs email or Teams evidence, delegate to Communications with `so
 
 For GitHub evidence, sign in each required account using `gh auth login`, then configure **Connections → GitHub repository accounts** with repository owners mapped to login names, for example `{"work-organization":"work-login"}`. Tokens stay in GitHub CLI's credential store; COS does not switch the active GitHub account or fall back to the account hosting its own repository. Technology and Engineering can use `repository_search` to discover repositories by name and `repository_read` to retrieve a README or a named text file as commit-pinned, job-local evidence. These authenticated GET tools are independent of the public research host allowlist. Organization SSO and repository permissions still apply.
 
+### Stash / Bitbucket Server repositories
+
+Teams can use repositories on `stash.amd.com` or another explicitly configured
+Bitbucket Server/Data Center instance alongside GitHub. Bitbucket Cloud is not
+covered by this connector. COS installation and release updates still use GitHub;
+your team's project repositories can stay on Stash.
+
+1. In **Connections → Stash / Bitbucket Server**, configure the server URL and
+   project-key-to-login routes, then save configuration. For example:
+
+   ```json
+   {"amd":{"url":"https://stash.amd.com","projects":{"ATE":"your-login"}}}
+   ```
+
+   Replace `ATE` with the actual Stash project key. Multiple servers and project
+   accounts are supported. A server URL may include an HTTPS port or context path.
+2. In **Stash credentials**, enter the saved server name (`amd`), project key and
+   your personal access token. Tokens are saved in the OS credential store outside
+   OneDrive; settings, model context and action receipts never contain the token.
+   Use repository read access for source research and repository write access for
+   pushes and PR operations. Stash still enforces branch permissions, required
+   reviewers and merge checks. Network/VPN access and your organization's token
+   policy apply. Signing in to Jira or a Stash browser tab does not configure this
+   token connection.
+3. For engineering updates, clone the project locally with Git and register its
+   absolute path in the `projects` setting, as for GitHub projects. COS uses that
+   clone to create an isolated worktree; it does not change the shared checkout's
+   branch. Existing HTTPS and SSH origins are recognized. The connector uses the
+   configured HTTPS account for remote reads, fetches and pushes, including when
+   the local clone uses SSH.
+
+Repository reads accept a full browser URL such as
+`https://stash.amd.com/projects/ATE/repos/example`, an HTTPS clone URL such as
+`https://stash.amd.com/scm/ATE/example.git`, or a browse link with
+`?at=refs%2Fheads%2Ffeature%2FATE-123`. Pass the source file path separately.
+Short `owner/repository` identifiers continue to mean GitHub, so identical names
+on different servers cannot silently select the wrong provider. For discovery,
+use `repository_search` with `server:"amd"` and optionally `owner:"ATE"`;
+follow each result's `next_offset`. `repository_connections` shows the configured
+routes without credentials. Source reads and tree pages are pinned to immutable
+commits and do not depend on the public web host allowlist.
+
+To publish Stash changes, Engineering creates a feature worktree with
+`base:"remote_default"`, stages and applies changes, runs the project checks, and
+calls `prepare_publication`. After committing the tested package through the
+existing reviewed `run_command` flow, it uses `repository_publish` for `push`,
+`create_pr` (with title and description), and, when requested, `merge` (with PR
+number). Each write has its own exact-action approval. The server rechecks the
+package, commit, account, repository, current default branch and PR version before
+execution. A changed base requires integration and retesting. Pushes do not force
+updates, and merge calls respect the server's configured merge strategy and checks.
+Interrupted writes are reconciled through reads rather than automatically replayed.
+
+`verify_publication` checks the merged PR's exact source commit and packaged file
+contents. Where Stash supplies the historical merge commit, verification reads
+that commit. Otherwise it checks the current default-branch commit and explicitly
+records that identity as `verified_target_commit`; later changes to those files
+can prevent verification. Deleted files are also checked. Remote file evidence
+is limited to 1 MB per file; use a separate workflow for larger binary changes.
+The connector is covered by simulated Stash API tests and real local Git transport
+tests. Validate your server version, token policy and merge workflow with a test
+repository before rollout.
+
 When a repository location is missing, agents check meeting knowledge and original meeting chat messages before asking the owner. Communications source readers preserve repository links and complete branch names, including slashes, in their results. Repository source reading may also be delegated with `source_only:true` to Technology or Engineering at the normal depth limit. Changing account routes or installing this update does not resume existing blocked source-access jobs; they remain available for manual continuation.
 
 Delegated inputs and returned deliverables use compact storage paths while retaining their original download names and file provenance. If a result handoff fails, only that parent request moves to **Needs attention**; unrelated queued work continues. Child files and the pending handoff remain saved. After resolving the file problem, send direction to the blocked parent to retry the handoff without rerunning its children.

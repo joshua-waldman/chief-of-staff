@@ -21,6 +21,9 @@ def target(tool, args):
         return normalized
     if tool == 'apply_changes':
         return sorted(str(item.get('target')) for item in args.get('changes', []))
+    if tool == 'repository_publish':
+        preview = args.get('_repository_preview',{})
+        return {k:preview.get(k) for k in ('repository','operation','branch','pr_number')}
     keys = {
         'reply_email': ('id',),
         'send_teams': ('chat_id',), 'jira_write': ('operation', 'id', 'project'),
@@ -74,6 +77,9 @@ def check(store, job, action):
         name = branch_name(job, args)
         if args.get('branch') == name and git(root, 'branch', '--show-current') == name:
             return {'outcome':'executed', 'evidence':{'branch':name, 'commit':git(root, 'rev-parse', '--verify', 'refs/heads/'+name)}}
+    if tool == 'repository_publish':
+        from .repository_publication import verify_action
+        return verify_action(args)
     if tool in {'send_email', 'reply_email', 'send_teams', 'calendar_rsvp', 'delete_email', 'mark_email_read'}:
         return communication('verify_action', {'tool': tool, 'arguments': args, 'started': started})
     return {'outcome': 'unknown', 'evidence': 'This connection has no authoritative read-only outcome check for this operation.'}
