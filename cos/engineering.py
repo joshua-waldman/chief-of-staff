@@ -145,6 +145,7 @@ def acquire_remote_commit(root, repository, sha):
                 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_ASKPASS'}:
             env.pop(key, None)
     options = [('credential.helper', ''), ('http.extraHeader', ''),
+               ('gc.auto', '0'), ('maintenance.auto', 'false'),
                ('http.https://github.com/.extraHeader', 'Authorization: Basic '+
                 base64.b64encode(('x-access-token:'+token).encode()).decode()),
                ('http.followRedirects', 'false')]
