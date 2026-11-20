@@ -156,6 +156,13 @@ Open the host's loopback UI, normally `http://127.0.0.1:8765`. Under **Connectio
    exist here. Use approved distribution sources for missing dependencies. Follow
    their real authentication entrypoints and allow the user to complete browser,
    device-code or MFA steps privately. Test read access for selected services.
+   Skip the README's optional **Teams mark-as-read authentication** setup and
+   the **Connections → Teams mark-as-read** panel. This unfinished integration
+   is outside COS setup: do not request an Entra app registration, Microsoft Graph
+   `Chat.ReadWrite` consent, client/tenant IDs or a separate Teams app sign-in.
+   Use the existing Microsoft/Teams integration for selected source reads and
+   messaging. Mark-as-read availability is not a setup prerequisite or a required
+   connection check; leave it out of pending setup work and completion criteria.
 3. Configure selected projects/account routes using the current README and UI.
    Do not copy another user's tokens or change unrelated accounts/defaults.
 4. Discuss the existing approval mode. Keep the queue paused until the user is
