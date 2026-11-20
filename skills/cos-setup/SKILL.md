@@ -1,6 +1,6 @@
 ---
 name: cos-setup
-description: Install and configure the Windows Chief of Staff (COS) application, including optional desktop-host access and laptop connection setup. Use for a new COS installation or completing its setup; distinguish a COS host from a laptop that only connects to it.
+description: Install and configure the Windows Chief of Staff (COS) application, including an optional context-only 30-day warm start, desktop-host access and laptop connection setup. Use for a new COS installation or completing its setup; distinguish a COS host from a laptop that only connects to it.
 ---
 
 # Set up Chief of Staff
@@ -35,8 +35,8 @@ shortcut installer instead.
 
 The default source is the private repository
 `https://github.com/joshua-waldman/chief-of-staff.git`, pinned to the stable release
-`v1.1.0` for new installations. Do not download the moving `main` branch by default.
-Release notes and assets: https://github.com/joshua-waldman/chief-of-staff/releases/tag/v1.1.0.
+`v1.2.0` for new installations. Do not download the moving `main` branch by default.
+Release notes and assets: https://github.com/joshua-waldman/chief-of-staff/releases/tag/v1.2.0.
 Accept an organization-approved
 mirror, repository URL or revision supplied by the user; do not assume every hub
 user has access to the author's repository. Installing this skill from a skill hub
@@ -52,7 +52,7 @@ the default source and a new destination:
 
 ```powershell
 $cosRepository = 'https://github.com/joshua-waldman/chief-of-staff.git'
-$cosRelease = 'v1.1.0'
+$cosRelease = 'v1.2.0'
 $cosInstallDirectory = Join-Path $env:LOCALAPPDATA 'AMD-ChiefOfStaff\App'
 git clone --branch $cosRelease --depth 1 -- $cosRepository $cosInstallDirectory
 if ($LASTEXITCODE -ne 0) { throw 'COS release clone failed; inspect the error before continuing.' }
@@ -60,19 +60,19 @@ git -C $cosInstallDirectory describe --tags --exact-match
 if ($LASTEXITCODE -ne 0) { throw 'COS release tag could not be verified.' }
 ```
 
-Confirm the reported tag is `v1.1.0`, or the user's explicitly selected revision,
+Confirm the reported tag is `v1.2.0`, or the user's explicitly selected revision,
 before running setup. A detached checkout at the release tag is expected.
 Substitute the user's selected source, revision and destination when different. If clone
 fails, inspect the error and retained destination before retrying. Do not erase an
 existing folder, reset another checkout or repeatedly retry a permission failure.
 
 If Git is unavailable or a ZIP is preferred, use the repository provider's
-authenticated release download for **chief-of-staff-v1.1.0-windows-source.zip**
-on the release page above, or its **Source code (zip)** for `v1.1.0`. Do not use
+authenticated release download for **chief-of-staff-v1.2.0-windows-source.zip**
+on the release page above, or its **Source code (zip)** for `v1.2.0`. Do not use
 the repository's main-branch **Download ZIP**. With authenticated GitHub CLI:
 
 ```powershell
-gh release download v1.1.0 --repo joshua-waldman/chief-of-staff --pattern chief-of-staff-v1.1.0-windows-source.zip --pattern SHA256SUMS.txt --dir <new-download-folder>
+gh release download v1.2.0 --repo joshua-waldman/chief-of-staff --pattern chief-of-staff-v1.2.0-windows-source.zip --pattern SHA256SUMS.txt --dir <new-download-folder>
 ```
 
 For the named release asset, compare `Get-FileHash -Algorithm SHA256` with its
@@ -171,6 +171,40 @@ Open the host's loopback UI, normally `http://127.0.0.1:8765`. Under **Connectio
 
 An optional integration failure should not prevent delivery of the functioning
 base application. Report the specific incomplete service and actual next step.
+
+## Optional: 30-day context warm start
+
+For a new host, offer **Connections → 30-day warm start** after the gateway and
+selected Microsoft source reads work. This is optional; reuse the owner's choice
+and do not start an import by default. Explain that it uses the configured model
+gateway to build dated, searchable background context from a fixed 30-day window.
+It uses email previews (including accessible sent mail) and Teams text, without
+opening attachments, images or transcripts, and is capped at 200 summary batches.
+High-volume accounts or inaccessible conversations can have partial coverage.
+
+If selected, choose **Start 30-day warm start** in Connections. Do not submit a
+queue request or create a task to perform the import. The dedicated import has no
+task/action tools: historical asks, commitments and `!cos` commands are background
+only. It must not create jobs, commitments, drafts, delegations or external
+actions, or turn historical statements into current owner preferences. Active
+monitoring handles new activity through its separate intake path; enabling a warm
+start is not permission to enable monitoring or change its checkpoints.
+
+The import waits while the workspace is disconnected. Connect only when the owner
+is ready, respecting existing queued work and monitoring choices. Saved progress
+survives restart; **Pause after current batch** and **Resume saved import** retain
+the original window. If collection or summarization fails, address the reported
+connection/capacity issue and resume saved progress rather than resetting state
+or resubmitting old messages as new work.
+
+Verify the fixed date range, record count, summarized batches and coverage gaps in
+Connections. Inspect dated `warm-start` entries and **Source excerpts** in
+**Knowledge base** when available. Status is also exposed by the host's
+`/api/warm-start` endpoint under its normal local session controls. Report running,
+paused, failed or partial coverage honestly; an ongoing optional import need not
+block the rest of setup. Do not claim it completed merely because it was started.
+Imported context may be corrected or forgotten through Knowledge base; forgetting
+excludes a summary from retrieval while retained source excerpts/backups remain.
 
 ## Optional: add the user's organizations
 

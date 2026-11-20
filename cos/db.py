@@ -75,6 +75,8 @@ class Store:
             c.executescript(schedule_schema)
             from .teams_migration import SCHEMA as teams_migration_schema
             c.executescript(teams_migration_schema)
+            from .warm_start import SCHEMA as warm_start_schema
+            c.executescript(warm_start_schema)
             if 'payload' not in {r['name'] for r in c.execute('PRAGMA table_info(teams_topic_messages)')}:
                 c.execute('BEGIN IMMEDIATE')
                 c.execute("ALTER TABLE teams_topic_messages ADD COLUMN payload TEXT NOT NULL DEFAULT '{}'")

@@ -14,6 +14,7 @@ ALWAYS.add('apply_publication')
 LOW = {'search_knowledge','suggest_knowledge','update_brief','list_files','read_file','write_file','create_document','create_presentation','create_skill','create_organization','delegate','ask_user','finish','fetch_url','search_mail','read_mail','list_chats','read_teams','meeting_artifacts','meeting_transcripts','save_meeting_summary','jira_read','list_skills','read_skill','mcp_list_tools','run_sandbox','run_python','mail_attachments','teams_attachments','browser_read'}
 LOW |= {'calendar_events','calendar_event','search_commitments','record_commitment','add_commitment_evidence','create_owner_commitment'}
 LOW |= {'read_action_receipt','edit_file'}
+LOW.add('read_warm_start_context')
 LOW |= {'recover_inputs','prepare_publication','validate_publication','verify_publication'}
 LOW |= {'repository_connections','repository_search','repository_read','repository_tree'}
 

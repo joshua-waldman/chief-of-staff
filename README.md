@@ -17,12 +17,12 @@ Requirements:
 Clone into a local folder. Keep the SQLite database on one machine; do not run two installations against a shared or synchronized data directory.
 
 ```powershell
-git clone --branch v1.1.0 --depth 1 https://github.com/joshua-waldman/chief-of-staff.git chief-of-staff
+git clone --branch v1.2.0 --depth 1 https://github.com/joshua-waldman/chief-of-staff.git chief-of-staff
 Set-Location chief-of-staff
 python scripts/install_hooks.py
 ```
 
-The stable version for new installations is [v1.1.0](https://github.com/joshua-waldman/chief-of-staff/releases/tag/v1.1.0). Download `chief-of-staff-v1.1.0-windows-source.zip` from that release if you prefer ZIP setup; it contains application source and setup scripts, and requires Python and dependency installation. Verify the download against the attached `SHA256SUMS.txt`. Use the main branch for development.
+The stable version for new installations is [v1.2.0](https://github.com/joshua-waldman/chief-of-staff/releases/tag/v1.2.0). Download `chief-of-staff-v1.2.0-windows-source.zip` from that release if you prefer ZIP setup; it contains application source and setup scripts, and requires Python and dependency installation. Verify the download against the attached `SHA256SUMS.txt`. Use the main branch for development.
 
 The repository is [joshua-waldman/chief-of-staff](https://github.com/joshua-waldman/chief-of-staff). You need access to this private repository before cloning or downloading release assets. A release clone starts detached at the tag. ZIP downloads do not have Git history or hooks; use a clone for development.
 
@@ -113,6 +113,37 @@ not require another installed skill just to begin; integration-specific helpers
 are discovered only when needed.
 
 ## Configure your installation
+
+### Optional 30-day warm start
+
+After configuring the gateway and Microsoft sign-in, open **Connections → 30-day
+warm start** and choose **Start 30-day warm start**. Connect the workspace to allow
+processing. This optional import builds searchable background context from a fixed
+30-day window ending when you start it. It scans newest days first, uses email
+previews (including accessible sent mail) and Teams text, and does not open
+attachments, images, or meeting transcripts.
+
+The import never creates jobs, commitments, drafts, delegated work, or external
+actions, including from historical `!cos` commands. Its worker has no action
+tools and bypasses message intake. Active monitoring processes new activity
+separately; importing history neither enables monitoring nor changes its
+checkpoints or seen-message records. Imported context can help interpret a new
+request, but never establishes a current obligation or an owner preference.
+
+Progress is saved after each day/source collection and each summary. **Pause
+after current batch**, disconnecting the workspace, or restarting COS preserves
+saved progress. Resume continues the original window. A failed collection retains
+that window for retry. Model capacity cooldowns defer summaries automatically.
+The import is limited to 200 summary batches of at most 16,000 input characters
+each, using the configured triage model; high-volume accounts may have partial
+coverage. Collection timeouts and pagination limits stop progress for retry rather
+than claim complete coverage. Teams access denials are shown as coverage gaps.
+
+Find summaries in **Knowledge base**, labeled `warm-start`, with their dates and
+**Source excerpts**. They are automatically searchable as historical observations,
+not reviewed guidance. You can correct or forget them. Forget excludes a summary
+from retrieval; retained source excerpts and database backups remain. Completion
+is a single onboarding import, not an ongoing historical scan.
 
 For **manual installation only**, copy the sanitized example before the first
 launch. Skip this step if guided setup already created `config.local.json`; do not

@@ -28,10 +28,12 @@ def mail_identity_aliases(graph, messages):
     return [{**m,'legacy_id':aliases.get(m['id'],'')} for m in messages]
 
 
-def collect_mail(graph,since):
+def collect_mail(graph,since,until=None):
     emails=[]
     path='/me/messages'
     params={'$filter':'receivedDateTime ge '+since,'$orderby':'receivedDateTime desc','$top':'100','$select':'id,conversationId,internetMessageId,subject,from,receivedDateTime,bodyPreview,hasAttachments'}
+    if until:
+        params['$filter']+=' and receivedDateTime lt '+until
     for _ in range(100):
         data=graph.get(path,params=params)
         emails.extend(mail_identity_aliases(graph,data.get('value',[])))
@@ -69,7 +71,7 @@ def message_page(skype,cid,sync,http):
     return skype.list_messages(cid,page_size=100,sync_state=sync)
 
 
-def collect_teams(skype,owner,since,http):
+def collect_teams(skype,owner,since,http,until=None):
     skype.get_skypetoken()
     base=skype._msg_base
     url=base+'/users/ME/conversations?pageSize=100&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread|PSTN|Agent|ShortMessage'
@@ -133,7 +135,7 @@ def collect_teams(skype,owner,since,http):
             for m in rows:
                 date=m.get('composetime') or m.get('originalarrivaltime') or ''
                 meeting_event = any(term in (str(m.get('messagetype','')) + str(m.get('content','')) + json.dumps(m.get('properties') or {})).lower() for term in ('recording', 'transcript', '.vtt', '.srt', 'meetingrecap'))
-                if date>=since and (meeting_event or m.get('messagetype','').startswith('RichText') or m.get('messagetype')=='Text'):
+                if date>=since and (not until or date<until) and (meeting_event or m.get('messagetype','').startswith('RichText') or m.get('messagetype')=='Text'):
                     sender=(m.get('from') or '').rsplit('/contacts/',1)[-1]
                     content=m.get('content') or ''
                     text=teams_text(content,m.get('messagetype',''))
@@ -158,7 +160,7 @@ def collect_teams(skype,owner,since,http):
     return {'messages':messages,'owner':owner,'conversations':len(chats),'limitations':limitations,'failures':failures,'readable_conversations':sorted(readable)}
 
 
-def collect(since,source='all'):
+def collect(since,source='all',until=None):
     if source not in {'all','email','teams'}:
         raise ValueError('Unknown monitoring source')
     sys.path.insert(0,str(skill_dir('slai-teams')/'scripts'))
@@ -166,12 +168,12 @@ def collect(since,source='all'):
     graph=stable_mail_client(GraphClient)
     result={'emails':[],'messages':[],'conversations':0,'limitations':[],'failures':[]}
     if source in {'all','email'}:
-        result['emails']=collect_mail(graph,since)
+        result['emails']=collect_mail(graph,since,until) if until else collect_mail(graph,since)
     if source in {'all','teams'}:
         from skype_client import SkypeClient,_http
         owner=graph.get('/me',params={'$select':'id,mail,userPrincipalName'})
-        result.update(collect_teams(SkypeClient(),owner,since,_http))
+        result.update(collect_teams(SkypeClient(),owner,since,_http,until) if until else collect_teams(SkypeClient(),owner,since,_http))
     return result
 
 if __name__=='__main__':
-    print(json.dumps(collect(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else 'all'),ensure_ascii=False))
+    print(json.dumps(collect(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else 'all',sys.argv[3] if len(sys.argv)>3 else None),ensure_ascii=False))
