@@ -1,6 +1,8 @@
 """Owner-configured project workflow, independent of project names and vendors."""
 from .processes import background_options
 import re
+import os
+import base64
 import subprocess
 import json
 import threading
@@ -101,14 +103,86 @@ def branch_name(job,a):
     return rule.get('branch_prefix','codex/')+(ticket+'-' if ticket else '')+slug+suffix
 
 
+def remote_default_commit(root, repository=None):
+    """Resolve the configured origin's default branch via its routed GitHub account.
+
+    The API pins the commit independently of local tracking refs.
+    """
+    from . import github
+    remote = git(root, 'remote', 'get-url', 'origin')
+    if remote.startswith('git@github.com:'):
+        remote = 'https://github.com/'+remote.split(':', 1)[1]
+    found, _ = github.repository_target(remote)
+    if repository is not None and repository != found:
+        raise ValueError('The job origin no longer matches its reserved GitHub repository.')
+    login = github._account(found.split('/')[0])
+    token = github._token(login)
+    base = 'repos/'+found
+    default = github._get(base, login, token)['default_branch']
+    if not isinstance(default, str) or not default or any(ord(c)<32 for c in default):
+        raise ValueError('GitHub did not return a valid default branch.')
+    sha = github._get(base+'/commits/'+github.quote(default, safe=''), login, token)['sha']
+    if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{40}', sha):
+        raise ValueError('GitHub did not return a valid default commit.')
+    return found, sha
+
+
+def acquire_remote_commit(root, repository, sha):
+    """Acquire a pinned commit with the routed account, without updating refs."""
+    try:
+        if git(root, 'rev-parse', '--verify', sha+'^{commit}') == sha:
+            return
+    except ValueError:
+        pass
+    from . import github
+    token = github._token(github._account(repository.split('/')[0]))
+    # Credentials live only in the child environment, never argv, Git config,
+    # URLs or error output. Disable helpers, redirects and recursive fetches.
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith(('GIT_CONFIG_', 'GIT_TRACE')) or key in {
+                'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
+                'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_ASKPASS'}:
+            env.pop(key, None)
+    options = [('credential.helper', ''), ('http.extraHeader', ''),
+               ('http.https://github.com/.extraHeader', 'Authorization: Basic '+
+                base64.b64encode(('x-access-token:'+token).encode()).decode()),
+               ('http.followRedirects', 'false')]
+    env.update(GIT_CONFIG_COUNT=str(len(options)), GIT_TERMINAL_PROMPT='0')
+    for i, (key, value) in enumerate(options):
+        env['GIT_CONFIG_KEY_'+str(i)] = key
+        env['GIT_CONFIG_VALUE_'+str(i)] = value
+    try:
+        result = subprocess.run(['git', '-C', str(root), 'fetch', '--no-tags',
+            '--no-recurse-submodules', '--no-write-fetch-head',
+            'https://github.com/'+repository+'.git', sha],
+            capture_output=True, timeout=120, env=env, **background_options())
+        if result.returncode:
+            raise ValueError('Authenticated remote commit acquisition failed; check repository access and retry.')
+    except (OSError, subprocess.TimeoutExpired):
+        raise ValueError('Authenticated remote commit acquisition did not complete; retry with the same base.') from None
+    if git(root, 'rev-parse', '--verify', sha+'^{commit}') != sha:
+        raise ValueError('Acquired remote commit did not match the pinned identity.')
+
+
+def current_base(saved):
+    if saved.get('base_kind') != 'remote_default':
+        return git(Path(saved['source']), 'rev-parse', 'HEAD')
+    _, sha = remote_default_commit(Path(saved['source']), saved['remote_repository'])
+    return sha
+
+
 def create_branch(job,a):
     from .tools import workspace
     name=branch_name(job,a); root=source_root(job)
+    base_kind=a.get('base','local')
+    if base_kind not in {'local','remote_default'}:
+        raise ValueError('Choose local or remote_default as the branch base.')
     if a.get('branch')!=name: raise ValueError('The branch preview changed; request fresh approval.')
     with _worktree_lock:
         saved = checkout(job)
         if saved:
-            if saved['branch'] != name:
+            if saved['branch'] != name or saved.get('base_kind','local') != base_kind:
                 raise ValueError('This job already owns another feature; delegate a new job for a new feature.')
             return {**saved, 'created':False, 'resumed':True}
         target = (workspace(job['id'])/'checkout').resolve()
@@ -119,11 +193,16 @@ def create_branch(job,a):
         resuming=pending.exists()
         if pending.exists():
             saved=json.loads(pending.read_text(encoding='utf-8'))
-            if saved['branch']!=name or saved['source']!=str(root) or saved['path']!=str(target) or saved['job_id']!=job['id']:
+            if (saved['branch']!=name or saved['source']!=str(root) or saved['path']!=str(target)
+                    or saved['job_id']!=job['id'] or saved.get('base_kind','local')!=base_kind):
                 raise ValueError('A different feature checkout is reserved for this job.')
         else:
+            repository, base = remote_default_commit(root) if base_kind == 'remote_default' else (None, git(root,'rev-parse','--verify','HEAD'))
+            if base_kind == 'remote_default':
+                acquire_remote_commit(root, repository, base)
             saved = {'job_id':job['id'], 'project':job.get('project',''), 'source':str(root),
-                     'path':str(target), 'branch':name, 'base_commit':git(root,'rev-parse','--verify','HEAD'),
+                     'path':str(target), 'branch':name, 'base_commit':base,
+                     'base_kind':base_kind, 'remote_repository':repository,
                      'common_dir':git(root,'rev-parse','--path-format=absolute','--git-common-dir')}
             temporary = path.with_suffix('.tmp')
             temporary.write_text(json.dumps(saved),encoding='utf-8')

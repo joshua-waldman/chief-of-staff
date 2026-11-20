@@ -67,6 +67,68 @@ def validate_tests(store,job,root):
     return result
 
 
+def test_remote_default_base_and_publication_recheck_without_shared_checkout_switch(env, monkeypatch):
+    live, store = env
+    from cos import github
+    git(live, 'remote', 'add', 'origin', 'https://github.com/example/repo.git')
+    initial = git(live, 'rev-parse', 'HEAD')
+    (live/'other.py').write_text('remote = True\n', encoding='utf-8')
+    git(live, 'add', '.')
+    git(live, 'commit', '-m', 'Remote ahead')
+    remote = [git(live, 'rev-parse', 'HEAD')]
+    git(live, 'reset', '--hard', initial)  # fixture only: simulate lagging shared HEAD
+    monkeypatch.setattr(github, '_account', lambda owner: 'routed-account')
+    monkeypatch.setattr(github, '_token', lambda login: 'test-token')
+    def api(endpoint, login, token):
+        if endpoint == 'repos/example/repo':
+            return {'default_branch': 'main'}
+        assert endpoint == 'repos/example/repo/commits/main'
+        return {'sha':remote[0]}
+    monkeypatch.setattr(github, '_get', api)
+    job = store.create_job('Remote feature','Self-Improvement')
+    args = {'name':'Remote feature', 'base':'remote_default'}
+    args['branch'] = engineering.branch_name(job,args)
+    saved = engineering.create_branch(job,args)
+    root = Path(saved['path'])
+    assert saved['base_commit'] == remote[0] != git(live, 'rev-parse', 'HEAD')
+    assert git(root,'rev-parse','HEAD') == remote[0]
+    assert git(live,'branch','--show-current') == 'main'
+    patch(store,job,root,2)
+    validate_tests(store,job,root)
+    package = publication.prepare(store,job)
+    assert package['validated']
+    assert publication.validate(store,job,package['file_id'])['ready_for_approval']
+    remote[0] = initial
+    assert publication.validate(store,job,package['file_id'])['base_changed']
+    with pytest.raises(ActionNotExecuted,match='integration base changed'):
+        publication.guard_command(store,job,{'command':['git','commit','-am','Feature'],
+            'cwd':str(root),'publication_file_id':package['file_id']})
+
+
+def test_remote_default_missing_object_fails_without_reservation(env, monkeypatch):
+    live, store = env
+    from cos import github
+    git(live, 'remote', 'add', 'origin', 'https://github.com/example/repo.git')
+    monkeypatch.setattr(github, '_account', lambda owner: 'routed-account')
+    monkeypatch.setattr(github, '_token', lambda login: 'test-token')
+    monkeypatch.setattr(github, '_get', lambda endpoint, login, token:
+                        {'default_branch':'main'} if endpoint == 'repos/example/repo'
+                        else {'sha':'f'*40})
+    original_run = subprocess.run
+    def fail_fetch(command, **kwargs):
+        if 'fetch' in command:
+            return subprocess.CompletedProcess(command, 1, '', 'secret test-token')
+        return original_run(command, **kwargs)
+    monkeypatch.setattr(engineering.subprocess, 'run', fail_fetch)
+    job = store.create_job('Remote unavailable','Self-Improvement')
+    args = {'name':'Remote unavailable','base':'remote_default'}
+    args['branch'] = engineering.branch_name(job,args)
+    with pytest.raises(ValueError,match='acquisition failed'):
+        engineering.create_branch(job,args)
+    assert not engineering.workspace_metadata(job).with_suffix('.pending.json').exists()
+    assert git(live,'branch','--show-current') == 'main'
+
+
 def test_parallel_features_never_share_files_or_switch_running_checkout(env):
     live,store = env
     baseline = git(live,'rev-parse','HEAD')
@@ -337,3 +399,39 @@ def test_recovery_repairs_missing_local_attachment_as_a_verified_copy(env):
     path.unlink()
     result=tools.Tools(store).execute(job,'recover_inputs',{'file_ids':[fid]})
     assert tools.Tools(store).execute(job,'read_file',{'path':result['recovered'][0]['file_id']})['text']=='original'
+
+
+def test_authenticated_acquisition_fetches_missing_commit_without_moving_refs(env, monkeypatch, tmp_path):
+    live, store = env
+    from cos import github
+    remote = tmp_path/'upstream'
+    subprocess.run(['git','clone',str(live),str(remote)],check=True,capture_output=True)
+    git(remote,'config','user.name','Test')
+    git(remote,'config','user.email','test@example.invalid')
+    (remote/'new.py').write_text('new = True\n')
+    git(remote,'add','.')
+    git(remote,'commit','-m','Remote only')
+    sha = git(remote,'rev-parse','HEAD')
+    before = git(live,'show-ref')
+    head = git(live,'rev-parse','HEAD')
+    monkeypatch.setattr(github,'_account',lambda owner: 'routed')
+    monkeypatch.setattr(github,'_token',lambda login: 'private-test-token')
+    original = subprocess.run
+    calls = []
+    def run(command, **kwargs):
+        if 'fetch' in command:
+            calls.append(command[:])
+            assert 'private-test-token' not in str(command)
+            assert kwargs['env']['GIT_CONFIG_VALUE_0'] == ''
+            assert kwargs['env']['GIT_TERMINAL_PROMPT'] == '0'
+            assert '--no-write-fetch-head' in command
+            command = [str(remote) if part == 'https://github.com/example/repo.git' else part for part in command]
+        return original(command, **kwargs)
+    monkeypatch.setattr(engineering.subprocess,'run',run)
+    engineering.acquire_remote_commit(live,'example/repo',sha)
+    assert git(live,'rev-parse',sha+'^{commit}') == sha
+    assert git(live,'show-ref') == before
+    assert git(live,'rev-parse','HEAD') == head
+    assert not (live/'.git/FETCH_HEAD').exists()
+    engineering.acquire_remote_commit(live,'example/repo',sha)
+    assert len(calls) == 1

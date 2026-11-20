@@ -223,6 +223,7 @@ def test_recognized_engineering_checks_use_server_interpreter(env, monkeypatch):
     calls = []
     def run(command, **kwargs):
         calls.append(command)
+        assert kwargs['timeout'] == 1800
         return subprocess.CompletedProcess(command, 0, '1 passed', '')
     monkeypatch.setattr(tools, 'run_host', run)
     assert tools.Tools(store).execute(job, 'run_command', args)['exit_code'] == 0
