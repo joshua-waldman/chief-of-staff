@@ -13,7 +13,16 @@ const badge=s=>'<span class="badge '+esc(s)+'">'+esc(labels[s]||s)+'</span>';
 const date=s=>new Date(s).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
 const attention=j=>['waiting_input','awaiting_approval','blocked','failed','capacity_paused'].includes(j.status);
 const btn=(text,attrs='',cls='primary')=>'<button class="'+cls+'" '+attrs+'>'+text+'</button>';
-async function api(path,body){const r=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-COS-Token':token},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(r.status===401?'The server restarted. Refresh this page to reconnect.':d.error||d.detail||'Request failed');return d}
+async function api(path,body){
+ const r=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-COS-Token':token},body:body===undefined?undefined:JSON.stringify(body)});
+ let d;
+ try{d=await r.json()}catch(e){
+  if(r.status===401)throw Error('The server restarted. Refresh this page to reconnect.');
+  throw Error('Request /api/'+path+' failed (HTTP '+r.status+'). '+(r.ok?'The server returned an invalid response.':'Check the server logs for details.'));
+ }
+ if(!r.ok)throw Error(r.status===401?'The server restarted. Refresh this page to reconnect.':d?.error||d?.detail||'Request /api/'+path+' failed (HTTP '+r.status+').');
+ return d
+}
 function toast(s,error=false){$('#toast').textContent=s;$('#toast').style.background=error?'#9d5145':'#244d35';$('#toast').style.display='block';setTimeout(()=>$('#toast').style.display='none',6500)}
 function renameJobView(j){
  return '<details id="rename-job"><summary>Rename</summary><form id="rename-job-form"><div class="field"><label for="job-name">Job name</label><input id="job-name" maxlength="120" required value="'+esc(j.display_name||j.title)+'"><p class="small">Your name stays in place as work progresses.</p></div>'+btn('Save name','type="submit"')+' '+btn('Cancel','id="cancel-rename" type="button"','secondary')+(j.user_name?' '+btn('Use automatic name','id="reset-job-name" type="button"','secondary'):'')+'</form></details>';

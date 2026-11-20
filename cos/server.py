@@ -579,10 +579,27 @@ async def knowledge_change(id,request:Request):
     return await run_in_threadpool(operation)
 
 
+ATLASSIAN_SETUP_HELP = '''If Jira and Confluence are already configured, select Test Atlassian connection.
+Your existing credentials and saved connection check are retained when COS updates.
+
+For a new connection:
+1. Install the compatible slai-atlassian skill in your own .codex/skills or
+   .claude/skills folder, or configure skill_roots in your local COS settings.
+2. Create an API token at https://id.atlassian.com/manage-profile/security/api-tokens
+3. Select Open local credential setup and enter your Atlassian site, account
+   email and API token in the local PowerShell window.
+4. Select Test Atlassian connection to verify Jira and Confluence access.
+
+Credentials remain in your user profile under .atlassian/config.json.
+Never paste tokens into chat. Official API token guidance:
+https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/
+'''
+
+
 @app.get('/api/atlassian')
 def atlassian_status():
     return {'check':store.state('atlassian_check',{'ok':False,'output':'Run Test Atlassian connection to verify credentials and access.'}),
-            'setup_help':(ROOT/'docs/ATLASSIAN_SETUP.txt').read_text(encoding='utf-8'),
+            'setup_help':ATLASSIAN_SETUP_HELP,
             'config_path':str(Path.home()/'.atlassian/config.json')}
 
 @app.post('/api/atlassian/test')
