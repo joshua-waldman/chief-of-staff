@@ -21,3 +21,17 @@ test('cleanup and branch previews identify exact targets',()=>{
  assert.match(ctx.actionPreview('mark_teams_read',{chat_id:'chat-123'}),/entire chat/);
  assert.match(ctx.actionPreview('create_feature_branch',{project:'Synthetic',branch:'feature/TEST-1-filter'}),/New branch: feature\/TEST-1-filter/);
 });
+
+test('repository publication preview names the tested source and exact PR action',()=>{
+ const args={file_id:'package-1',_repository_preview:{operation:'merge',
+  repository:'https://stash.amd.com/projects/ATE/repos/app',account:'work-login',
+  branch:'feature/ATE-12',head:'a'.repeat(40),target:'refs/heads/main',pr_number:12,version:3}};
+ const preview=ctx.actionPreview('repository_publish',args);
+ assert.match(preview,/Merge pull request/);
+ assert.match(preview,/Repository: https:\/\/stash.amd.com/);
+ assert.match(preview,/Tested commit: a{40}/);
+ assert.match(preview,/PR version: 3/);
+ args._repository_preview.operation='create_pr';
+ args._repository_preview.title='<script>unsafe title';
+ assert.ok(!ctx.actionPreview('repository_publish',args).includes('<script>'));
+});

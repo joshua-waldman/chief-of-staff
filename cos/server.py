@@ -432,7 +432,18 @@ def download(id):
 @app.get('/api/connections')
 def connections():
     from .github import connection_status
-    return {'warm_start':warm_start.status(),'gateway':{'configured':bool(gateway_key()),'url':settings()['gateway_url']},'microsoft':auth_status(),'teams_read':teams_read_status(),'github':connection_status(),'skills':skill_inventory(),'mcp':mcp_inventory(),'sandbox':{'available':bool(shutil.which('docker'))},'auth_flow':auth}
+    from .stash import connection_status as stash_status
+    return {'warm_start':warm_start.status(),'gateway':{'configured':bool(gateway_key()),'url':settings()['gateway_url']},'microsoft':auth_status(),'teams_read':teams_read_status(),'github':connection_status(),'stash':stash_status(),'skills':skill_inventory(),'mcp':mcp_inventory(),'sandbox':{'available':bool(shutil.which('docker'))},'auth_flow':auth}
+
+
+@app.post('/api/stash/token')
+async def set_stash_token(request:Request):
+    from .stash import store_token
+    payload=await request.json()
+    if not isinstance(payload,dict):
+        raise ValueError('Provide a Stash server, project key and token.')
+    await run_in_threadpool(store_token,payload.get('server'),payload.get('project'),payload.get('token'))
+    return {'ok':True}
 
 
 @app.get('/api/warm-start')

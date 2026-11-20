@@ -8,6 +8,7 @@
   "research_access": "public",
   "research_hosts": ["amd.com", "llm.amd.com"],
   "teams_auth": {},
+  "stash_servers": {},
   "capacity_recovery_seconds": 900,
   "model_parallel_requests": 1,
   "engineering_workflows": {}

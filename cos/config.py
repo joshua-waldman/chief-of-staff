@@ -21,6 +21,7 @@ DEFAULTS = {
     'self_email': '', 'self_name': '',
     'projects': {},
     'github_accounts': {},
+    'stash_servers': {},
     'teams_auth': {},
     'engineering_workflows': {},
     'skill_roots': [str(Path.home()/'.claude/skills'), str(Path.home()/'.codex/skills')],
@@ -54,6 +55,8 @@ def save_settings(changes):
     validate_workflows(s['engineering_workflows'],s['projects'])
     from .github import validate_accounts
     validate_accounts(s['github_accounts'])
+    from .stash import validate_servers
+    validate_servers(s['stash_servers'])
     from .teams_auth import validate_config
     validate_config(s['teams_auth'])
     if s['gateway_url'] != DEFAULTS['gateway_url']:
