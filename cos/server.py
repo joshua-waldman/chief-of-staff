@@ -19,6 +19,7 @@ from .config import ROOT,DATA,settings,save_settings,gateway_key,store_key
 from .db import Store,uid,now
 from .engine import Engine,session
 from .monitor import Monitor
+from .warm_start import WarmStart
 from .timing import TimingAssessor
 from .integrations import skill_inventory,mcp_inventory,auth_status,skill_dir,teams_read_status
 from .tools import file_record,workspace,safe_name
@@ -31,6 +32,7 @@ TOKEN=secrets.token_urlsafe(32)
 store=Store()
 engine=Engine(store)
 monitor=Monitor(store)
+warm_start=WarmStart(store)
 timing_assessor=TimingAssessor(store)
 auth={'running':False,'output':''}
 updates=Updates()
@@ -45,12 +47,14 @@ async def lifespan(app):
     emit('server.started',{'source_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/'cos').glob('*.py')},'models':settings()['models'],'parallel_agents':settings()['parallel_agents']})
     engine.start()
     monitor.start()
+    warm_start.start()
     timing_assessor.start()
     updates.start()
     yield
     updates.stop_event.set()
     timing_assessor.stop_event.set()
     monitor.stop_event.set()
+    warm_start.stop_event.set()
     engine.stop()
 
 app=FastAPI(title='AMD Chief of Staff',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
@@ -428,7 +432,26 @@ def download(id):
 @app.get('/api/connections')
 def connections():
     from .github import connection_status
-    return {'gateway':{'configured':bool(gateway_key()),'url':settings()['gateway_url']},'microsoft':auth_status(),'teams_read':teams_read_status(),'github':connection_status(),'skills':skill_inventory(),'mcp':mcp_inventory(),'sandbox':{'available':bool(shutil.which('docker'))},'auth_flow':auth}
+    return {'warm_start':warm_start.status(),'gateway':{'configured':bool(gateway_key()),'url':settings()['gateway_url']},'microsoft':auth_status(),'teams_read':teams_read_status(),'github':connection_status(),'skills':skill_inventory(),'mcp':mcp_inventory(),'sandbox':{'available':bool(shutil.which('docker'))},'auth_flow':auth}
+
+
+@app.get('/api/warm-start')
+def warm_start_status():
+    return warm_start.status()
+
+
+@app.post('/api/warm-start')
+async def warm_start_change(request:Request):
+    payload=await request.json()
+    action=payload.get('action')
+    if action not in {'start','pause'}:
+        raise ValueError('Choose start or pause.')
+    return await run_in_threadpool(warm_start.request if action=='start' else warm_start.pause)
+
+
+@app.get('/api/warm-start/context/{identity}')
+def warm_start_evidence(identity):
+    return warm_start.evidence(identity)
 
 @app.post('/api/settings')
 async def update_settings(request:Request):
