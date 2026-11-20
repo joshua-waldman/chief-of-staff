@@ -15,24 +15,35 @@ def collect_transcripts(chat_id, target, options=None):
     # Run in an isolated process, reusing the installed skill's authentication.
     from .integrations import skill_dir
     sys.path.insert(0, str(skill_dir('slai-teams') / 'scripts'))
-    from graph_client import GraphClient, _ssl_context
-    import meeting_artifacts as artifacts
-    import urllib.request
-    graph = GraphClient()
-    skype = artifacts.SkypeClient()
-    chat_error = None
+    from .meeting_stream import collect_recording_transcripts
+    from .meeting_coverage import artifact_coverage
+    requested_date = (options or {}).get('date')
+    diagnostics = []
     try:
+        from graph_client import GraphClient, _ssl_context
+        import meeting_artifacts as artifacts
+        import urllib.request
+        graph = GraphClient()
+        skype = artifacts.SkypeClient()
         messages, continuation = skype.list_messages(chat_id, page_size=200)
     except (Exception, SystemExit):
         messages, continuation = [], ''
-        chat_error = {'stage': 'shared_files', 'status': 'chat_unavailable',
-                      'next_step': 'Check access using the installed Teams skill and existing Microsoft sign-in.'}
-    from .meeting_stream import collect_recording_transcripts
-    rows, diagnostics = collect_recording_transcripts(graph, messages, target, (options or {}).get('date'))
-    if chat_error:
-        diagnostics.append(chat_error)
-    urls = list(dict.fromkeys(u for m in messages for u in artifacts.extract_urls_from_message(m)))
-    for url in urls:
+        diagnostics.append({'stage': 'chat', 'status': 'chat_unavailable',
+                            'next_step': 'Check access using the installed Teams skill and existing Microsoft sign-in.'})
+        graph = None
+    if graph is not None:
+        rows, stream_diagnostics = collect_recording_transcripts(graph, messages, target, requested_date)
+        diagnostics.extend(stream_diagnostics)
+    else:
+        rows = []
+    urls = []
+    if graph is not None:
+        for message in messages:
+            try:
+                urls.extend(artifacts.extract_urls_from_message(message))
+            except (Exception, SystemExit):
+                diagnostics.append({'stage': 'shared_files', 'status': 'url_extraction_failed'})
+    for url in dict.fromkeys(urls):
         try:
             item = artifacts.resolve(graph, url)
         except (Exception, SystemExit):
@@ -71,6 +82,14 @@ def collect_transcripts(chat_id, target, options=None):
         path.write_bytes(content)
         row.update(status='downloaded', path=str(path))
     return {'artifacts': rows, 'scan_incomplete': bool(continuation), 'diagnostics': diagnostics,
+            'coverage': artifact_coverage(messages, rows, diagnostics, continuation, requested_date),
+            'triage_guidance': ('Assess the whole topic separately for a reply and substantive work personally owed by the owner. '
+                              'Only coverage.state=absent with scan_complete=true establishes neither recording nor transcript '
+                              'in the scanned sources; if no independent owner obligation exists, finish informational triage '
+                              'with response_needed=no and action_needed=no, not a generated report or owner review. '
+                              'recording_only is not absence; unknown is an evidence gap, not absence or automatically owner work. '
+                              'A present transcript must be read before a summary; do not infer assignees from audio or metadata. '
+                              'New topic or artifact activity requires fresh evaluation; do not suppress future messages.'),
             'limitation': 'Uses the Claude meeting-recap Stream helper and the installed Teams credentials. Defaults to the newest recording date; pass date for another occurrence. Shared-file discovery scans the latest 200 chat messages. Recording audio is not transcribed.'}
 
 
