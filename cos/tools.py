@@ -97,7 +97,7 @@ calendar_events {start,end}: read up to 50 calendar events between explicit ISO 
 calendar_event {id}: read the exact event before proposing a response. Invitations and promotional emails are distinct.
 calendar_rsvp {id,response:accept|decline|tentative,comment?,send_response?:true}: RSVP through Outlook Calendar after exact-action approval. Do not use email replies to RSVP.
 delete_email {id}; mark_email_read {id}; mark_teams_read {chat_id}: exact-action approval required. Deletion moves mail to Deleted Items; it is not permanent purge. Teams marking applies to the whole chat and can fail if tenant permissions do not allow it. Never infer approval from KB preferences.
-create_feature_branch {name,ticket?}: preview and create a feature branch in a new isolated job-owned Git worktree, after approval for external projects or autonomously for Self-Improvement. Returns path, branch, and immutable base commit. Uses configured branch_prefix and require_ticket plus a job suffix for concurrent features. Never changes the shared checkout's branch or resets an existing branch. Repeated calls resume this job's same feature only.
+create_feature_branch {name,ticket?,base?:local|remote_default}: preview and create a feature branch in a new isolated job-owned Git worktree, after approval for external projects or autonomously for Self-Improvement. Returns path, branch, and immutable base commit. Uses configured branch_prefix and require_ticket plus a job suffix for concurrent features. Never changes the shared checkout's branch or resets an existing branch. Repeated calls resume this job's same feature only. Use base:remote_default for publication against current GitHub main rather than an older installed checkout. It resolves the authenticated routed origin default branch and acquires its pinned commit without moving shared checkout refs or writing FETCH_HEAD. Publication rechecks the authenticated remote default before repository writes.
 reply_email {id,body,reply_all?:false}: server prepares a plain-text preview including original quoted history and actual recipients before approval. Keep the quoted history intact when editing. Plain text preserves content and ordering; original HTML styling and inline images are not reproduced.
 jira_write create additionally accepts parent? (exact issue key). The server checks create metadata and parent hierarchy; project workflow defaults are editable in Connections. Use jira_read jira-createmeta to inspect required fields.
 suggest_knowledge additionally accepts target?:{source:email|teams,thread_id} OR {source:email|teams,sender_id}: bind guidance to one exact conversation or source sender. Sender IDs must be addresses or stable Teams contact IDs, never display names. Bound guidance applies only to that identity; other participants retain normal triage. Do not infer a binding from keywords or titles.
@@ -839,7 +839,8 @@ class Tools:
             from .local_checks import test_command
             saved=checkout(job) if test_command(a.get('command')) else None
             validation=snapshot(job) if saved and cwd==Path(saved['path']) else None
-            r=run_host(command,cwd=cwd,env=env)
+            # A complete regression suite can exceed the normal action limit.
+            r=run_host(command,cwd=cwd,env=env,timeout=1800 if test_command(a.get('command')) else 180)
             if autonomous_check(job['org'],action,a) and re.search(r'Ran 0 tests\b',r.stderr or ''):
                 return {'exit_code':5,'stdout':r.stdout[-24000:],'stderr':r.stderr[-12000:],
                         'no_tests':True,'instruction':'No tests ran. Use pytest for pytest-style tests or correct the discovery path. Do not report validation as passed.'}

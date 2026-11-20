@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .db import uid, now
-from .engineering import checkout, git
+from .engineering import checkout, git, current_base as resolve_current_base
 from .processes import background_options
 
 
@@ -86,6 +86,7 @@ def prepare(store, job):
     tests = list(validations.values())
     manifest = {'version':1,'created':now(),'job_id':job['id'],
                 'source':before['source'],'branch':before['branch'],'base_commit':before['base_commit'],
+                'base_kind':before.get('base_kind','local'),'remote_repository':before.get('remote_repository'),
                 'head':before['head'],'tree_sha256':before['tree_sha256'],
                 'patch_sha256':digest(patch),'files':[], 'tests':tests,
                 'validated':bool(tests) and all(t['result']['exit_code']==0 and t['result']['validation']['unchanged'] for t in tests)}
@@ -131,7 +132,7 @@ def validate(store, job, file_id):
         raise ValueError('No server-generated publication record matches this package. Rebuild a fresh proposal.')
     # The immutable ZIP digest binds every archived byte and test result. Never
     # trust a worker-authored manifest or an old approval as validation.
-    current_base = git(Path(manifest['source']),'rev-parse','HEAD')
+    current_base = resolve_current_base(manifest)
     base_changed = current_base!=manifest['base_commit']
     return {'package_sha256':digest(raw),'base_commit':manifest['base_commit'],
             'current_base':current_base,'base_changed':base_changed,
