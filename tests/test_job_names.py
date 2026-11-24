@@ -190,6 +190,8 @@ def test_meaningful_names_keep_versions_and_qualifiers_and_mark_shortening():
     assert not shortened.rstrip('…').endswith((' for',' the',' and',' to'))
     assert compact_name('Validate CharacterizationReadinessValidationConfiguration')=='Validate CharacterizationReadinessValidationConfiguration'
     assert compact_name('Validate '+('Characterization'*12)).startswith('Validate Characterization')
+    assert compact_name('Validate F#')=='Validate F#'
+    assert compact_name('## Validate C# and .NET 8.0')=='Validate C# and .NET 8.0'
 
 
 def test_legacy_clipped_names_expand_from_retained_matching_title():

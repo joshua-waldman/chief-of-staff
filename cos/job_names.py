@@ -36,7 +36,7 @@ def compact_name(value):
     value = re.sub(r'^(?:(?:re|fw|fwd)\s*:\s*)+', '', value.strip(), flags=re.I)
     value = re.sub(r'^(?:please\s+|can you\s+|could you\s+)', '', value, flags=re.I)
     pieces=re.split(r'\n|[.!?](?=\s|$)',value,maxsplit=1)
-    value=' '.join(pieces[0].split()).strip(' :,-#')
+    value=re.sub(r'^#{1,6}\s+','',' '.join(pieces[0].split())).strip(' :,-')
     omitted=len(pieces)>1 and bool(pieces[1].strip())
     while value.rsplit(' ',1)[-1].casefold() in TRAILING_WORDS and ' ' in value:
         value=value.rsplit(' ',1)[0]
