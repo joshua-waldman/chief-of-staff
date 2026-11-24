@@ -326,7 +326,12 @@ def test_bridge_replies_only_to_configured_self_chat_as_literal_text(monkeypatch
     from cos.teams_inbox import send_reply
     from cos import integrations
     calls = []
-    client = SimpleNamespace(send_message=lambda *args, **kwargs: calls.append((args, kwargs)) or {'id': 'sent'})
+    auth = []
+    def send(*args, **kwargs):
+        assert auth == ['ready']
+        calls.append((args, kwargs))
+        return {'id': 'sent'}
+    client = SimpleNamespace(get_skypetoken=lambda: auth.append('ready'), send_message=send)
     monkeypatch.setitem(sys.modules, 'skype_client', SimpleNamespace(SkypeClient=lambda: client))
     monkeypatch.setattr(bridge, 'skill_dir', lambda name: Path('/synthetic'))
     monkeypatch.setattr(integrations, 'communication', lambda action, args: bridge.perform(None, action, args))

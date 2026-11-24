@@ -159,7 +159,9 @@ def perform(graph, action, a):
             raise ValueError('Inbox replies must target the configured owner self-chat.')
         sys.path.insert(0,str(skill_dir('slai-teams')/'scripts'))
         from skype_client import SkypeClient
-        return SkypeClient().send_message(a['chat_id'], a['body'], content_type='text', message_type='Text')
+        client=SkypeClient()
+        client.get_skypetoken()  # Resolve the account's regional service before building the send URL.
+        return client.send_message(a['chat_id'], a['body'], content_type='text', message_type='Text')
     if action=='read_mail':
         return read_mail(graph,a)
     if action=='teams_read_status':
