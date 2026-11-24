@@ -197,6 +197,17 @@ def test_html_expansion_keeps_short_source_previews_paginated_and_gated(inbox):
     assert inbox.store.result_review(identity)['reviewed']
 
 
+def test_saved_plain_text_preview_requires_refresh_after_layout_upgrade(inbox):
+    identity,_=result(inbox)
+    token=preview(inbox,'result:'+identity)
+    saved=inbox.store.state('teams_inbox:'+token)
+    saved.pop('format_version')
+    inbox.store.set_state('teams_inbox:'+token,saved)
+    request(inbox,'reviewed '+token)
+    assert 'older layout' in inbox.replies[-1]
+    assert inbox.store.result_review(identity)['reviewed'] is None
+
+
 def test_file_contents_are_readable_and_changed_files_invalidate_review(inbox, tmp_path):
     path = tmp_path/'launch.md'
     path.write_text('# Full launch document\nDependencies and milestones.', encoding='utf-8')

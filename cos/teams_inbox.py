@@ -112,14 +112,14 @@ class TeamsInbox:
     def save(self, kind, chat, **data):
         token = uid()[:16]
         self.store.set_state('teams_inbox:'+token, {'kind': kind, 'chat': chat,
-            'expires': (datetime.now(timezone.utc)+timedelta(hours=24)).isoformat(), **data})
+            'expires': (datetime.now(timezone.utc)+timedelta(hours=24)).isoformat(), **data, 'format_version':1})
         return token
 
     def load(self, token, chat, kind=None):
         value = self.store.state('teams_inbox:'+token, {})
-        if (not value or value['chat'] != chat or value['expires'] < now()
+        if (not value or value.get('format_version')!=1 or value['chat'] != chat or value['expires'] < now()
                 or kind and value['kind'] != kind):
-            raise ValueError('That reference expired or is unavailable. Request a fresh list or preview.')
+            raise ValueError('That reference expired or belongs to an older layout. Request a fresh list or preview.')
         return value
 
     def page(self, chat, text, delivered=None):
