@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -7,6 +8,13 @@ from cos.db import Store, now, uid
 from cos.monitor import Monitor
 from cos.teams_inbox import TeamsInbox
 from cos.task_status import respond
+from cos.teams_formatting import render,MAX_HTML_BYTES
+
+
+def table_rows(body):
+    match=re.search(r'```cos-table\n(.*?)\n```',body,re.S)
+    assert match,body
+    return json.loads(match[1])
 
 
 @pytest.fixture
@@ -61,7 +69,7 @@ def test_identifies_task_by_name_full_id_or_unique_prefix(inbox, reference):
                'task': 'task:'+identity, 'name': 'release milestone', 'quoted': '"Release planning"'}
     ask(inbox, 'status '+queries[reference])
     assert 'Task: job:'+identity in inbox.replies[-1]
-    assert 'Status: Running' in inbox.replies[-1]
+    assert table_rows(inbox.replies[-1])[0]['status']=='Running'
     assert 'Refresh: !cos status job:'+identity in inbox.replies[-1]
 
 
@@ -111,7 +119,7 @@ def test_detail_explains_saved_progress_nested_blockers_and_review_state(inbox):
                       (identity, uid(), '# Saved draft', '[]', now()))
     ask(inbox, 'status '+identity)
     body = inbox.replies[-1]
-    assert 'Status: Waiting for delegated work' in body
+    assert table_rows(body)[0]['status'].startswith('Waiting for delegated work')
     assert '### Latest saved progress\nRecorded ' in body and 'Research gathered' in body
     assert 'Synthesize the final plan' in body
     assert '### Delegated work\n3 task(s)' in body and 'Completed: 1' in body
@@ -127,9 +135,9 @@ def test_completed_and_cancelled_tasks_remain_discoverable(inbox):
     inbox.store.update(completed, result='The final report identifies three dependencies.')
     cancelled = task(inbox, 'Cancelled launch report', 'cancelled')
     ask(inbox, 'status '+completed)
-    assert 'Status: Completed' in inbox.replies[-1] and 'three dependencies' in inbox.replies[-1]
+    assert table_rows(inbox.replies[-1])[0]['status']=='Completed' and 'three dependencies' in inbox.replies[-1]
     ask(inbox, 'status '+cancelled)
-    assert 'Status: Cancelled' in inbox.replies[-1]
+    assert table_rows(inbox.replies[-1])[0]['status']=='Cancelled'
     assert 'available actions' not in inbox.replies[-1]
 
 
@@ -143,7 +151,7 @@ def test_status_is_read_only_deduplicated_owner_only_and_uses_latest_state(inbox
     assert len(inbox.replies) == 1
     inbox.store.update(identity, status='failed', question='Source unavailable')
     ask(inbox, 'status '+identity)
-    assert 'Status: Failed' in inbox.replies[-1] and 'Source unavailable' in inbox.replies[-1]
+    assert table_rows(inbox.replies[-1])[0]['status']=='Failed' and 'Source unavailable' in inbox.replies[-1]
     assert len(inbox.store.rows('SELECT * FROM jobs')) == 1
     assert not inbox.store.rows('SELECT * FROM approvals')
     assert not inbox.store.rows("SELECT * FROM state WHERE value LIKE '%\"kind\": \"preview\"%'")
@@ -196,3 +204,53 @@ def test_discovery_does_not_load_agent_history(inbox, monkeypatch):
         pytest.fail('Status should not load full jobs or agent messages')
     monkeypatch.setattr(inbox.store, 'job', forbidden)
     assert 'Task: job:'+identity in respond(inbox.store, identity)
+
+
+def test_status_table_shows_meaningful_name_context_and_live_next_step(inbox):
+    name='File a TIP ticket for the dimension selector failure and attach the latest characterization results'
+    identity=task(inbox,name,'waiting_input')
+    inbox.store.update(identity,question='Which customer reproduction should be attached?')
+    inbox.store.write('INSERT INTO job_briefs VALUES(?,?,?)',
+                      (identity,json.dumps({'job_name':'File a TIP ticket for the dimension',
+                                            'context':'Customer bring-up characterization failed on the latest build.',
+                                            'next_step':'An older saved plan'}),now()))
+    ask(inbox,'status')
+    row=table_rows(inbox.replies[-1])[0]
+    assert row['job']==name
+    assert row['context']=='Customer bring-up characterization failed on the latest build.'
+    assert row['next_step']=='Which customer reproduction should be attached?'
+    html=render(inbox.replies[-1])
+    assert '<table ' in html and '<th scope="col" width="40%">Job</th>' in html
+    assert '>Current Status</th>' in html and '>Next Steps</th>' in html
+    assert row['command']=='!cos status '+identity[:8]
+
+
+def test_status_tables_shrink_pages_before_rendered_size_limit(inbox):
+    identities=[]
+    query='"&'*480
+    for index in range(8):
+        identity=task(inbox,'A lengthy release characterization task '+str(index),'waiting_input')
+        identities.append(identity)
+        inbox.store.update(identity,question='"&'*300,project=query)
+        inbox.store.write('INSERT INTO job_briefs VALUES(?,?,?)',
+                          (identity,json.dumps({'job_name':'Validation evidence '+('"& '*50)+str(index),'context':'"&'*300}),now()))
+    ask(inbox,'status '+query)
+    body=inbox.replies[-1]
+    rows=table_rows(body)
+    assert 1<=len(rows)<6
+    assert len(body)<6000 and len(render(body).encode('utf-8'))<=MAX_HTML_BYTES
+    assert '`!cos status page '+str(len(rows))+' find '+query+'`' in body
+    assert all(len(row['job'])<=120 and len(row['context'])<=160 and len(row['next_step'])<=220 for row in rows)
+    ask(inbox,'status page '+str(len(rows))+' find '+query)
+    assert table_rows(inbox.replies[-1])
+
+
+def test_description_is_context_not_a_replacement_for_the_job_name(inbox):
+    name='Publish the COS installation skill file to the developer knowledge base'
+    identity=task(inbox,name)
+    inbox.store.write('INSERT INTO job_briefs VALUES(?,?,?)',
+                      (identity,json.dumps({'context':'Prepare the verified installation package for publication.'}),now()))
+    ask(inbox,'status')
+    row=table_rows(inbox.replies[-1])[0]
+    assert row['job']==name
+    assert row['context']=='Prepare the verified installation package for publication.'

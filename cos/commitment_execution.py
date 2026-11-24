@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 from .db import now, uid
+from .job_names import compact_name
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS commitment_execution(
@@ -53,7 +54,7 @@ def ensure(connection, identity, restart=False):
     state={'messages':[]}
     if direction and direction['note']: state['followup']='Owner commitment direction: '+direction['note']
     connection.execute('''INSERT INTO jobs(id,title,request,org,project,status,question,messages,created,updated)
-        VALUES(?,?,?,?,?,?,?,?,?,?)''', (job_id, 'Execute: '+row['deliverable'][:90], request,
+        VALUES(?,?,?,?,?,?,?,?,?,?)''', (job_id, compact_name('Execute: '+row['deliverable']), request,
         'Communications', '', 'queued' if confirmed else 'waiting_input', '' if confirmed else CONFIRM, json.dumps(state), stamp, stamp))
     connection.execute('INSERT INTO commitment_execution VALUES(?,?,?)', (identity, job_id, stamp))
     # Copy only registered primary inputs and declared output files. Execution
@@ -83,7 +84,7 @@ def ensure(connection, identity, restart=False):
     connection.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
                        (job_id, 'commitment_execution', 'Execution linked to commitment '+identity, stamp))
     connection.execute('INSERT INTO job_briefs VALUES(?,?,?)', (job_id, json.dumps({
-        'job_name': 'Execute: '+row['deliverable'][:90], 'context': row['deliverable'],
+        'job_name': compact_name('Execute: '+row['deliverable']), 'context': row['deliverable'],
         'status_summary': 'Execution queued.' if confirmed else CONFIRM,
         'next_step': 'Carry out the next concrete action.' if confirmed else CONFIRM,
         'action_needed': 'yes', 'requested_action': row['deliverable']}), stamp))

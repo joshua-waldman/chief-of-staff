@@ -62,7 +62,7 @@ def test_compact_names_remove_source_ids_and_bound_length():
     assert compact_name('Release review Meeting ID: 12345 Message ID: 99999') == 'Release review'
     assert compact_name('RE: Fwd: Release readiness') == 'Release readiness'
     name = compact_name('Review release readiness and prepare a comprehensive report with all evidence')
-    assert len(name.split()) <= 7 and len(name) <= 60
+    assert name == 'Review release readiness and prepare a comprehensive report with all evidence'
     assert '1234567890123' not in compact_name('Launch 1234567890123')
     assert compact_name('Review https://example.com/a') == 'Review'
 
@@ -101,7 +101,7 @@ def test_raw_html_and_plain_source_topics():
     job = {'org':'Communications', 'title':'Teams conversation: 19:meeting_opaque@thread.v2'}
     assert display_name(job, {}, [{'body':'<root><topic>Launch &amp; budget review</topic></root>'}]) == 'Launch & budget review'
     assert display_name(job, {}, [{'subject':'RE: Launch readiness','body':'Other content'}]) == 'Launch readiness'
-    assert display_name(job, {}, [{'body':'Review the launch readiness. Details follow.'}]) == 'Review the launch readiness'
+    assert display_name(job, {}, [{'body':'Review the launch readiness. Details follow.'}]) == 'Review the launch readiness…'
     assert display_name(job, {'job_name':'Generated launch summary'}, [{'subject':'Earlier topic'}]) == 'Generated launch summary'
 
 
@@ -179,3 +179,60 @@ def test_email_source_name_and_full_subject_survive_brief_updates(tmp_path):
     jobs = [store.job(job['id'])]
     add_display_names(Store(store.path), jobs)
     assert jobs[0]['display_name'] == 'Review launch budget — Alice Smith · ' + subject
+
+
+def test_meaningful_names_keep_versions_and_qualifiers_and_mark_shortening():
+    name='Validate the Release 2.0 — SDK v1.2.3 package before the customer readiness review'
+    assert compact_name(name)==name
+    long='File a TIP ticket for the characterization team to investigate the dimension selector failure and attach the reproduction data and latest test results'
+    shortened=compact_name(long)
+    assert len(shortened)<=120 and shortened.endswith('…')
+    assert not shortened.rstrip('…').endswith((' for',' the',' and',' to'))
+    assert compact_name('Validate CharacterizationReadinessValidationConfiguration')=='Validate CharacterizationReadinessValidationConfiguration'
+    assert compact_name('Validate '+('Characterization'*12)).startswith('Validate Characterization')
+    assert compact_name('Validate F#')=='Validate F#'
+    assert compact_name('## Validate C# and .NET 8.0')=='Validate C# and .NET 8.0'
+
+
+def test_legacy_clipped_names_expand_from_retained_matching_title():
+    full='Execute: Post the Atlas/throughput demo links in the developer group and confirm access'
+    assert display_name({'title':full,'org':'Communications'}, {'job_name':'Execute: Post the Atlas/throughput demo links in'})==full
+    # An unrelated summary is still a legitimate generated task name.
+    assert display_name({'title':full,'org':'Communications'}, {'job_name':'Developer demo distribution'})=='Developer demo distribution'
+
+
+def test_queued_long_requests_recover_title_beyond_old_storage_cutoff(tmp_path):
+    from cos.job_names import add_display_names
+    store=Store(tmp_path/'long-name.db')
+    request='Investigate the release readiness failures for the customer characterization workflow and include all reproduction steps and owner recommendations'
+    job=store.create_job(request)
+    original=store.job(job['id'])
+    rows=[dict(original)]
+    add_display_names(store,rows)
+    assert rows[0]['task_name']==compact_name(request)
+    assert rows[0]['task_name'].endswith('…')
+    assert 'original_task_name' not in rows[0]
+    assert store.job(job['id'])==original
+
+
+def test_existing_execution_name_uses_immutable_original_request(tmp_path):
+    from cos.job_names import add_display_names
+    from cos.commitment_execution import ensure
+    from cos.db import now
+    import json
+    store=Store(tmp_path/'execution-name.db')
+    deliverable='File a TIP ticket for the dimension selector failure and attach the characterization evidence'
+    stamp=now()
+    store.write('''INSERT INTO commitments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                ('commitment','Owner',deliverable,'global','','','unknown','','open','','fingerprint',1,stamp,stamp))
+    with store.connect() as c:
+        identity=ensure(c,'commitment')
+    store.write('UPDATE job_briefs SET body=? WHERE job_id=?',
+                (json.dumps({'job_name':'Execute: File a TIP ticket for the'}),identity))
+    # Later commitment edits must not silently rename a different historical task.
+    store.write("UPDATE commitments SET deliverable='A different assignment' WHERE id='commitment'")
+    original=store.job(identity)
+    rows=[dict(original)]
+    add_display_names(store,rows)
+    assert rows[0]['task_name']=='Execute: '+deliverable
+    assert store.job(identity)==original

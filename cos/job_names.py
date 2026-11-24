@@ -4,25 +4,44 @@ import json
 from html import unescape
 
 
-NAMING_POLICY = """Include job_name when calling update_brief: a clear 3-7 word
+NAMING_POLICY = """Include job_name when calling update_brief: a clear, descriptive
 name for the job's main topic or outcome (for example, 'Release readiness review'
 or 'Quarterly budget approval'). Use a short noun phrase, not a detailed request,
 status report or list of steps. Never include message, chat, conversation or
-meeting IDs, URLs, timestamps, or source metadata. Keep it under 60 characters.
+meeting IDs, URLs, timestamps, or source metadata. Preserve the action and distinguishing
+deliverable or context; do not cut names to a fixed word count. Keep it within 120
+characters, using an ellipsis when shortening is necessary.
 """
+
+
+TRAILING_WORDS={'a','an','the','and','or','for','of','to','in','on','at','by','with','from','into'}
+
+
+def ellipsize(value,limit=120):
+    value=' '.join((value or '').split())
+    if len(value)<=limit:
+        return value
+    shortened=value[:limit-1]
+    if shortened.rfind(' ')>=limit//2:
+        shortened=shortened.rsplit(' ',1)[0]
+    while shortened.rsplit(' ',1)[-1].casefold() in TRAILING_WORDS and ' ' in shortened:
+        shortened=shortened.rsplit(' ',1)[0]
+    return shortened.rstrip(' ,;:-')+'…'
 
 
 def compact_name(value):
     value = re.sub(r'https?://\S+|\b\S+@\S+\b', '', value or '', flags=re.I)
     value = re.sub(r'\b(?:teams\s+)?(?:message|meeting|chat|conversation|thread|email)[ _-]*(?:id\b\s*[:=#-]?|#)\s*\S+', '', value, flags=re.I)
-    value = re.sub(r'\b[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b\d{10,}\b|\b\S{32,}\b', '', value, flags=re.I)
+    value = re.sub(r'\b[0-9a-f]{8}-[0-9a-f-]{27,}\b|\b\d{10,}\b|\b[0-9a-f]{32,}\b', '', value, flags=re.I)
     value = re.sub(r'^(?:(?:re|fw|fwd)\s*:\s*)+', '', value.strip(), flags=re.I)
     value = re.sub(r'^(?:please\s+|can you\s+|could you\s+)', '', value, flags=re.I)
-    value = re.split(r'[\n.!?;]|\s+[—–]\s+', value)[0]
-    value = ' '.join(value.split()[:7]).strip(' :,-#')
-    if len(value) > 60:
-        value = value[:61].rsplit(' ', 1)[0].rstrip(' :,-#')
-    return value
+    pieces=re.split(r'\n|[.!?](?=\s|$)',value,maxsplit=1)
+    value=re.sub(r'^#{1,6}\s+','',' '.join(pieces[0].split())).strip(' :,-')
+    omitted=len(pieces)>1 and bool(pieces[1].strip())
+    while value.rsplit(' ',1)[-1].casefold() in TRAILING_WORDS and ' ' in value:
+        value=value.rsplit(' ',1)[0]
+        omitted=True
+    return ellipsize(value+('…' if omitted and not value.endswith('…') else ''))
 
 
 def usable_name(value):
@@ -75,16 +94,36 @@ def source_label(brief, sources):
         and not re.search(r'orgid:|https?://', s['sender'], re.I)))
 
 
-def display_name(job, brief, sources=(), label=''):
+def primary_name(job, brief, sources=()):
     if job.get('user_name'):
         return job['user_name']
-    label = ' '.join((label or source_label(brief, sources)).split())
+    if job.get('original_task_name'):
+        recovered=usable_name(job['original_task_name'])
+        if recovered:
+            return recovered
     name = ''
-    for candidate in (brief.get('job_name'), brief.get('email_subject'), brief.get('context'), job.get('title'), brief.get('requested_action'), brief.get('email_excerpt')):
+    for candidate in (brief.get('job_name'), brief.get('email_subject'), job.get('title'), brief.get('requested_action'), brief.get('context'), brief.get('email_excerpt')):
         name = usable_name(candidate)
         if name:
             break
+    # Older briefs stored the seven-word prefix. Expand only when a retained
+    # title/context actually begins with that same prefix; never invent a name.
+    old=(brief.get('job_name') or '').strip().rstrip('…')
+    if old and (len(old.split())>=7 or len(old)>=50 or old.rsplit(' ',1)[-1].casefold() in TRAILING_WORDS):
+        for candidate in (brief.get('requested_action'),job.get('title'),brief.get('context')):
+            candidate=compact_name(candidate)
+            if candidate.casefold().startswith(old.casefold()+' '):
+                name=compact_name(candidate)
+                break
     name = name or source_topic(sources, meeting='19:meeting_' in (job.get('title') or ''))
+    return name
+
+
+def display_name(job, brief, sources=(), label=''):
+    if job.get('user_name'):
+        return job['user_name']
+    name=primary_name(job,brief,sources)
+    label = ' '.join((label or source_label(brief, sources)).split())
     if label:
         return name + ' — ' + label if name and name.casefold() not in label.casefold() else label
     return name or ('Conversation review' if job.get('org') == 'Communications' else 'Task review')
@@ -100,6 +139,15 @@ def add_display_names(store, jobs, briefs=None):
         return
     ids = list(dict.fromkeys(job['id'] for job in jobs))
     marks = ','.join('?' for _ in ids)
+    retained_requests={row['job_id']:row for row in store.rows('''SELECT j.id AS job_id,e.commitment_id,
+        substr(j.request,1,1400) AS request FROM jobs j LEFT JOIN commitment_execution e ON j.id=e.job_id
+        WHERE j.id IN ('''+marks+') AND (e.job_id IS NOT NULL OR length(j.title)>=90)',ids)}
+    for job in jobs:
+        execution=retained_requests.get(job['id'])
+        if execution and execution['commitment_id'] and execution['request'].startswith('Execute confirmed commitment: '):
+            original,separator,_=execution['request'].partition('\nCommitment ID: '+execution['commitment_id']+'\n')
+            if separator:
+                job['original_task_name']='Execute: '+original.removeprefix('Execute confirmed commitment: ')
     names = {row['job_id']: row['name'] for row in store.rows(
         'SELECT job_id,name FROM job_names WHERE job_id IN ('+marks+')', ids)}
     for job in jobs:
@@ -108,6 +156,13 @@ def add_display_names(store, jobs, briefs=None):
         marks = ','.join('?' for _ in ids)
         briefs = {row['job_id']: json.loads(row['body']) for row in store.rows(
             'SELECT job_id,body FROM job_briefs WHERE job_id IN ('+marks+')', ids)}
+    for job in jobs:
+        original=retained_requests.get(job['id'])
+        if original and not original['commitment_id'] and original['request'].startswith(job.get('title','')):
+            full=original['request'].split('\n',1)[0]
+            previous=(briefs.get(job['id'],{}).get('job_name') or '').rstrip('…')
+            if len(full)>len(job.get('title','')) and (not previous or compact_name(full).casefold().startswith(previous.casefold()+' ')):
+                job['original_task_name']=full
     ancestry = {}
     for row in store.rows('''WITH RECURSIVE lineage(job_id,ancestor_id,parent_id,depth) AS (
             SELECT id,id,parent_id,0 FROM jobs WHERE id IN ('''+marks+''')
@@ -140,5 +195,7 @@ def add_display_names(store, jobs, briefs=None):
             label = ' / '.join(labels.get(ancestor, ())) or source_label({}, sources.get(ancestor, ()))
             if label:
                 break
+        job['task_name']=primary_name(job,briefs.get(job['id'],{}),sources.get(job['id'],()))
         job['display_name'] = display_name(job, briefs.get(job['id'], {}), sources.get(job['id'], ()),
                                            label)
+        job.pop('original_task_name',None)
