@@ -6,6 +6,8 @@ This repository is private and intended for the owner's use while development co
 
 Use the **Theme** selector in the header to choose System, Light, or Dark. System follows your operating system appearance. Your choice is saved per browser and applies across tabs and page reloads.
 
+When delegating an initial request, uncheck **Open job details after delegating** to stay on the current page. The browser remembers your choice; you can open the request later from Recent requests or Job tracker.
+
 ## Download and install
 
 Requirements:
