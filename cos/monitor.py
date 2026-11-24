@@ -12,8 +12,10 @@ from .capacity import CapacityDelayed
 from .update_gate import background
 
 class Monitor:
-    def __init__(self,store):
+    def __init__(self,store,engine=None):
         self.store=store
+        from .teams_inbox import TeamsInbox
+        self.inbox=TeamsInbox(store,engine)
         self.stop_event=threading.Event()
         from .intake import EmailIntake
         self.email_intake=EmailIntake(store)
@@ -25,6 +27,7 @@ class Monitor:
 
     def start(self):
         from .intake_cleanup import recover
+        self.inbox.recover()
         # A persisted watching status may predate hours of uncollected activity.
         self.store.set_state('intake_cleanup_teams_collected',False)
         recover(self.store)
@@ -79,7 +82,8 @@ class Monitor:
                 if m['text'].strip().lower().startswith(prefix.lower()+' '):
                     request=m['text'].strip()[len(prefix):].strip()
                     if request:
-                        count+=self.enqueue_once('teams-command',m['id'],request,'Chief of Staff')
+                        if not self.inbox.handle(m,request):
+                            count+=self.enqueue_once('teams-command',m['id'],request,'Chief of Staff')
                 continue
             chats.setdefault(m['chat_id'],[]).append(m)
         # Serialize routing snapshots without holding a database transaction

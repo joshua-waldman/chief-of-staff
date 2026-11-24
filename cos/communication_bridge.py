@@ -149,6 +149,19 @@ def reply_history(graph, original):
 
 
 def perform(graph, action, a):
+    if action=='owner_inbox_reply':
+        # A fixed application response transport, never an agent send capability.
+        # Use the same chatsvc namespace as intake (including 48:notes).
+        from .config import settings
+        if (set(a) != {'chat_id','body'} or a['chat_id'] != settings()['self_chat_id']
+                or not isinstance(a['body'], str) or not a['body'].startswith('COS inbox\n\n')
+                or len(a['body']) > 6500):
+            raise ValueError('Inbox replies must target the configured owner self-chat.')
+        sys.path.insert(0,str(skill_dir('slai-teams')/'scripts'))
+        from skype_client import SkypeClient
+        client=SkypeClient()
+        client.get_skypetoken()  # Resolve the account's regional service before building the send URL.
+        return client.send_message(a['chat_id'], a['body'], content_type='text', message_type='Text')
     if action=='read_mail':
         return read_mail(graph,a)
     if action=='teams_read_status':
