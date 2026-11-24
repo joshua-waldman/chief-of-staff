@@ -77,6 +77,13 @@ def test_malformed_markup_and_encoded_code_remain_inert():
     assert message_html('<script>Hidden') == ''
 
 
+def test_empty_bodies_and_boolean_attributes_do_not_break_job_details():
+    assert message_html(None) == ''
+    assert message_html('<span itemtype>Visible</span>') == 'Visible'
+    assert message_html('<URIObject type/>') == '[Teams attachment]'
+    assert message_html('<img alt/>') == '[Teams image]'
+
+
 def test_existing_sources_get_display_html_without_changing_evidence(tmp_path):
     store = Store(tmp_path/'format.db')
     job = store.create_job('Review messages', 'Communications')

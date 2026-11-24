@@ -56,9 +56,9 @@ class MessageHTML(HTMLParser):
             if href:
                 self.parts.append('<a href="' + escape(href, quote=True) + '" target="_blank" rel="noopener noreferrer">')
                 self.stack.append(tag)
-        elif tag == 'at' or 'schema.skype.com/mention' in attrs.get('itemtype', '').lower():
+        elif tag == 'at' or 'schema.skype.com/mention' in (attrs.get('itemtype') or '').lower():
             self.parts.append('@')
-        elif tag == 'img' or (tag == 'uriobject' and attrs.get('type', '').lower().startswith('picture')):
+        elif tag == 'img' or (tag == 'uriobject' and (attrs.get('type') or '').lower().startswith('picture')):
             self.parts.append(escape('[Teams image' + (': ' + attrs['alt'] if attrs.get('alt') else '') + ']'))
         elif tag in {'attachment', 'uriobject'}:
             self.parts.append(escape('[Teams attachment' + (': ' + attrs['title'] if attrs.get('title') else '') + ']'))
@@ -87,7 +87,7 @@ class MessageHTML(HTMLParser):
 
 def message_html(body):
     parser = MessageHTML()
-    parser.feed(body)
+    parser.feed(body or '')
     parser.close()
     return ''.join(parser.parts) + ''.join('</' + tag + '>' for tag in reversed(parser.stack))
 
