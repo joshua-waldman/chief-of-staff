@@ -37,10 +37,11 @@ def test_overview_counts_only_top_level_tasks_and_prioritizes_active(inbox):
                       (completed, uid(), '# Report', '[]', now()))
     ask(inbox, 'status')
     body = inbox.replies[-1]
-    assert '3 total' in body and 'Active: 1' in body
-    assert 'Completed: 1' in body and 'Cancelled: 1' in body and 'Ready for review: 1' in body
+    assert '3 total' in body and '**1 active**' in body
+    assert '1 completed' in body and '1 cancelled' in body and '**1 ready for review**' in body
     assert 'Child failed' not in body
-    assert body.index(active) < body.index(completed)
+    assert body.index(active[:8]) < body.index(completed[:8])
+    assert active not in body and completed not in body
     assert 'Queue: enabled · Monitoring: paused' in body
 
 
@@ -50,7 +51,7 @@ def test_empty_overview_and_configured_monitoring_state(inbox, monkeypatch):
     inbox.store.set_state('monitor_status', {'state': 'needs_attention'})
     ask(inbox, 'STATUS')
     assert '0 total' in inbox.replies[-1] and 'No tasks on this page' in inbox.replies[-1]
-    assert 'Queue: paused · Monitoring: needs_attention' in inbox.replies[-1]
+    assert 'Queue: paused · Monitoring: needs attention' in inbox.replies[-1]
 
 
 @pytest.mark.parametrize('reference', ['id', 'prefix', 'job', 'task', 'name', 'quoted'])
@@ -84,8 +85,8 @@ def test_ambiguous_names_and_id_prefixes_return_choices(inbox):
     for query in ['launch', 'abcdef']:
         ask(inbox, 'status '+query)
         body = inbox.replies[-1]
-        assert 'Choose a task by its ID' in body
-        assert first in body and second in body
+        assert 'Open a task with its command below' in body
+        assert first[:8] in body and second[:8] in body
         assert 'Task: job:' not in body
 
 
@@ -111,9 +112,9 @@ def test_detail_explains_saved_progress_nested_blockers_and_review_state(inbox):
     ask(inbox, 'status '+identity)
     body = inbox.replies[-1]
     assert 'Status: Waiting for delegated work' in body
-    assert 'Latest saved progress (recorded ' in body and 'Research gathered' in body
+    assert '### Latest saved progress\nRecorded ' in body and 'Research gathered' in body
     assert 'Synthesize the final plan' in body
-    assert 'Delegated work: 3 task(s)' in body and 'Completed: 1' in body
+    assert '### Delegated work\n3 task(s)' in body and 'Completed: 1' in body
     assert 'Approve the exact toolchain change.' in body
     assert '!cos show job:'+grandchild in body
     assert '!cos show result:'+identity in body
@@ -151,14 +152,14 @@ def test_status_is_read_only_deduplicated_owner_only_and_uses_latest_state(inbox
 def test_status_list_and_search_have_reusable_pagination_commands(inbox):
     identities = [task(inbox, 'Launch report '+str(n)) for n in range(17)]
     ask(inbox, 'status')
-    assert 'Next: !cos status page 15' in inbox.replies[-1]
-    ask(inbox, 'status page 15')
-    assert 'Next:' not in inbox.replies[-1]
-    assert sum(identity in inbox.replies[-1] for identity in identities) == 2
+    assert '`!cos status page 6`' in inbox.replies[-1]
+    ask(inbox, 'status page 12')
+    assert '**More tasks**' not in inbox.replies[-1]
+    assert sum(identity[:8] in inbox.replies[-1] for identity in identities) == 5
     ask(inbox, 'status launch')
-    assert 'Next: !cos status page 15 find launch' in inbox.replies[-1]
-    ask(inbox, 'status page 15 find launch')
-    assert sum(identity in inbox.replies[-1] for identity in identities) == 2
+    assert '`!cos status page 6 find launch`' in inbox.replies[-1]
+    ask(inbox, 'status page 6 find launch')
+    assert sum(identity[:8] in inbox.replies[-1] for identity in identities) == 6
     ask(inbox, 'status page 1000001')
     assert 'offset up to' in inbox.replies[-1]
 

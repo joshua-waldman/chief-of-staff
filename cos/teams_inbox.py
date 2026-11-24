@@ -10,7 +10,7 @@ from .db import now, uid
 from .commitments import Commitments
 
 PAGE_SIZE = 6000
-LIST_SIZE = 15
+LIST_SIZE = 6
 ATTENTION = ('waiting_input', 'awaiting_approval', 'blocked', 'failed', 'capacity_paused')
 ALIASES = {
     'inbox': 'inbox', 'help inbox': 'inbox',
@@ -112,23 +112,26 @@ class TeamsInbox:
     def save(self, kind, chat, **data):
         token = uid()[:16]
         self.store.set_state('teams_inbox:'+token, {'kind': kind, 'chat': chat,
-            'expires': (datetime.now(timezone.utc)+timedelta(hours=24)).isoformat(), **data})
+            'expires': (datetime.now(timezone.utc)+timedelta(hours=24)).isoformat(), **data, 'format_version':1})
         return token
 
     def load(self, token, chat, kind=None):
         value = self.store.state('teams_inbox:'+token, {})
-        if (not value or value['chat'] != chat or value['expires'] < now()
+        if (not value or value.get('format_version')!=1 or value['chat'] != chat or value['expires'] < now()
                 or kind and value['kind'] != kind):
-            raise ValueError('That reference expired or is unavailable. Request a fresh list or preview.')
+            raise ValueError('That reference expired or belongs to an older layout. Request a fresh list or preview.')
         return value
 
     def page(self, chat, text, delivered=None):
-        if len(text) <= PAGE_SIZE:
-            return text, delivered
+        from .teams_formatting import page_end,fragment
+        footer='\n\nContinued: '+settings()['command_prefix']+' more '+'f'*16
+        end=page_end(text,0,PAGE_SIZE,footer) if text else 0
+        if end == len(text):
+            return fragment(text,0,end), delivered
         # Persist the remainder; continuation never re-renders newer content under
         # an old preview token. The final page enables its confirmation commands.
-        token = self.save('page', chat, text=text, offset=PAGE_SIZE, preview=delivered)
-        return text[:PAGE_SIZE]+'\n\nContinued: '+settings()['command_prefix']+' more '+token, None
+        token = self.save('page', chat, text=text, offset=end, preview=delivered)
+        return fragment(text,0,end)+'\n\nContinued: '+settings()['command_prefix']+' more '+token, None
 
     def enable(self, token):
         value = self.store.state('teams_inbox:'+token)
@@ -155,8 +158,9 @@ class TeamsInbox:
                 saved = self.load(rest, chat, 'page')
                 if saved['offset'] >= len(saved['text']):
                     raise ValueError('All pages of this saved preview have been delivered.')
-                end = saved['offset']+PAGE_SIZE
-                body = saved['text'][saved['offset']:end]
+                from .teams_formatting import page_end,fragment
+                end = page_end(saved['text'],saved['offset'],PAGE_SIZE,f'\n\nContinued: {prefix} more {rest}')
+                body = fragment(saved['text'],saved['offset'],end)
                 final = end >= len(saved['text'])
                 if not final:
                     body += f'\n\nContinued: {prefix} more {rest}'
@@ -228,30 +232,38 @@ class TeamsInbox:
         if not 0 <= offset <= 1000000:
             raise ValueError('Use a nonnegative list offset up to 1000000.')
         rows = []
+        prefix=settings()['command_prefix']
         if category == 'reviews':
-            rows = ['result:'+r['id']+' · '+r['review_title']+'\n'+r['summary'][:240]
+            rows = ['**'+r['review_title']+'**\n'+r['summary'][:180]+f'\n`{prefix} show result:'+r['id']+'`'
                     for r in self.store.pending_results()]
             heading = 'Ready for review'
         else:
             heading = 'Needs attention'
-            jobs = self.store.rows('SELECT id,title,status,question FROM jobs WHERE status IN (?,?,?,?,?) ORDER BY updated DESC,id', ATTENTION)
-            rows.extend('job:'+j['id']+' · '+j['status']+' · '+j['title']+'\n'+j['question'][:240] for j in jobs)
+            jobs = self.store.rows('SELECT id,parent_id,title,org,project,status,question FROM jobs WHERE status IN (?,?,?,?,?) ORDER BY updated DESC,id', ATTENTION)
+            from .job_names import add_display_names
+            from .task_status import title,label
+            add_display_names(self.store,jobs)
+            rows.extend('**'+title(j)+'**\n'+label(j['status'])+
+                        ('\n'+j['question'][:200] if j['question'] else '')+
+                        f'\n`{prefix} show job:'+j['id']+'`' for j in jobs)
             commitments = Commitments(self.store).search(limit=100)
             # The register includes all active proposals and accepted obligations.
             for start in range(0, commitments['total'], 100):
                 page = commitments if start == 0 else Commitments(self.store).search(offset=start, limit=100)
-                rows.extend('commitment:'+r['id']+' · '+r['status']+' · '+r['deliverable']+
-                            (' · '+r['deadline_text'] if r['deadline_text'] else '') for r in page['items'])
+                rows.extend('**'+r['deliverable']+'**\n'+r['status'].capitalize()+
+                            (' · '+r['deadline_text'] if r['deadline_text'] else '')+
+                            f'\n`{prefix} show commitment:'+r['id']+'`' for r in page['items'])
             monitor = self.store.state('monitor_status', {})
             if settings()['monitor_enabled'] and (monitor.get('attention_required') or monitor.get('state') == 'needs_attention'):
-                rows.append('monitor · Monitoring needs attention\n'+str(monitor.get('error', 'Open for source errors and access limits.')))
+                rows.append('**Monitoring needs attention**\n'+str(monitor.get('error', 'Open for source errors and access limits.'))+
+                            f'\n`{prefix} show monitor`')
         selected = rows[offset:offset+LIST_SIZE]
-        text = heading+f' · {len(rows)} item(s)\n\n'+'\n\n'.join(selected)
+        text = '## '+heading+f'\n\n**{len(rows):,} item(s)**\n\n'+'\n\n'.join(selected)
         if not selected:
             text += 'No items on this page.'
         if offset+LIST_SIZE < len(rows):
-            text += f'\n\nNext: {settings()["command_prefix"]} {category} {offset+LIST_SIZE}'
-        text += f'\n\nOpen: {settings()["command_prefix"]} show <item reference>'
+            text += f'\n\n**More items**\n`{prefix} {category} {offset+LIST_SIZE}`'
+        text += '\n\nOpen an item with its command above.'
         return text
 
     def snapshot(self, kind, identity):
@@ -334,7 +346,7 @@ class TeamsInbox:
                         if brief.get(key):
                             body += '\n\n'+label+': '+str(brief[key])
                 for a in approvals:
-                    body += '\n\nAction: '+a['tool']+'\nStatus: '+a['status']+'\nReason: '+a['reason']+'\nExact arguments and diffs:\n'+json.dumps(json.loads(a['args']), ensure_ascii=False, indent=2)
+                    body += '\n\nAction: '+a['tool']+'\nStatus: '+a['status']+'\nReason: '+a['reason']+'\nExact arguments and diffs:\n```json\n'+json.dumps(json.loads(a['args']), ensure_ascii=False, indent=2)+'\n```'
                 if len(pending) == 1:
                     commands.extend([f'{p} approve {token}', f'{p} reject {token}'])
                 elif len(pending) > 1:
