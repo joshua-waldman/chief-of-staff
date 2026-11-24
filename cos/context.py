@@ -34,8 +34,8 @@ def estimate(messages,tools=None):
 
 def input_budget(role):
     s=settings()
-    model=s['models'][role]
-    window=s.get('model_context_windows',{}).get(model,s.get('context_window_tokens',128000))
+    from .model_routing import context_window
+    window=context_window(s,role)
     return max(1024,int(window*.75)-8192)
 
 
@@ -214,6 +214,7 @@ def prepare(engine,job,state,role,tools,*,force=False):
         # and its duplicate messages. Provider reconstructs valid call/output pairs.
         message.pop('_responses_output',None)
         message.pop('_responses_model',None)
+        message.pop('reasoning_content',None)
         working.append(message)
     # Keep the newest image visible on ordinary compaction. A forced retry may
     # release it too; the model can explicitly reload the saved image as needed.

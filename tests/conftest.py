@@ -10,6 +10,9 @@ from cos import server  # noqa: F401
 def isolated_settings(tmp_path,monkeypatch):
     monkeypatch.setattr(config,'ROOT',tmp_path)
     monkeypatch.setitem(config.DEFAULTS,'self_email','owner@example.com')
+    # Custom model discovery must never use the owner's real gateway key in tests.
+    from cos import model_catalog
+    monkeypatch.setattr(model_catalog,'gateway_key',lambda:'')
 
 
 @pytest.fixture(autouse=True)

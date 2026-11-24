@@ -96,14 +96,15 @@ def test_model_role_selects_small_triage_model(monkeypatch):
     Gateway().complete([{'role':'user','content':'Triage'}],role='triage')
     assert calls[0]['model']=='gpt-6-luna'
 
-def test_reasoning_is_not_replayed_across_models(monkeypatch):
+@pytest.mark.parametrize('origin',['other-model',None])
+def test_reasoning_is_not_replayed_across_models(monkeypatch,origin):
     seen=[]
     monkeypatch.setattr(provider,'gateway_key',lambda:'test-secret')
     def post(url,**kwargs):
         seen.extend(kwargs['json']['input'])
         return FakeResponse({'status':'completed','output':[]})
     monkeypatch.setattr(provider.httpx,'post',post)
-    prior={'role':'assistant','content':None,'_responses_model':'other-model','_responses_output':[{'type':'reasoning','encrypted_content':'must-not-cross-models'}],'tool_calls':[{'id':'call-old','type':'function','function':{'name':'perform','arguments':'{}'}}]}
+    prior={'role':'assistant','content':None,'_responses_model':origin,'_responses_output':[{'type':'reasoning','encrypted_content':'must-not-cross-models'}],'tool_calls':[{'id':'call-old','type':'function','function':{'name':'perform','arguments':'{}'}}]}
     Gateway().complete([prior,{'role':'tool','tool_call_id':'call-old','content':'[]'}],tools=SCHEMA)
     assert not any(x.get('type')=='reasoning' for x in seen)
     assert any(x.get('type')=='function_call' for x in seen)

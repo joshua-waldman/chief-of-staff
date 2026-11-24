@@ -173,6 +173,40 @@ Edit `config.local.json` with your own email and local project paths. Remove the
 
 This file is excluded from Git. Never place tokens in it. Other defaults, including model names, skill discovery paths, polling, and browser research hosts, are defined in `cos/config.py`. After launch, use **Connections** to adjust model assignments and existing project paths. Restart the app after editing the file directly. Choose model IDs your gateway account actually supports.
 
+### Model selection and optional automatic routing
+
+**Connections → Models & orchestration** loads the complete model catalog from
+your AMD gateway account. Use the dropdowns to assign chief, director, worker and
+triage models. **Refresh available models** requests a fresh catalog; discovery is
+otherwise cached for five minutes. Specialized models remain visible but are
+disabled for incompatible assignments. Saved model IDs remain visible if the
+catalog cannot be loaded or an assignment is no longer listed. Catalog visibility
+does not guarantee inference permission or tool compatibility.
+
+Automatic selection is **off by default**. Enable **Select and route models
+automatically**, choose the eligible roles, and select a decision model plus task
+models for fast work, general work, reasoning, coding and vision. Blank task
+assignments follow the indicated role assignment. The default decision model is
+`Microsoft-Decision-1.1`; other gateway models advertising decision support, such
+as `vLLM-SR-d3-27B`, can also be selected. COS calls the AMD `/systemone` endpoint
+with a bounded request excerpt and task features. Routing adds a decision-model
+request when a conversation needs a new selection.
+
+The router chooses only among the configured task models, filtered by gateway
+capabilities, known context/output limits and current cooldowns. A successful
+choice stays through tool turns while compatible; new user directions, changing
+routing settings or introducing requirements it cannot meet allow a new selection. Unavailable
+discovery, failed decisions, or confidence below the configured threshold use the
+assigned role model. Its normal access, capability and capacity checks still apply.
+Routing does not retry an executed action or alter approval policy.
+
+Model events and diagnostic traces include the selected model, routing reason,
+profile, confidence and decision usage when applicable. Context budgeting uses
+the smallest configured candidate window and retains the conservative configured
+limit unless explicitly adjusted; it does not assume every model supports a large
+context. Provider-specific reasoning state is replayed only to its originating
+model.
+
 Data defaults to `data/` beside the source. To use another local folder, set `COS_DATA_DIR` in the server's environment before launching. Keep that folder private and outside any source repository. Generated local skills currently remain under the application's `data/skills/` even when the runtime data directory is overridden.
 
 ## Start and deploy locally
