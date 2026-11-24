@@ -159,9 +159,13 @@ def perform(graph, action, a):
             raise ValueError('Inbox replies must target the configured owner self-chat.')
         sys.path.insert(0,str(skill_dir('slai-teams')/'scripts'))
         from skype_client import SkypeClient
+        from .teams_formatting import render,MAX_HTML_BYTES
+        content=render(a['body'])
+        if len(content.encode('utf-8')) > MAX_HTML_BYTES:
+            raise ValueError('Inbox reply exceeds the Teams message size limit.')
         client=SkypeClient()
         client.get_skypetoken()  # Resolve the account's regional service before building the send URL.
-        return client.send_message(a['chat_id'], a['body'], content_type='text', message_type='Text')
+        return client.send_message(a['chat_id'], content, content_type='html', message_type='RichText/Html')
     if action=='read_mail':
         return read_mail(graph,a)
     if action=='teams_read_status':

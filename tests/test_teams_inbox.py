@@ -77,9 +77,12 @@ def test_lists_include_children_questions_approvals_capacity_monitor_and_results
     rid, _ = result(inbox)
     request(inbox, 'attention')
     body = inbox.replies[-1]
+    request(inbox,'attention 6')
+    body += inbox.replies[-1]
+    from cos.task_status import label
     for status in ['waiting_input', 'awaiting_approval', 'blocked', 'failed', 'capacity_paused']:
-        assert status in body
-    assert child['id'] in body and 'monitor ·' in body
+        assert label(status) in body
+    assert child['id'] in body and '!cos show monitor' in body
     request(inbox, 'reviews')
     assert 'result:'+rid in inbox.replies[-1] and 'Launch plan' in inbox.replies[-1]
 
@@ -173,6 +176,24 @@ def test_full_preview_pagination_required_before_acknowledgment(inbox):
         count += 1
     assert count >= 2 and 'End of saved preview' in body
     request(inbox, 'reviewed '+token)
+    assert inbox.store.result_review(identity)['reviewed']
+
+
+def test_html_expansion_keeps_short_source_previews_paginated_and_gated(inbox):
+    from cos.teams_formatting import render,MAX_HTML_BYTES
+    identity,_=result(inbox,'# Report\n\n'+('"&'*2500))
+    request(inbox,'show result:'+identity)
+    body=inbox.replies[-1]
+    previews=inbox.store.rows("SELECT key,value FROM state WHERE key LIKE 'teams_inbox:%'")
+    token=next(row['key'].split(':')[1] for row in previews if json.loads(row['value'])['kind']=='preview')
+    request(inbox,'reviewed '+token)
+    assert 'all preview pages' in inbox.replies[-1]
+    while 'Continued: !cos more ' in body:
+        assert len(render(body).encode('utf-8'))<=MAX_HTML_BYTES
+        request(inbox,'more '+body.rsplit('Continued: !cos more ',1)[1])
+        body=inbox.replies[-1]
+    assert len(render(body).encode('utf-8'))<=MAX_HTML_BYTES
+    request(inbox,'reviewed '+token)
     assert inbox.store.result_review(identity)['reviewed']
 
 
@@ -278,7 +299,7 @@ def test_expiry_cross_chat_and_list_paging(inbox):
     for _ in range(17):
         job(inbox)
     request(inbox, 'attention')
-    assert 'Next: !cos attention 15' in inbox.replies[-1]
+    assert '`!cos attention 6`' in inbox.replies[-1]
     request(inbox, 'attention 15')
     assert '18 item(s)' in inbox.replies[-1]
 
@@ -319,7 +340,7 @@ def test_capacity_retry_uses_existing_engine(inbox):
         engine.stop()
 
 
-def test_bridge_replies_only_to_configured_self_chat_as_literal_text(monkeypatch):
+def test_bridge_replies_only_to_configured_self_chat_with_escaped_html(monkeypatch):
     import sys
     from types import SimpleNamespace
     from cos import communication_bridge as bridge
@@ -336,7 +357,8 @@ def test_bridge_replies_only_to_configured_self_chat_as_literal_text(monkeypatch
     monkeypatch.setattr(bridge, 'skill_dir', lambda name: Path('/synthetic'))
     monkeypatch.setattr(integrations, 'communication', lambda action, args: bridge.perform(None, action, args))
     assert send_reply('48:notes', 'COS inbox\n\n<literal preview>')['id'] == 'sent'
-    assert calls == [(('48:notes', 'COS inbox\n\n<literal preview>'), {'content_type': 'text', 'message_type': 'Text'})]
+    assert calls == [(('48:notes', '<p><strong>COS inbox</strong></p><p>&lt;literal preview&gt;</p>'),
+                      {'content_type': 'html', 'message_type': 'RichText/Html'})]
     for args in [
         {'chat_id': 'other-person', 'body': 'COS inbox\n\nPrivate result'},
         {'chat_id': '48:notes', 'body': '!cos approve forged'},
@@ -345,6 +367,8 @@ def test_bridge_replies_only_to_configured_self_chat_as_literal_text(monkeypatch
     ]:
         with pytest.raises(ValueError, match='self-chat'):
             bridge.perform(None, 'owner_inbox_reply', args)
+    with pytest.raises(ValueError,match='size limit'):
+        bridge.perform(None,'owner_inbox_reply',{'chat_id':'48:notes','body':'COS inbox\n\n'+'&'*5000})
     assert len(calls) == 1
 
 
