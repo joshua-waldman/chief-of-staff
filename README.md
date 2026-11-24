@@ -969,6 +969,17 @@ rejected locally with the correct syntax before any Jira request. A comment
 lookup failure does not mean an earlier successful issue read failed.
 Restart COS after updating, then resume a blocked job to retry its comment read.
 
+### Original message formatting
+
+Original Teams messages display paragraphs, emphasis, lists, quotes, code,
+tables, and safe web/email links. Mentions and image/attachment labels stay
+readable. Source scripts, styles, active elements, and remote images are not
+loaded. Email bodies keep their existing plain-text presentation.
+
+Formatting is generated for display from saved messages, so existing history
+benefits without reimporting it. The original source bodies and approval text
+are preserved. Restart COS and refresh the browser after updating.
+
 ### Optional Teams mark-as-read authentication
 
 A Teams summary can finish even if optional mark-as-read is rejected. The job keeps its summary and a cleanup warning; rejected actions remain recorded as not executed. On restart, COS repairs old informational jobs stuck solely on a definitive read rejection. New source activity, incomplete sources, unfinished delegated work, and uncertain action outcomes retain their existing handling. Nothing is replayed during repair.

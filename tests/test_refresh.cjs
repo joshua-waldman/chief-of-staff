@@ -17,6 +17,20 @@ test('original messages display full escaped text, metadata and honest preview l
  assert.ok(!html.includes('<script>'));
 });
 const context={window:{scrollX:12,scrollY:40,scrollTo(x,y){this.scrollX=x;this.scrollY=y}},document:{getElementById:id=>context.nodes.find(n=>n.id===id)},nodes:[]};
+test('original messages use server-sanitized formatting and escape plain email and legacy text',()=>{
+ const ctx={sourceLoads:new Set(),sourceErrors:new Map(),esc:x=>String(x??'').replace(/</g,'&lt;'),readable:()=>'',btn:()=>''};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function sourceView('),source.indexOf('async function openJob(')),ctx);
+ const html=ctx.sourceView({id:'job',source_messages:[
+  {body:'<script>raw evidence</script>',body_html:'<p>Hello <b>team</b></p>'},
+  {body:'Literal <b>plain text</b>'},
+  {body:'<script>hidden</script>',body_html:''}
+ ]});
+ assert.match(html,/<p>Hello <b>team<\/b><\/p>/);
+ assert.match(html,/Literal &lt;b>plain text&lt;\/b>/);
+ assert.match(html,/\(Empty message\)/);
+ assert.ok(!html.includes('raw evidence')&&!html.includes('<script>'));
+});
 test('conversation shows newest messages first without changing stored order and collapses from either control',()=>{
  const summary={focus(options){this.focused=options},scrollIntoView(options){this.scrolled=options}};
  const conversation={open:true,querySelector:()=>summary};
