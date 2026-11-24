@@ -380,6 +380,10 @@ class Engine:
 
 
     def capacity_waiting(self,job):
+        from .model_routing import enabled
+        if enabled(settings(),self.model_role(job)):
+            # Gateway checks the actual routed model and persists its cooldown.
+            return False
         model=settings()['models'][self.model_role(job)]
         state=self.capacity.get(model)
         if state.get('paused') or state.get('retry_at',0)>time.time():

@@ -490,6 +490,12 @@ def test_gateway():
     answer,meta=Gateway().complete([{'role':'user','content':'Reply only OK.'}],role='triage')
     return {'ok':True,'response':answer.get('content',''),'model':meta['model']}
 
+
+@app.get('/api/gateway/models')
+def gateway_models(refresh:bool=False):
+    from .model_catalog import catalog
+    return catalog(refresh=refresh)
+
 @app.post('/api/auth/start')
 def start_auth():
     return start_auth_flow(False)

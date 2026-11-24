@@ -1,6 +1,8 @@
 import json
 import time
 import threading
+import re
+from contextlib import contextmanager
 import httpx
 from .trace import model_call
 from .config import settings, gateway_key, DEFAULTS
@@ -59,7 +61,29 @@ class Gateway:
     @model_call
     def complete(self,messages,role='worker',tools=None,*,timeout=180,attempts=3,max_tokens=4096):
         config = settings()
-        model = config['models'][role]
+        self._credentials(config)
+        from .model_routing import select
+        model, routing = select(self,config,messages,role,tools,max_tokens)
+        with self._capacity_gate(model,config):
+            answer, metadata = self._complete(messages,role,tools,timeout=timeout,attempts=attempts,
+                                               max_tokens=max_tokens,config=config,model=model)
+        answer['_cos_model'] = model
+        metadata['routing'] = routing
+        if routing['mode'] == 'automatic':
+            answer['_cos_route'] = {**{k:v for k,v in routing.items() if k!='router_usage'}, 'model': model}
+        return answer, metadata
+
+    @staticmethod
+    def _credentials(config):
+        if config['gateway_url'] != DEFAULTS['gateway_url']:
+            raise NotConfigured('Unverified model endpoint blocked.')
+        key = gateway_key()
+        if not key:
+            raise NotConfigured('Add your AMD gateway key in Connections. It is stored in Windows Credential Manager.')
+        return key
+
+    @contextmanager
+    def _capacity_gate(self,model,config):
         self.capacity.check(model)
         gate_key = (self.capacity.store.path, model, config.get('model_parallel_requests',1))
         with self._lock:
@@ -67,31 +91,66 @@ class Gateway:
         if not gate.acquire(blocking=False):
             raise CapacityDelayed(model,{'retry_at':time.time()+1,'busy':True})
         try:
-            return self._complete(messages,role,tools,timeout=timeout,attempts=attempts,max_tokens=max_tokens)
+            yield
         finally:
             gate.release()
 
-    def _complete(self,messages,role='worker',tools=None,*,timeout=180,attempts=3,max_tokens=4096):
+    def decide(self,model,state,questions,*,config=None):
+        config = config or settings()
+        with self._capacity_gate(model,config):
+            return self._post('/systemone',{'model':model,'state':state,'questions':questions},
+                              config,timeout=10,attempts=1)
+
+    def _complete(self,messages,role='worker',tools=None,*,timeout=180,attempts=3,max_tokens=4096,config=None,model=None):
         messages=balance_legacy_finish(messages)
-        s = settings()
-        key = gateway_key()
-        if not key:
-            raise NotConfigured('Add your AMD gateway key in Connections. It is stored in Windows Credential Manager.')
-        if s['gateway_url'] != DEFAULTS['gateway_url']:
-            raise NotConfigured('Unverified model endpoint blocked.')
-        model = s['models'][role]
-        self.capacity.check(model)
-        payload = {'model':model,'messages':[{k:v for k,v in m.items() if not k.startswith('_')} for m in messages],'max_completion_tokens':max_tokens}
+        s = config or settings()
+        model = model or s['models'][role]
+        from .model_catalog import snapshot, catalog, supports
+        from .model_routing import has_images, window
+        metadata = next((m for m in snapshot(s) if m['id']==model),{})
+        if not metadata and model not in DEFAULTS['models'].values():
+            # A saved custom assignment must also work after a server restart,
+            # before the owner visits Connections to load the catalog again.
+            metadata = next((m for m in catalog()['models'] if m['id']==model),{})
+        if metadata and not supports(metadata,'chat'):
+            raise NotConfigured('This model does not support chat. Select a chat model in Connections: '+model)
+        if metadata and has_images(messages) and not supports(metadata,'vision'):
+            raise NotConfigured('This model does not support images. Select a vision model in Connections: '+model)
+        if metadata and tools and (metadata.get('capabilities',{}).get('tools') is False or
+                ('supported_parameters' in metadata and 'tools' not in metadata['supported_parameters'])):
+            raise NotConfigured('This model does not support tools. Select a tool-capable model in Connections: '+model)
+        if metadata.get('max_output_tokens'):
+            max_tokens=min(max_tokens,metadata['max_output_tokens'])
+        if metadata:
+            from .context import estimate
+            if estimate(messages,tools)+max_tokens+2048>window(s,model,metadata):
+                raise ContextWindowExceeded('The request exceeds the selected model context window.')
+        wire_messages=[]
+        for message in messages:
+            clean={k:v for k,v in message.items() if not k.startswith('_')}
+            # Reasoning state belongs to its originating model, never another backend.
+            if message.get('_cos_model') != model:
+                clean.pop('reasoning_content',None)
+            wire_messages.append(clean)
+        payload = {'model':model,'messages':wire_messages,'max_completion_tokens':max_tokens}
         if tools:
             payload['tools'] = tools
             payload['tool_choice'] = 'auto'
             payload['parallel_tool_calls'] = False
-        use_responses = bool(tools) and model.lower().startswith('gpt-')
+        # Retain legacy behavior without discovery; use explicit gateway metadata
+        # when available. GPT-oss and non-GPT providers use chat completions.
+        use_responses = bool(tools) and model.lower().startswith(('gpt-', 'o1', 'o3', 'o4')) and not model.lower().startswith('gpt-oss')
+        if '-codex' in model.lower() or model.lower()=='o3-pro':
+            use_responses=True
+        if metadata.get('capabilities',{}).get('responses') is False:
+            use_responses=False
+        if metadata.get('capabilities',{}).get('chat') is False and metadata.get('capabilities',{}).get('responses') is True:
+            use_responses=True
         endpoint = '/chat/completions'
         if use_responses:
             items=[]
             for message in messages:
-                if message.get('_responses_output') and message.get('_responses_model',model)==model:
+                if message.get('_responses_output') and message.get('_responses_model')==model:
                     items.extend(message['_responses_output'])
                     continue
                 if message['role']=='tool':
@@ -105,7 +164,29 @@ class Gateway:
                 for call in message.get('tool_calls',[]):
                     items.append({'type':'function_call','call_id':call['id'],'name':call['function']['name'],'arguments':call['function']['arguments']})
             endpoint='/responses'
-            payload={'model':model,'input':items,'max_output_tokens':max_tokens,'store':False,'include':['reasoning.encrypted_content'],'reasoning':{'effort':'medium'},'tools':[{'type':'function',**tool['function']} for tool in tools],'parallel_tool_calls':False}
+            payload={'model':model,'input':items,'max_output_tokens':max_tokens,'store':False}
+            if re.match(r'^(gpt-(?:[5-9]|[1-9]\d)|o[1-9])',model,re.I):
+                payload.update(include=['reasoning.encrypted_content'],reasoning={'effort':'medium'})
+            if tools:
+                payload.update(tools=[{'type':'function',**tool['function']} for tool in tools],parallel_tool_calls=False)
+        data = self._post(endpoint,payload,s,timeout=timeout,attempts=attempts)
+        if use_responses:
+            output=data.get('output',[])
+            answer={'role':'assistant','content':'','tool_calls':[],'_responses_output':output,'_responses_model':model}
+            for item in output:
+                if item['type']=='function_call':
+                    answer['tool_calls'].append({'id':item['call_id'],'type':'function','function':{'name':item['name'],'arguments':item['arguments']}})
+                elif item['type']=='message':
+                    answer['content']+=''.join(x.get('text','') for x in item.get('content',[]) if x.get('type')=='output_text')
+            return answer,{'model':model,'usage':data.get('usage',{}),'api':'responses',
+                'output_incomplete':data.get('status')=='incomplete'}
+        choice=data['choices'][0]
+        return choice['message'], {'model':model,'usage':data.get('usage',{}),'api':'chat_completions',
+            'output_incomplete':choice.get('finish_reason')=='length'}
+
+    def _post(self,endpoint,payload,s,*,timeout,attempts):
+        key=self._credentials(s)
+        model=payload['model']
         headers = {'Authorization':'Bearer '+key,'Ocp-Apim-Subscription-Key':key}
         for attempt in range(attempts):
             try:
@@ -135,20 +216,8 @@ class Gateway:
                     raise RuntimeError('AMD gateway returned HTTP '+str(response.status_code)+(': '+detail if detail else ''))
                 data = response.json()
                 self.capacity.succeeded(model, observed=observed_capacity)
-                if use_responses:
-                    output=data.get('output',[])
-                    answer={'role':'assistant','content':'','tool_calls':[],'_responses_output':output,'_responses_model':model}
-                    for item in output:
-                        if item['type']=='function_call':
-                            answer['tool_calls'].append({'id':item['call_id'],'type':'function','function':{'name':item['name'],'arguments':item['arguments']}})
-                        elif item['type']=='message':
-                            answer['content']+=''.join(x.get('text','') for x in item.get('content',[]) if x.get('type')=='output_text')
-                    return answer,{'model':model,'usage':data.get('usage',{}),'api':'responses',
-                        'output_incomplete':data.get('status')=='incomplete'}
-                choice=data['choices'][0]
-                return choice['message'], {'model':model,'usage':data.get('usage',{}),'api':'chat_completions',
-                    'output_incomplete':choice.get('finish_reason')=='length'}
-            except (httpx.TimeoutException,httpx.ConnectError):
+                return data
+            except (httpx.TimeoutException,httpx.NetworkError):
                 if attempt == attempts-1:
                     raise RuntimeError('Cannot reach AMD gateway. Check AMD network/VPN access.')
                 time.sleep(2**attempt)

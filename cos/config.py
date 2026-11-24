@@ -8,6 +8,9 @@ DATA.mkdir(parents=True, exist_ok=True)
 DEFAULTS = {
     'gateway_url': 'https://llm-api.amd.com/Unified/v1',
     'models': {'chief': 'gpt-6-luna', 'director': 'gpt-6.1-sol', 'worker': 'gpt-6-sol', 'triage': 'gpt-6-luna'},
+    'model_routing': {'enabled': False, 'roles': ['worker', 'director'],
+                      'router_model': 'Microsoft-Decision-1.1', 'min_confidence': 0.7,
+                      'profiles': {}},
     'parallel_agents': 4, 'max_steps': 30, 'monitor_enabled': False,
     'queue_paused': False, 'timing_assessment_enabled': False,
     'approval_mode': 'auto_review',
@@ -36,6 +39,7 @@ def settings():
         saved = json.loads(p.read_text(encoding='utf-8'))
         result.update(saved)
         result['models'] = {**DEFAULTS['models'], **saved.get('models', {})}
+        result['model_routing'] = {**DEFAULTS['model_routing'], **saved.get('model_routing', {})}
     return result
 
 def save_settings(changes):
@@ -43,6 +47,43 @@ def save_settings(changes):
     if set(changes) - allowed:
         raise ValueError('Unknown setting')
     s = {**settings(), **changes}
+    if isinstance(changes.get('model_routing'), dict):
+        s['model_routing'] = {**settings()['model_routing'], **changes['model_routing']}
+    if 'models' in changes:
+        s['models'] = {**settings()['models'], **changes['models']} if isinstance(changes['models'], dict) else changes['models']
+    from .model_routing import PROFILES
+    if (not isinstance(s['models'], dict) or set(s['models']) != set(DEFAULTS['models']) or
+            any(not isinstance(v, str) or not v.strip() or len(v) > 200 for v in s['models'].values())):
+        raise ValueError('Assign a model ID to each Chief of Staff role.')
+    s['models'] = {k: v.strip() for k, v in s['models'].items()}
+    routing = s['model_routing']
+    if not isinstance(routing, dict) or set(routing) - set(DEFAULTS['model_routing']):
+        raise ValueError('Invalid automatic model routing settings.')
+    routing = {**DEFAULTS['model_routing'], **routing}
+    if type(routing['enabled']) is not bool:
+        raise ValueError('Automatic model routing must be true or false.')
+    if (not isinstance(routing['roles'], list) or any(not isinstance(r, str) or r not in DEFAULTS['models'] for r in routing['roles']) or
+            (routing['enabled'] and not routing['roles'])):
+        raise ValueError('Choose roles eligible for automatic model routing.')
+    if not isinstance(routing['router_model'], str) or not routing['router_model'].strip() or len(routing['router_model']) > 200:
+        raise ValueError('Choose a decision model for automatic routing.')
+    routing['router_model'] = routing['router_model'].strip()
+    confidence = routing['min_confidence']
+    if type(confidence) not in (float, int) or not .5 <= confidence <= 1:
+        raise ValueError('Routing confidence must be between 0.5 and 1.')
+    if (not isinstance(routing['profiles'], dict) or set(routing['profiles']) - set(PROFILES) or
+            any(not isinstance(v, str) or not v.strip() or len(v) > 200 for v in routing['profiles'].values())):
+        raise ValueError('Routing profiles must map task profiles to model IDs.')
+    routing['profiles'] = {k: v.strip() for k, v in routing['profiles'].items()}
+    s['model_routing'] = routing
+    # Validate known capabilities without requiring a live gateway to save settings.
+    from .model_catalog import snapshot, supports
+    catalog = {m['id']: m for m in snapshot(s)}
+    for model in [*s['models'].values(), *routing['profiles'].values()]:
+        if model in catalog and not supports(catalog[model], 'chat'):
+            raise ValueError('The selected model does not support chat: ' + model)
+    if routing['enabled'] and routing['router_model'] in catalog and not supports(catalog[routing['router_model']], 'decision'):
+        raise ValueError('The routing model must support decision scoring.')
     if s['research_access'] not in ('public', 'restricted'):
         raise ValueError('Research access must be public or restricted.')
     if not isinstance(s['research_hosts'], list) or any(
