@@ -4,6 +4,8 @@ A local Windows application that coordinates research, engineering, communicatio
 
 This repository is private and intended for the owner's use while development continues. It does not include account credentials, personal settings, messages, task history, or generated artifacts. Model calls currently require access to the AMD Unified gateway; a ChatGPT subscription does not provide that access.
 
+Use the **Theme** selector in the header to choose System, Light, or Dark. System follows your operating system appearance. Your choice is saved per browser and applies across tabs and page reloads.
+
 ## Download and install
 
 Requirements:
