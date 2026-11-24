@@ -84,26 +84,27 @@ class TeamsInbox:
         except Exception:
             # Claim before any effects. A crash/timeout must never repeat an approval
             # or a potentially delivered reply when the monitoring checkpoint retries.
-            self.store.write('UPDATE teams_inbox_requests SET status=?,updated=? WHERE chat_id=? AND message_id=?',
-                             ('uncertain', now(), chat, mid))
             self.delivery_issue(chat, mid)
         return True
 
     def delivery_issue(self, chat, mid):
-        identity = uid()
+        identity = digest(['teams-inbox-delivery', chat, mid])[:32]
         title = 'Teams inbox response could not be confirmed'
         question = (
             'A Teams inbox request or its response was interrupted. No automatic replay was attempted. '
             f'Ask {settings()["command_prefix"]} inbox again for current state; inspect the original item before deciding again.')
-        self.store.write('INSERT INTO jobs(id,title,request,org,project,status,question,created,updated) VALUES(?,?,?,?,?,?,?,?,?)',
-                         (identity, title, title, 'Chief of Staff', '', 'blocked', question, now(), now()))
-        self.store.event(identity, 'teams_inbox_delivery', json.dumps({'chat_id': chat, 'message_id': mid}))
+        with self.store.lock, self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            c.execute("UPDATE teams_inbox_requests SET status='uncertain',updated=? WHERE chat_id=? AND message_id=?", (now(), chat, mid))
+            if c.execute('INSERT OR IGNORE INTO jobs(id,title,request,org,project,status,question,created,updated) VALUES(?,?,?,?,?,?,?,?,?)',
+                         (identity, title, title, 'Chief of Staff', '', 'blocked', question, now(), now())).rowcount:
+                c.execute('INSERT INTO events(job_id,kind,body,created) VALUES(?,?,?,?)',
+                          (identity, 'teams_inbox_delivery', json.dumps({'chat_id': chat, 'message_id': mid}), now()))
 
     def recover(self):
         # Called before the monitor starts: no processing rows belong to live calls.
         rows = self.store.rows("SELECT chat_id,message_id FROM teams_inbox_requests WHERE status IN ('processing','sending')")
         for row in rows:
-            self.store.write("UPDATE teams_inbox_requests SET status='uncertain',updated=? WHERE chat_id=? AND message_id=?", (now(), row['chat_id'], row['message_id']))
             self.delivery_issue(row['chat_id'], row['message_id'])
 
     def save(self, kind, chat, **data):
