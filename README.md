@@ -630,7 +630,17 @@ Send a command in your own Teams saved-messages chat, for example:
 !cos Prepare a short project planning brief
 ```
 
-Only the authenticated owner's messages in the configured self-chat create top-level requests. Approvals remain in the local web app. Meeting processing uses the installed Teams skill and its existing Microsoft sign-in to retrieve accessible transcript files and save source-linked observations; it does not transcribe recording audio or infer content from filenames.
+Only the authenticated owner's messages in the configured self-chat create top-level requests. Meeting processing uses the installed Teams skill and its existing Microsoft sign-in to retrieve accessible transcript files and save source-linked observations; it does not transcribe recording audio or infer content from filenames.
+
+The same self-chat supports a prompted inbox while monitoring is enabled:
+
+- `!cos what needs my attention?` (or `!cos attention`) lists questions, pending approvals, blocked/failed jobs, capacity stops, active commitments and monitoring problems. Delegated jobs needing attention appear too.
+- `!cos what's ready for review?` (or `!cos reviews`) lists saved deliverables awaiting acknowledgment.
+- `!cos show job:<id>`, `!cos show result:<id>`, `!cos show commitment:<id>` and `!cos show monitor` open the references returned by those lists. Job previews include the exact proposed action arguments and saved diffs. Result previews show the saved content and commands to read declared artifact text in chat. Text extraction omits visual layout; use web job details to download original artifacts, including images and unsupported binary formats.
+- Each preview ends with commands for its available actions: `approve`, `reject`, `answer`, `revise`, `reviewed`, commitment `accept`/`complete`/`dismiss`, or `retry-capacity`. Copy its reference token into the displayed command. Answers and revisions resume the original request. Approval uses the existing execution gate and records acceptance before background execution; the reply does not claim execution succeeded. `reviewed` acknowledges only that saved result and leaves commitments unchanged.
+- Long lists provide a next-page command; long previews use `!cos more <reference>`. Read every preview page before responding. Tokens expire after 24 hours; changed questions, action arguments, review revisions, artifact bytes and commitments require a fresh preview. Opening an item does not acknowledge it.
+
+Use `!cos inbox` for help. These fixed commands return directly to the owner self-chat without model inference, and use the configured command prefix when it differs from `!cos`. They do not send proactive notifications or accept directions from other conversations. A repeated source message never repeats an action or a reply. An interrupted request or uncertain reply delivery appears in Needs attention; COS does not automatically replay it. Request the current inbox again and inspect the original item's state. Restart COS after updating to load this route. Existing queued Teams commands keep their original handling.
 
 ### Meeting transcript access
 

@@ -31,7 +31,7 @@ from . import update_gate
 TOKEN=secrets.token_urlsafe(32)
 store=Store()
 engine=Engine(store)
-monitor=Monitor(store)
+monitor=Monitor(store,engine)
 warm_start=WarmStart(store)
 timing_assessor=TimingAssessor(store)
 auth={'running':False,'output':''}

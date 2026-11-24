@@ -47,6 +47,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,job_id TEXT,name TEXT,path TEXT,mime TEXT,created TEXT);
             CREATE INDEX IF NOT EXISTS files_job ON files(job_id);
             CREATE TABLE IF NOT EXISTS seen(source TEXT,item_id TEXT,created TEXT,PRIMARY KEY(source,item_id));
+            CREATE TABLE IF NOT EXISTS teams_inbox_requests(chat_id TEXT,message_id TEXT,command TEXT,status TEXT,response TEXT DEFAULT '',created TEXT,updated TEXT,PRIMARY KEY(chat_id,message_id));
             CREATE TABLE IF NOT EXISTS communication_threads(source TEXT,thread_id TEXT,job_id TEXT,PRIMARY KEY(source,thread_id));
             CREATE TABLE IF NOT EXISTS communication_labels(source TEXT,thread_id TEXT,name TEXT NOT NULL,subject TEXT NOT NULL,PRIMARY KEY(source,thread_id));
             CREATE TABLE IF NOT EXISTS teams_topics(topic_id TEXT PRIMARY KEY,chat_id TEXT NOT NULL,title TEXT NOT NULL);
