@@ -235,7 +235,8 @@ class Store:
                 if file and not is_recovery_file(file['job_id'],file['path']):
                     review['files'].append({**file,'purpose':'deliverable'})
         from .conversations import source_messages
-        j['source_messages']=source_messages(self,id)
+        from .message_format import display_sources
+        j['source_messages']=display_sources(source_messages(self,id))
         from .guidance_targets import candidates
         with self.connect() as c:
             j['sender_candidates']=candidates(c,id)
