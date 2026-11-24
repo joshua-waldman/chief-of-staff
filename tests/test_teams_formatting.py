@@ -2,7 +2,7 @@ from html.parser import HTMLParser
 
 import pytest
 
-from cos.teams_formatting import render,page_end,fragment,MAX_HTML_BYTES
+from cos.teams_formatting import render,page_end,fragment,MAX_HTML_BYTES,status_table
 from cos.task_status import short_reference,timestamp
 
 
@@ -81,3 +81,23 @@ def test_short_commands_extend_colliding_prefixes_and_times_are_readable():
     assert timestamp('2026-11-24T16:05:09.123456-06:00')=='Nov 24, 2026 · 22:05 UTC'
     assert timestamp('2026-11-24T22:05:09')=='Nov 24, 2026 · 22:05 (timezone unknown)'
     assert timestamp('not a date')=='Not recorded'
+
+
+def test_status_table_has_three_columns_and_escapes_every_cell():
+    row={'job':'<script>Title</script>','context':'Context & <img src=x>','status':'Waiting\nReady for review',
+         'next_step':'Ask <at>Owner</at> for "scope"','command':'!cos status abcdef12','updated':'Nov 24, 2026 · 22:05 UTC'}
+    html=render(status_table([row]))
+    assert html.count('<tr>')==2 and html.count('<td ')==3
+    assert '<thead>' in html and '<tbody>' in html
+    assert '&lt;script&gt;Title&lt;/script&gt;' in html and '&lt;img src=x&gt;' in html
+    assert '<script>' not in html and '<img ' not in html and '<at>' not in html
+    assert 'Waiting<br>Ready for review' in html
+    assert '<code>!cos status abcdef12</code>' in html
+    assert '&lt;at&gt;Owner&lt;/at&gt;' in html
+
+
+def test_invalid_table_payload_stays_literal_code():
+    for source in ['not JSON','{"html":"<script>"}','[{"job":"title","style":"color:red"}]']:
+        html=render('```cos-table\n'+source+'\n```')
+        assert '<table ' not in html and '<pre><code>' in html
+        assert '<script>' not in html

@@ -5,7 +5,8 @@ from collections import Counter
 from datetime import datetime,timezone
 
 from .config import settings
-from .job_names import add_display_names
+from .job_names import add_display_names,ellipsize
+from .teams_formatting import status_table,render,MAX_HTML_BYTES
 
 PAGE_SIZE = 6
 TERMINAL = {'completed', 'cancelled'}
@@ -38,9 +39,52 @@ def short_reference(identity, identities):
 
 
 def title(job):
-    text=job['display_name'] if job.get('user_name') else job['display_name'].split(' — ',1)[0]
-    text=' '.join(text.split())
-    return text if len(text)<=90 else text[:87].rsplit(' ',1)[0]+'…'
+    return ellipsize(job.get('task_name') or job.get('user_name') or job['display_name'],120)
+
+
+def table_row(store,job,identities,reviews):
+    record=store.one('SELECT question,substr(request,1,1000) AS request FROM jobs WHERE id=?',(job['id'],))
+    if not record:
+        raise ValueError('This task changed. Request a fresh status list.')
+    saved=store.one('SELECT body FROM job_briefs WHERE job_id=?',(job['id'],))
+    brief=json.loads(saved['body']) if saved else {}
+    name=title(job)
+    original=record['request'] or ''
+    if original.startswith(('Triage this incoming','Execute confirmed commitment:')):
+        original=''
+    context=''
+    for candidate in (brief.get('context'),brief.get('requested_action'),brief.get('email_excerpt'),original):
+        candidate=' '.join((candidate or '').split())
+        if candidate and candidate.casefold()!=name.removeprefix('Execute: ').casefold():
+            context=ellipsize(candidate,160)
+            break
+    if not context:
+        context=('Confirmed commitment · ' if (record['request'] or '').startswith('Execute confirmed commitment:') else '')+job['org']
+        if job['project']:
+            context+=' · '+job['project']
+    state=job['status']
+    if state in {'waiting_input','blocked','failed'}:
+        next_step=record['question'] or 'Open the task to provide the missing information or review the error.'
+    elif state=='awaiting_approval':
+        next_step='Open the exact action preview and approve or reject it.'
+    elif state=='completed':
+        next_step='Optionally review the saved deliverable.' if job['id'] in reviews else 'No further steps recorded.'
+    elif state=='cancelled':
+        next_step='No further work is scheduled.'
+    elif state=='capacity_paused':
+        next_step='Open the task to retry when model capacity is available.'
+    elif state=='waiting_capacity':
+        next_step='COS will retry when model capacity is available.'
+    elif brief.get('next_step'):
+        next_step='Saved plan: '+brief['next_step']
+    else:
+        next_step={'queued':'COS will start when a worker is available.',
+                   'running':'COS is working on this task.',
+                   'waiting_children':'Waiting for delegated work; open details to check any blockers.'}.get(state,'Open the task for its latest progress.')
+    return {'job':name,'context':context,'status':label(state)+('\nReady for review' if job['id'] in reviews else ''),
+            'next_step':ellipsize(next_step,220),
+            'command':settings()['command_prefix']+' status '+short_reference(job['id'],identities),
+            'updated':timestamp(job['updated'])}
 
 
 def respond(store, query=''):
@@ -83,7 +127,7 @@ def respond(store, query=''):
         if not matches:
             return f'No top-level task matches “{query}”.\nList tasks: {prefix} status\nSearch by name: {prefix} status find <name>'
         if len(matches) == 1 and not paged:
-            return detail(store, matches[0], reviews)
+            return detail(store, matches[0], reviews,identities)
         heading = f'## Task matches\n\n**{len(matches):,} matches** for “{query}”\nOpen a task with its command below.'
         jobs = matches
     else:
@@ -97,22 +141,27 @@ def respond(store, query=''):
         if active_counts:
             heading += '\n'+' · '.join(active_counts)
         heading += '\n\n### Recent tasks' if not active else '\n\n### Active tasks first'
-    lines = [heading]
-    for index,job in enumerate(jobs[offset:offset+PAGE_SIZE],offset+1):
-        reference=short_reference(job['id'],identities)
-        lines.append(f'**{index}. '+title(job)+'**\n'+label(job['status'])+
-                     (' · Ready for review' if job['id'] in reviews else '')+'\nUpdated '+timestamp(job['updated'])+
-                     f'\n`{prefix} status {reference}`')
-    if offset >= len(jobs):
-        lines.append('No tasks on this page.')
-    if offset+PAGE_SIZE < len(jobs):
-        suffix = (' find '+query) if query else ''
-        lines.append(f'**More tasks**\n`{prefix} status page {offset+PAGE_SIZE}{suffix}`')
-    lines.append(f'**Find a task by name**\n`{prefix} status <task name>`')
-    return '\n\n'.join(lines)
+    def message(rows):
+        lines=[heading,status_table(rows) if rows else 'No tasks on this page.']
+        if rows and offset+len(rows)<len(jobs):
+            suffix=(' find '+query) if query else ''
+            lines.append(f'**More tasks**\n`{prefix} status page {offset+len(rows)}{suffix}`')
+        lines.append(f'**Find a task by name**\n`{prefix} status <task name>`')
+        return '\n\n'.join(lines)
+    rows=[]
+    for job in jobs[offset:offset+PAGE_SIZE]:
+        candidate=rows+[table_row(store,job,identities,reviews)]
+        body=message(candidate)
+        # A table is atomic: reduce rows instead of splitting markup/JSON mid-row.
+        if len(body)>5500 or len(render('COS inbox\n\n'+body).encode('utf-8'))>MAX_HTML_BYTES:
+            if not rows:
+                raise ValueError('This status row is too large. Request the task by its exact ID.')
+            break
+        rows=candidate
+    return message(rows)
 
 
-def detail(store, task, reviews):
+def detail(store, task, reviews,identities=None):
     prefix = settings()['command_prefix']
     # Re-read live state after discovery. A result's review status is independent
     # of whether its task has resumed for newer activity.
@@ -120,7 +169,8 @@ def detail(store, task, reviews):
         FROM jobs WHERE id=?''', (task['id'],))
     if not job or job['parent_id']:
         raise ValueError('This top-level task is unavailable. Request a fresh status list.')
-    lines = ['## '+task['display_name'], '**Status: '+label(job['status'])+'**\nUpdated: '+timestamp(job['updated']),
+    row=table_row(store,{**task,**job},identities or [job['id']],reviews)
+    lines = ['## Task details',status_table([row]),
              'Organization: '+job['org'], '### Original request\n'+job['request'][:1200]]
     if job['project']:
         lines.append('Project: '+job['project'])
