@@ -4,6 +4,8 @@ const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const names={schedules:'Scheduled tasks',overview:'Overview',jobs:'Job tracker',attention:'Needs attention',results:'Ready for review',organizations:'Organizations',knowledge:'Knowledge base',commitments:'Commitments',connections:'Connections',acceptance:'Acceptance tests'};
 const labels={waiting_capacity:'Waiting for model capacity',capacity_paused:'Model capacity needs attention',queued:'Queued',running:'Running',waiting_children:'Delegated',waiting_input:'Your input needed',awaiting_approval:'Approval needed',blocked:'Setup needed',completed:'Completed',failed:'Failed',cancelled:'Cancelled',watching:'Watching',needs_attention:'Needs attention',paused:'Paused'};
 let queueChanging=false;
+let openDelegatedJob=true;
+try{openDelegatedJob=localStorage.getItem('cos-open-delegated-job')!=='false'}catch{}
 let returnedResults=[],knownResults=null;
 let atlassian=null;
 let organizationAgents=[];
@@ -89,7 +91,7 @@ function monitoringAlert(){
   return '<p><b>'+esc(name==='email'?'Email':'Teams')+':</b> '+esc(label)+(retrying?' · Checking recovery…':'')+' · Last successful scan: '+esc(s.last_poll?date(s.last_poll):'Not recorded')+'</p>'+(s.error?'<p class="small">'+esc(s.error)+'</p>':'');
  }).join('')+'<p>The warning clears after both sources complete a successful scan. Saved checkpoints are retained for retry.</p><details><summary>Failure details</summary><pre class="code">'+esc(m.error||'A previous scan failed; recovery is being checked.')+'</pre></details>'+btn('Open monitoring settings','data-go="connections"','secondary')+'</section>';
 }
-function composer(){return '<form class="composer" id="request-form"><div class="composer-top"><span class="spark">✧</span> CHIEF OF STAFF <span class="pill">Ready to help</span></div><textarea id="request" aria-label="Your request" placeholder="What would you like to move forward?" required></textarea><div class="file-chips" id="file-chips"></div><div class="composer-bottom"><div class="composer-left"><label class="attach">＋ Attach files or screenshots<input type="file" id="attachments" multiple></label><select id="project" aria-label="Project"><option value="">Let the Chief of Staff route</option>'+Object.keys(state.settings.projects).map(p=>'<option>'+esc(p)+'</option>').join('')+'</select></div>'+btn('Delegate request ↗','type="submit" id="submit"')+'</div></form><p class="hint">Your Chief of Staff coordinates the right organization, tracks progress, and brings decisions back to you.</p>'}
+function composer(){return '<form class="composer" id="request-form"><div class="composer-top"><span class="spark">✧</span> CHIEF OF STAFF <span class="pill">Ready to help</span></div><textarea id="request" aria-label="Your request" placeholder="What would you like to move forward?" required></textarea><div class="file-chips" id="file-chips"></div><div class="composer-bottom"><div class="composer-left"><label class="attach">＋ Attach files or screenshots<input type="file" id="attachments" multiple></label><select id="project" aria-label="Project"><option value="">Let the Chief of Staff route</option>'+Object.keys(state.settings.projects).map(p=>'<option>'+esc(p)+'</option>').join('')+'</select></div><div class="composer-actions"><label class="small"><input type="checkbox" id="open-delegated-job" '+(openDelegatedJob?'checked':'')+'> Open job details after delegating</label>'+btn('Delegate request ↗','type="submit" id="submit"')+'</div></div></form><p class="hint">Your Chief of Staff coordinates the right organization, tracks progress, and brings decisions back to you.</p>'}
 function renderQueueControl(){
  const paused=!!state.settings?.queue_paused,active=state.queue_active??state.running??0;
  const status=$('#queue-status'),button=$('#queue-toggle');
@@ -223,7 +225,7 @@ function bind(){
 
  bindRows();document.querySelectorAll('[data-go]').forEach(b=>b.onclick=handle(()=>navigate(b.dataset.go)));
  if($('#search')){const f=()=>{$('#table').innerHTML=table(jobs.filter(j=>(view!=='attention'||attention(j))&&queueMatches(j,$('#search').value,$('#filter').value,$('#triage-filter').value)));bindRows()};$('#search').oninput=f;$('#filter').onchange=f;$('#triage-filter').onchange=f}
- if($('#request-form')){$('#attachments').onchange=()=>$('#file-chips').textContent=[...$('#attachments').files].map(f=>f.name).join(' · ');$('#request-form').onsubmit=handle(submit)}
+ bindRequestComposer();
  document.querySelectorAll('[data-test]').forEach(b=>b.onclick=handle(async()=>{const j=await api('jobs',{request:tests[+b.dataset.test].request});await Promise.all([openJob(j.id),refresh()])}));
  if($('#stash-token-form'))$('#stash-token-form').onsubmit=handle(async e=>{e.preventDefault();await api('stash/token',{server:$('#stash-server').value.trim(),project:$('#stash-project').value.trim(),token:$('#stash-token').value});$('#stash-token').value='';toast('Stash token saved securely')});
  if($('#key-form'))$('#key-form').onsubmit=handle(async e=>{e.preventDefault();await api('gateway/key',{key:$('#gateway-key').value});$('#gateway-key').value='';toast('Key saved securely');con=await api('connections');await refresh(true)});
@@ -233,7 +235,16 @@ function bind(){
  if($('#start-auth'))$('#start-auth').onclick=handle(async()=>{await api('auth/start',{});toast('Sign-in started. Follow the instructions in this panel.')});
  if($('#settings-form'))$('#settings-form').onsubmit=handle(async e=>{e.preventDefault();const models=Object.fromEntries(Object.keys(state.settings.models).map(r=>[r,$('#model-'+r).value.trim()]));const projects=Object.fromEntries(Object.keys(state.settings.projects).map((n,i)=>[n,$('#project-'+i).value]));await api('settings',{models,projects,approval_mode:$('#approval-mode').value,engineering_workflows:JSON.parse($('#engineering-workflows').value),github_accounts:JSON.parse($('#github-accounts').value),stash_servers:JSON.parse($('#stash-servers').value),parallel_agents:+$('#parallel').value,model_parallel_requests:+$('#model-parallel').value,max_steps:+$('#steps').value,monitor_enabled:$('#monitor').checked,timing_assessment_enabled:$('#timing-assessment').checked,poll_seconds:+$('#interval').value,command_prefix:$('#prefix').value.trim(),mcp_enabled:[...document.querySelectorAll('.mcp-toggle:checked')].map(x=>x.value),research_access:$('#research-access').value,research_hosts:$('#hosts').value.split('\n').map(x=>x.trim()).filter(Boolean)});toast('Configuration saved');con=await api('connections');await refresh(true)});
 }
-async function submit(e){e.preventDefault();$('#submit').disabled=true;try{const files=await Promise.all([...$('#attachments').files].map(f=>new Promise((resolve,reject)=>{if(f.size>25*1024*1024)return reject(Error('Each attachment must be under 25 MB'));const r=new FileReader();r.onload=()=>resolve({name:f.name,data:r.result.split(',')[1]});r.onerror=reject;r.readAsDataURL(f)})));const j=await api('jobs',{request:$('#request').value,project:$('#project').value,files});$('#request').value='';$('#attachments').value='';toast('Request received by your Chief of Staff');await Promise.all([openJob(j.id),refresh(true)])}finally{if($('#submit'))$('#submit').disabled=false}}
+function bindRequestComposer(){
+ if(!$('#request-form'))return;
+ $('#attachments').onchange=()=>$('#file-chips').textContent=[...$('#attachments').files].map(f=>f.name).join(' · ');
+ $('#open-delegated-job').onchange=e=>{
+  openDelegatedJob=e.target.checked;
+  try{localStorage.setItem('cos-open-delegated-job',String(openDelegatedJob))}catch{}
+ };
+ $('#request-form').onsubmit=handle(submit);
+}
+async function submit(e){e.preventDefault();const openDetails=$('#open-delegated-job').checked;$('#submit').disabled=true;try{const files=await Promise.all([...$('#attachments').files].map(f=>new Promise((resolve,reject)=>{if(f.size>25*1024*1024)return reject(Error('Each attachment must be under 25 MB'));const r=new FileReader();r.onload=()=>resolve({name:f.name,data:r.result.split(',')[1]});r.onerror=reject;r.readAsDataURL(f)})));const j=await api('jobs',{request:$('#request').value,project:$('#project').value,files});$('#request').value='';$('#attachments').value='';$('#file-chips').textContent='';toast('Request received by your Chief of Staff');await Promise.all([openDetails?openJob(j.id):Promise.resolve(),refresh(true)])}finally{if($('#submit'))$('#submit').disabled=false}}
 const sourceLoads=new Set(),sourceErrors=new Map();
 async function loadSource(id){
  if(sourceLoads.has(id))return;

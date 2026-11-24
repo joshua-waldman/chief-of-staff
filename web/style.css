@@ -83,3 +83,5 @@ tbody tr.timing-soon:hover{background:var(--warning-bg)}tbody tr.timing-overdue:
 
 .appearance{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--secondary-ink)}.appearance select{max-width:95px}button:focus-visible,select:focus-visible{outline:2px solid var(--green)}
 input::placeholder,textarea::placeholder{color:var(--muted);opacity:1}
+
+.composer-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px 16px}.composer-actions label{display:flex;align-items:center;gap:6px}
