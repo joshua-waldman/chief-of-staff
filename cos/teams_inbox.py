@@ -44,6 +44,8 @@ class TeamsInbox:
         if normalized in ALIASES:
             return ALIASES[normalized], ''
         head, _, rest = text.partition(' ')
+        if head.casefold() == 'status':
+            return 'status', rest.strip()
         if head.casefold() in {'attention', 'reviews'} and rest.strip().isdigit():
             return head.casefold(), rest.strip()
         if head.casefold() == 'show' and rest and not re.match(r'^(?:job:|result:|commitment:|monitor\b)', rest):
@@ -138,8 +140,12 @@ class TeamsInbox:
         if command == 'inbox':
             return (f'Ask {prefix} what needs my attention? or {prefix} what’s ready for review?\n'
                     f'Use {prefix} attention or {prefix} reviews, then {prefix} show <item reference>.\n'
+                    f'Use {prefix} status for top-level tasks, or {prefix} status <task name or ID> for one task.\n'
                     'Details include exact commands for responding, revising, approving, or marking reviewed. '
                     'These commands work only in your configured owner self-chat.'), None
+        if command == 'status':
+            from .task_status import respond
+            return self.page(chat, respond(self.store, rest))
         if command in {'attention', 'reviews'}:
             return self.page(chat, self.list_items(command, int(rest or 0)))
         if command == 'show':
