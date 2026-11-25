@@ -21,6 +21,7 @@ from .engine import Engine,session
 from .monitor import Monitor
 from .warm_start import WarmStart
 from .timing import TimingAssessor
+from .tokenops import connection as tokenops_connection
 from .integrations import skill_inventory,mcp_inventory,auth_status,skill_dir,teams_read_status
 from .tools import file_record,workspace,safe_name
 from .provider import Gateway
@@ -34,6 +35,7 @@ engine=Engine(store)
 monitor=Monitor(store,engine)
 warm_start=WarmStart(store)
 timing_assessor=TimingAssessor(store)
+tokenops=tokenops_connection()
 auth={'running':False,'output':''}
 updates=Updates()
 TRIAL=(ROOT/'.cos-update-trial').exists()
@@ -51,6 +53,7 @@ async def lifespan(app):
     timing_assessor.start()
     updates.start()
     yield
+    tokenops.close()
     updates.stop_event.set()
     timing_assessor.stop_event.set()
     monitor.stop_event.set()
@@ -129,6 +132,37 @@ def status():
 def health():
     from .update_worker import process_identity
     return {'sha':installed().get('sha'), 'trial':TRIAL, 'process':process_identity()}
+
+@app.get('/api/usage')
+def model_usage(since:str|None=None, job_id:str|None=None):
+    from .usage import summary
+    return summary(store, since, job_id)
+
+@app.get('/api/gateway/usage')
+def gateway_usage():
+    from .gateway_usage import snapshot
+    return snapshot()
+
+@app.post('/api/gateway/usage/refresh')
+def refresh_gateway_usage():
+    from .gateway_usage import snapshot
+    return snapshot(refresh=True)
+
+@app.get('/api/tokenops')
+def tokenops_status():
+    return tokenops.snapshot()
+
+@app.post('/api/tokenops/refresh')
+def tokenops_refresh():
+    return tokenops.snapshot(refresh=True)
+
+@app.post('/api/tokenops/connect')
+def tokenops_connect():
+    return tokenops.connect()
+
+@app.post('/api/tokenops/disconnect')
+def tokenops_disconnect():
+    return tokenops.disconnect()
 
 @app.get('/api/updates')
 def update_status():
@@ -263,6 +297,10 @@ def job(id,compact:bool=False):
     result=store.detail(id,compact=compact)
     if not result:
         raise HTTPException(404,'Job not found')
+    from .usage import summary
+    result['usage']=summary(store, '1970-01-01T00:00:00+00:00', id)['period']
+    from .model_routing import selection_detail
+    result['model_selection']=selection_detail(store, id)
     from .message_triage import read_targets
     result['read_targets']=read_targets(store,result)
     result['optional_read_warning']=store.one("SELECT json_extract(messages,'$.optional_read_warning') AS warning FROM jobs WHERE id=?",(id,))['warning'] or ''
@@ -487,7 +525,7 @@ async def set_key(request:Request):
 
 @app.post('/api/gateway/test')
 def test_gateway():
-    answer,meta=Gateway().complete([{'role':'user','content':'Reply only OK.'}],role='triage')
+    answer,meta=Gateway(store, purpose='connection_test').complete([{'role':'user','content':'Reply only OK.'}],role='triage')
     return {'ok':True,'response':answer.get('content',''),'model':meta['model']}
 
 

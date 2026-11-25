@@ -6,10 +6,25 @@
   },
   "monitor_enabled": false,
   "research_access": "public",
-  "research_hosts": ["amd.com", "llm.amd.com"],
+  "research_hosts": [
+    "amd.com",
+    "llm.amd.com"
+  ],
   "teams_auth": {},
   "stash_servers": {},
   "capacity_recovery_seconds": 900,
   "model_parallel_requests": 1,
-  "engineering_workflows": {}
+  "engineering_workflows": {},
+  "model_routing": {
+    "enabled": false,
+    "roles": [
+      "worker",
+      "director"
+    ],
+    "router_model": "Microsoft-Decision-1.1",
+    "min_confidence": 0.7,
+    "profiles": {},
+    "budget_aware": true,
+    "budget_profiles": {}
+  }
 }

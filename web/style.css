@@ -1,4 +1,5 @@
 /* Shared appearance tokens keep every view and native control in sync. */
+.tokenops-budget .section-title{flex-wrap:wrap;align-items:flex-start}
 :root{
   color-scheme:light;
   --surface:#fff;

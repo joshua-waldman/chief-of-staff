@@ -61,5 +61,18 @@ test('routing form persists selected roles, decision model and task overrides',(
  ctx.nodes['#routing-enabled']={checked:true};
  ctx.document.querySelectorAll=selector=>selector==='.routing-role:checked'?[{value:'worker'}]:[];
  const result=JSON.parse(JSON.stringify(ctx.modelRoutingForm()));
- assert.deepEqual(result,{enabled:true,roles:['worker'],router_model:'Decision',min_confidence:.85,profiles:{fast:'DeepSeek'}});
+ assert.deepEqual(result,{enabled:true,roles:['worker'],router_model:'Decision',min_confidence:.85,profiles:{fast:'DeepSeek'},budget_aware:true,budget_profiles:{}});
+});
+
+test('budget routing settings keep optional economy models separate from task baselines',()=>{
+ const ctx=context();
+ ctx.state.settings.model_routing={enabled:true,budget_aware:true,roles:['worker'],profiles:{},budget_profiles:{coding:'DeepSeek'},router_model:'Decision',min_confidence:.7};
+ assert.match(ctx.modelRoutingView(),/Consider remaining TokenOps budget/);
+ assert.match(ctx.modelRoutingView(),/routing-budget-coding/);
+ for(const [id,value] of Object.entries({'routing-router':'Decision','routing-confidence':'.85','routing-fast':'DeepSeek','routing-coding':'','routing-budget-fast':'','routing-budget-coding':'DeepSeek'}))ctx.nodes['#'+id]={value};
+ ctx.nodes['#routing-enabled']={checked:true};ctx.nodes['#routing-budget-aware']={checked:false};
+ const result=JSON.parse(JSON.stringify(ctx.modelRoutingForm()));
+ assert.equal(result.budget_aware,false);
+ assert.deepEqual(result.budget_profiles,{coding:'DeepSeek'});
+ assert.deepEqual(result.profiles,{fast:'DeepSeek'});
 });

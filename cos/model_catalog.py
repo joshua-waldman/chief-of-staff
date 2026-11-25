@@ -1,6 +1,7 @@
 """Account-scoped AMD model discovery. Never follow redirects with gateway keys."""
 import copy
 import hashlib
+import math
 import threading
 import time
 import httpx
@@ -32,6 +33,15 @@ def normalize(item):
     for name in ('supported_parameters', 'supported_unified_operations'):
         if isinstance(item.get(name), list):
             result[name] = [x for x in item[name] if isinstance(x, str)]
+    prices = item.get('pricing')
+    if isinstance(prices, dict):
+        safe = {name: prices[name] for name in (
+            'input_per_million', 'output_per_million', 'reasoning_per_million',
+            'thinking_per_million', 'input_long_context_per_million',
+            'output_long_context_per_million', 'long_context_threshold')
+            if type(prices.get(name)) in (int, float) and math.isfinite(prices[name]) and prices[name] >= 0}
+        if 'input_per_million' in safe and 'output_per_million' in safe:
+            result['pricing'] = safe
     return result
 
 

@@ -7,7 +7,7 @@ const source=fs.readFileSync('web/app.js','utf8');
 function context(){
  const nodes={};
  const ctx={nodes,$:selector=>nodes[selector]||null,document:{querySelectorAll:()=>[]},
-  bindWarmStart:()=>{},bindSchedules:()=>{},bindCommitments:()=>{},bindKnowledge:()=>{},bindRows:()=>{},
+  bindUsage:()=>{},bindWarmStart:()=>{},bindSchedules:()=>{},bindCommitments:()=>{},bindKnowledge:()=>{},bindRows:()=>{},
   handle:fn=>fn,toast:()=>{},calls:[],con:null,refresh:async()=>{}};
  ctx.api=async(path,body)=>{ctx.calls.push({path,body})};
  vm.createContext(ctx);

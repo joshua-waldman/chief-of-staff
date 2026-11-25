@@ -99,7 +99,7 @@ class WarmStart:
     def __init__(self, store, collector=None, gateway=None):
         self.store = store
         self.collector = collector or collect
-        self.gateway = gateway or Gateway(store)
+        self.gateway = gateway or Gateway(store, purpose='warm_start')
         self.lock = threading.RLock()
         self.work_lock = threading.Lock()
         self.stop_event = threading.Event()

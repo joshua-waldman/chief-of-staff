@@ -64,7 +64,7 @@ class Engine:
         self.provider=provider or Gateway(store)
         # A separate call/context; custom providers must explicitly supply their
         # reviewer so test doubles and offline integrations never call a network.
-        self.review_provider=review_provider if review_provider is not None else (Gateway(store) if provider is None else None)
+        self.review_provider=review_provider if review_provider is not None else (Gateway(store, purpose='action_review') if provider is None else None)
         self.capacity=Capacity(store)
         from .schedules import Schedules
         self.schedules=Schedules(store)

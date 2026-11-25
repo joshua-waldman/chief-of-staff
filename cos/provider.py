@@ -4,7 +4,8 @@ import threading
 import re
 from contextlib import contextmanager
 import httpx
-from .trace import model_call
+from .trace import model_call, context, CURRENT
+from . import usage
 from .config import settings, gateway_key, DEFAULTS
 from .capacity import Capacity, CapacityDelayed
 
@@ -52,21 +53,23 @@ def balance_legacy_finish(messages):
 class Gateway:
     _lock = threading.Lock()
     _gates = {}
-    def __init__(self, store=None):
+    def __init__(self, store=None, purpose='agent'):
         if store is None:
             from .db import Store
             store = Store()
         self.capacity = Capacity(store)
+        self.purpose = purpose
 
     @model_call
     def complete(self,messages,role='worker',tools=None,*,timeout=180,attempts=3,max_tokens=4096):
         config = settings()
         self._credentials(config)
         from .model_routing import select
-        model, routing = select(self,config,messages,role,tools,max_tokens)
-        with self._capacity_gate(model,config):
-            answer, metadata = self._complete(messages,role,tools,timeout=timeout,attempts=attempts,
-                                               max_tokens=max_tokens,config=config,model=model)
+        with context(model_role=role, model_purpose=self.purpose):
+            model, routing = select(self,config,messages,role,tools,max_tokens)
+            with self._capacity_gate(model,config):
+                answer, metadata = self._complete(messages,role,tools,timeout=timeout,attempts=attempts,
+                                                   max_tokens=max_tokens,config=config,model=model)
         answer['_cos_model'] = model
         metadata['routing'] = routing
         if routing['mode'] == 'automatic':
@@ -97,7 +100,7 @@ class Gateway:
 
     def decide(self,model,state,questions,*,config=None):
         config = config or settings()
-        with self._capacity_gate(model,config):
+        with context(model_role='router', model_purpose='routing'), self._capacity_gate(model,config):
             return self._post('/systemone',{'model':model,'state':state,'questions':questions},
                               config,timeout=10,attempts=1)
 
@@ -189,11 +192,19 @@ class Gateway:
         model=payload['model']
         headers = {'Authorization':'Bearer '+key,'Ocp-Apim-Subscription-Key':key}
         for attempt in range(attempts):
+            identity = None
             try:
                 self.capacity.check(model)
                 observed_capacity = self.capacity.get(model)
+                identity = usage.uid()
+                usage.record(self.capacity.store, identity, model=model, endpoint=endpoint, key=key,
+                             purpose=CURRENT.get().get('model_purpose',self.purpose),
+                             role=CURRENT.get().get('model_role',''))
                 # No redirect following: credentials may only reach the verified AMD gateway.
                 response = httpx.post(s['gateway_url']+endpoint,json=payload,headers=headers,timeout=timeout,follow_redirects=False)
+                if response.status_code >= 300:
+                    usage.record(self.capacity.store, identity,
+                                 status='unknown' if response.status_code >= 500 else 'rejected')
                 if response.status_code == 429:
                     detail = response.text[:3000].replace(key,'[REDACTED]')
                     raise self.capacity.limited(model, response.headers, detail, s.get('capacity_recovery_seconds',900))
@@ -214,10 +225,17 @@ class Gateway:
                     if response.status_code in {400,413} and context_error:
                         raise ContextWindowExceeded('The model input exceeds the gateway context window.')
                     raise RuntimeError('AMD gateway returned HTTP '+str(response.status_code)+(': '+detail if detail else ''))
-                data = response.json()
+                try:
+                    data = response.json()
+                except ValueError:
+                    usage.record(self.capacity.store, identity, status='unknown')
+                    raise
+                usage.record(self.capacity.store, identity, status='reported', data=data)
                 self.capacity.succeeded(model, observed=observed_capacity)
                 return data
             except (httpx.TimeoutException,httpx.NetworkError):
+                if identity:
+                    usage.record(self.capacity.store, identity, status='unknown')
                 if attempt == attempts-1:
                     raise RuntimeError('Cannot reach AMD gateway. Check AMD network/VPN access.')
                 time.sleep(2**attempt)
