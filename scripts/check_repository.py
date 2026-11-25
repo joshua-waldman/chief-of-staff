@@ -35,7 +35,7 @@ def git(*args):
 
 def allowed(name):
     p = PurePosixPath(name)
-    return name in ROOT_FILES or (
+    return name in ROOT_FILES or (p.parent == PurePosixPath('.') and p.name.startswith('RELEASE-NOTES-') and p.suffix == '.md') or (
         len(p.parts) == 2 and (
             (p.parts[0] == 'cos' and p.suffix == '.py') or
             (p.parts[0] == 'web' and p.suffix in {'.html', '.js', '.css'}) or
