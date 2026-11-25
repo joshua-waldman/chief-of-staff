@@ -37,7 +37,7 @@ def applicable(target, topic_id, messages):
 class TeamsIntake:
     def __init__(self, store, provider=None):
         self.store = store
-        self.provider = provider or Gateway(store)
+        self.provider = provider or Gateway(store, purpose='teams_intake')
 
     def classify(self, topics):
         with self.store.connect() as c:

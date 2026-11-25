@@ -71,7 +71,7 @@ def validate(raw, identities):
 class TimingAssessor:
     def __init__(self, store, provider=None):
         self.store = store
-        self.provider = provider or Gateway(store)
+        self.provider = provider or Gateway(store, purpose='timing_assessment')
         self.stop_event = threading.Event()
 
     @background

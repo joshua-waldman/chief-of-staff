@@ -7,7 +7,7 @@ const deferred=()=>{let resolve,reject;const promise=new Promise((r,j)=>{resolve
 
 function refreshContext(){
  const requests=[];
- const ctx={view:'overview',document:{activeElement:null},$:()=>({}),renderQueueControl(){},notifyResults(){},render(){},
+ const ctx={loadUsage:async()=>{},view:'overview',document:{activeElement:null},$:()=>({}),renderQueueControl(){},notifyResults(){},render(){},
   api(path){const request=deferred();requests.push({path,...request});return request.promise}};
  vm.createContext(ctx);
  vm.runInContext(source.slice(source.indexOf('async function refresh('),source.indexOf('\ndocument.querySelectorAll',source.indexOf('async function refresh('))),ctx);

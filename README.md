@@ -200,6 +200,39 @@ discovery, failed decisions, or confidence below the configured threshold use th
 assigned role model. Its normal access, capability and capacity checks still apply.
 Routing does not retry an executed action or alter approval policy.
 
+Automatic routing also considers your connected personal TokenOps budget by
+default. At 25% or less remaining it considers alternatives with at least 20%
+estimated input/output savings; at 10% or less (including an exhausted budget)
+it also considers smaller savings of at least 5%. Candidates come from your
+configured role and task models, plus optional per-task lower-cost alternatives
+in **Connections → Automatic routing settings**. Manual model assignments and
+roles excluded from automatic selection keep their existing behavior. You can
+disable budget consideration independently with **Consider remaining TokenOps
+budget** (`model_routing.budget_aware`). Additional alternatives are stored in
+`model_routing.budget_profiles` using the same task-profile keys.
+
+The decision model evaluates task type and cheaper-model suitability in one
+bounded request. A substitution needs at least 85% suitability probability, or
+your configured minimum confidence if higher. Ambiguous task classification may
+use an independent review of the *same assigned-role baseline*, limited to
+plausible profiles; it never substitutes an unrelated profile's quality baseline.
+Demanding work keeps its stronger model whenever adequacy is uncertain. Image
+requests keep normal selection because their costs are not comparable from text
+token estimates. Cheaper models must still fit the existing context, output,
+tool and capacity requirements; they do not force extra context compaction.
+
+Budget tiers and gateway price changes invalidate retained routing choices.
+Unknown/malformed prices, missing/expired TokenOps connections, failed reads,
+stale/incomplete source flags, reports from a different month, reports fetched
+over 15 minutes ago or source data over 24 hours old use normal routing. Refreshes
+run in the background and share the UI's TokenOps cache, so inference never waits
+on the budget API. Pricing estimates use uncached input and the requested output
+allowance, with published long-context and reasoning rates where present. They
+are comparative estimates, not a spending reservation or enforcement of a hard
+cap; TokenOps can report charges after other tools have already spent them.
+Job details and model diagnostics explain the last selected model, budget tier
+and any estimated saving. Restart COS and refresh the browser after updating.
+
 Model events and diagnostic traces include the selected model, routing reason,
 profile, confidence and decision usage when applicable. Context budgeting uses
 the smallest configured candidate window and retains the conservative configured
@@ -587,6 +620,54 @@ External sends, Confluence writes, application patch application, host commands,
 Self-Improvement jobs autonomously create application feature branches, run Python pytest/unittest discovery checks, and apply staged application source patches with target hashes and backups. Local tests use the server's running Python interpreter and may run from the application source directory or the job workspace. They execute trusted development code with host permissions; this is not a sandbox. Arbitrary host commands and external actions retain their approval gates. Definite validation and process-launch failures return to the agent for correction without owner verification. On startup, the app also resumes legacy commands blocked by the missing-executable or rejected-working-directory errors and retires pending Self-Improvement test approvals. COS verifies timeouts and interrupted mutations automatically using read-only source checks. Checks run in background workers, retain evidence across restarts, and stop after three attempts. If the outcome remains unknown, COS reports the limitation and continues other work; the server blocks a repeat of the unresolved action. Users are never asked to assert whether an action executed. Imported connections without an authoritative outcome check remain explicitly unconfirmed, rather than being treated as successful. Exact-action approvals for external writes still apply. Restart the server after updating to load the policy and recover those jobs.
 
 Direct requests in the authenticated local chat can create open commitments with `create_owner_commitment`. The tool cites either the server-verified original request or an explicit owner review message in the same root job, retains that message as evidence, and checks existing commitments in every status without reopening closed items. Set optional `self_name` in local configuration to choose the owner display name; otherwise the configured `self_email` is used. Email, Teams, attachments and delegated work cannot authorize this path. Meeting-derived commitments still use transcript evidence and owner acceptance. This records an item in the commitment register; it does not schedule a notification.
+
+## Token usage
+
+Overview shows today's reported COS token consumption. **Connections** adds local-day
+period filters (today, 7 days, 30 days), input/output totals, cached and reasoning
+details when supplied, and breakdowns by model and activity. Job details include
+that job's recorded usage and its delegated work. Tracking begins after updating
+and restarting COS; earlier history is not backfilled. Local totals cover this
+installation across saved key changes, and exclude other applications.
+
+The ledger records each physical gateway attempt, including background classifiers,
+warm starts, model-routing decisions and connection tests. Retries are separate
+attempts. Missing usage, network timeouts, interrupted requests and ambiguous server
+errors remain incomplete; their unknown tokens are excluded from reported totals.
+Cached and reasoning details are subsets of input/output and are not added again.
+Accounting failures never cause inference to be retried. The ledger stores no
+prompts, responses or raw keys and persists in the existing COS SQLite database.
+
+**Gateway key usage** reads AMD's `https://llm-api.amd.com/api/UsageStats` endpoint
+using the configured key, for the current calendar month in UTC. This includes other
+applications sharing that key and shows reported tokens, requests and approximate
+USD charges. Reports refresh in the background at most every five minutes unless
+you click **Refresh gateway usage**; failed refreshes retain the timestamped last
+successful report. Changing keys or calendar months selects a separate cache.
+The gateway response includes credentials, so COS retains only an explicit allowlist
+of aggregate numeric fields and its own report timestamps.
+
+**Personal TokenOps budget** shows the approved monthly budget, spend and remaining
+balance in **USD**, matching the personal
+[TokenOps My Usage page](https://llm.amd.com/dashboard/tokenops/my-usage). Click
+**Connect TokenOps** and complete AMD sign-in in the separate Edge window. COS
+reads the current-user `/dashboard/my-budget/api/summary?presentation=my-usage/v1`
+endpoint; it does not request another user's budget or use the inference API key
+to authenticate this portal connection. Only portal-scoped session cookies are
+saved in the secure OS credential store, separately for each COS installation.
+The temporary browser profile closes after sign-in. **Disconnect TokenOps** clears
+that local session and cached balance without signing out your other browsers.
+
+Personal balances refresh in the background every five minutes, with a manual
+**Refresh balance** control. Expired sessions require sign-in again; failed reads
+retain a clearly labeled last successful report for the same month. A previous
+month's balance is hidden when the month changes. The UI shows TokenOps freshness
+and any reported stale/incomplete-source flags. Financial details withheld by the
+portal are not exposed. No fixed remaining-token estimate is calculated from a
+USD budget, because model and token types have different prices. Personal TokenOps,
+API-key usage and local COS totals have different scopes and are never added
+together. Restart COS and refresh the browser after updating to enable tracking
+and these views.
 
 ## Monitoring and remote requests
 

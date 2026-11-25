@@ -64,6 +64,8 @@ class Store:
             ''')
             from .guidance_targets import SCHEMA as guidance_schema
             c.executescript(guidance_schema)
+            from .usage import SCHEMA as usage_schema
+            c.executescript(usage_schema)
             from .intake_cleanup import SCHEMA as intake_cleanup_schema
             c.executescript(intake_cleanup_schema)
             from .commitments import SCHEMA as commitment_schema

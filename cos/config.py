@@ -10,7 +10,7 @@ DEFAULTS = {
     'models': {'chief': 'gpt-6-luna', 'director': 'gpt-6.1-sol', 'worker': 'gpt-6-sol', 'triage': 'gpt-6-luna'},
     'model_routing': {'enabled': False, 'roles': ['worker', 'director'],
                       'router_model': 'Microsoft-Decision-1.1', 'min_confidence': 0.7,
-                      'profiles': {}},
+                      'profiles': {}, 'budget_aware': True, 'budget_profiles': {}},
     'parallel_agents': 4, 'max_steps': 30, 'monitor_enabled': False,
     'queue_paused': False, 'timing_assessment_enabled': False,
     'approval_mode': 'auto_review',
@@ -64,6 +64,8 @@ def save_settings(changes):
     routing = {**DEFAULTS['model_routing'], **routing}
     if type(routing['enabled']) is not bool:
         raise ValueError('Automatic model routing must be true or false.')
+    if type(routing['budget_aware']) is not bool:
+        raise ValueError('Budget-aware routing must be true or false.')
     if (not isinstance(routing['roles'], list) or any(not isinstance(r, str) or r not in DEFAULTS['models'] for r in routing['roles']) or
             (routing['enabled'] and not routing['roles'])):
         raise ValueError('Choose roles eligible for automatic model routing.')
@@ -77,11 +79,15 @@ def save_settings(changes):
             any(not isinstance(v, str) or not v.strip() or len(v) > 200 for v in routing['profiles'].values())):
         raise ValueError('Routing profiles must map task profiles to model IDs.')
     routing['profiles'] = {k: v.strip() for k, v in routing['profiles'].items()}
+    if (not isinstance(routing['budget_profiles'], dict) or set(routing['budget_profiles']) - set(PROFILES) or
+            any(not isinstance(v, str) or not v.strip() or len(v) > 200 for v in routing['budget_profiles'].values())):
+        raise ValueError('Budget alternatives must map task profiles to model IDs.')
+    routing['budget_profiles'] = {k: v.strip() for k, v in routing['budget_profiles'].items()}
     s['model_routing'] = routing
     # Validate known capabilities without requiring a live gateway to save settings.
     from .model_catalog import snapshot, supports
     catalog = {m['id']: m for m in snapshot(s)}
-    for model in [*s['models'].values(), *routing['profiles'].values()]:
+    for model in [*s['models'].values(), *routing['profiles'].values(), *routing['budget_profiles'].values()]:
         if model in catalog and not supports(catalog[model], 'chat'):
             raise ValueError('The selected model does not support chat: ' + model)
     if routing['enabled'] and routing['router_model'] in catalog and not supports(catalog[routing['router_model']], 'decision'):

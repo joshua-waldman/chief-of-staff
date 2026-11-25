@@ -13,6 +13,8 @@ def isolated_settings(tmp_path,monkeypatch):
     # Custom model discovery must never use the owner's real gateway key in tests.
     from cos import model_catalog
     monkeypatch.setattr(model_catalog,'gateway_key',lambda:'')
+    from cos import budget_routing
+    monkeypatch.setattr(budget_routing, 'budget_snapshot', lambda: {'state': 'not_connected'})
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +22,7 @@ def synthetic_teams_router(monkeypatch):
     """Existing workflow tests use related messages; never call a live gateway."""
     from cos import teams_topics
     class Provider:
-        def __init__(self, store):
+        def __init__(self, store, **kwargs):
             pass
 
         def complete(self, messages, **kwargs):
@@ -38,7 +40,7 @@ def synthetic_teams_intake(monkeypatch):
     """Tests opt into ignore decisions explicitly; never contact a live classifier."""
     from cos import teams_intake
     class Provider:
-        def __init__(self, store):
+        def __init__(self, store, **kwargs):
             pass
 
         def complete(self, *args, **kwargs):
