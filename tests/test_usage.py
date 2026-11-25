@@ -136,3 +136,60 @@ def test_usage_api_session_and_readonly_validation(gateway, monkeypatch):
     assert client.get('/api/usage?since=invalid').status_code == 400
     assert client.get('/api/usage').json()['period']['requests'] == 0
     assert client.post('/api/gateway/usage/refresh', json={}).status_code == 403
+
+
+def test_costs_use_per_request_rates_with_consistent_model_activity_and_job_totals(gateway, monkeypatch):
+    from cos import model_catalog
+    monkeypatch.setattr(model_catalog, 'catalog', lambda: {'models': [
+        {'id': 'priced', 'pricing': {'input_per_million': 2, 'output_per_million': 4,
+         'long_context_threshold': 100, 'input_long_context_per_million': 3,
+         'output_long_context_per_million': 6}},
+        {'id': 'free', 'pricing': {'input_per_million': 0, 'output_per_million': 0}}]})
+    store = gateway.capacity.store
+    parent = store.create_job('Parent', 'Technology')
+    child = store.create_job('Child', 'Technology', parent_id=parent['id'])
+    for identity, model, incoming, job, purpose in (
+            ('short-a', 'priced', 60, parent, 'agent'),
+            ('short-b', 'priced', 60, child, 'routing'),
+            ('long', 'priced', 120, child, 'agent'),
+            ('unknown', 'no-price', 10, child, 'agent'),
+            ('free', 'free', 10, child, 'agent')):
+        with context(job_id=job['id']):
+            usage.record(store, identity, model=model, purpose=purpose)
+        usage.record(store, identity, status='reported', data={'usage': {
+            'input_tokens': incoming, 'output_tokens': 10}})
+    usage.record(store, 'pending', model='priced')
+    result = usage.summary(store)
+    # Two short requests remain on the base rate despite their combined length.
+    expected = (60 * 2 + 10 * 4) * 2 / 1e6 + (120 * 3 + 10 * 6) / 1e6
+    assert result['period']['estimated_cost_usd'] == pytest.approx(expected)
+    assert result['period']['priced_requests'] == 4
+    assert result['period']['unpriced_requests'] == 2
+    assert sum(r['estimated_cost_usd'] or 0 for r in result['models']) == pytest.approx(expected)
+    assert sum(r['estimated_cost_usd'] or 0 for r in result['purposes']) == pytest.approx(expected)
+    by_model = {r['model']: r for r in result['models']}
+    assert by_model['no-price']['estimated_cost_usd'] is None
+    assert by_model['free']['estimated_cost_usd'] == 0
+    scoped = usage.summary(store, job_id=parent['id'])['period']
+    assert scoped['estimated_cost_usd'] == pytest.approx(expected)
+    assert scoped['unpriced_requests'] == 1
+    assert usage.summary(store, '2100-01-01T00:00:00Z')['period']['estimated_cost_usd'] == 0
+
+
+def test_missing_pricing_never_claims_free_usage_and_stale_prices_are_identified(gateway, monkeypatch):
+    from cos import model_catalog
+    store = gateway.capacity.store
+    usage.record(store, 'request', model='reasoning')
+    usage.record(store, 'request', status='reported', data={'usage': {
+        'input_tokens': 10, 'output_tokens': 20}})
+    monkeypatch.setattr(model_catalog, 'catalog', lambda: {'models': [], 'error': 'offline'})
+    missing = usage.summary(store)['period']
+    assert missing['estimated_cost_usd'] is None
+    assert missing['unpriced_requests'] == 1
+    monkeypatch.setattr(model_catalog, 'catalog', lambda: {'stale': True, 'models': [
+        {'id': 'reasoning', 'pricing': {'input_per_million': 1, 'output_per_million': 2,
+                                      'reasoning_per_million': 4}}]})
+    result = usage.summary(store)
+    assert result['cost_pricing_stale'] is True
+    # Conservative output pricing includes reasoning; never add tokens twice.
+    assert result['period']['estimated_cost_usd'] == pytest.approx(90 / 1e6)

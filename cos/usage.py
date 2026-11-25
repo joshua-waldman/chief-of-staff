@@ -86,8 +86,43 @@ def summary(store, since=None, job_id=None):
         c.execute('BEGIN')
         def rows(sql, values=()):
             return [dict(row) for row in c.execute(sql, values)]
-        return {'since': since,
+        result = {'since': since,
                 'started_at': rows('SELECT MIN(created) AS stamp FROM model_usage')[0]['stamp'],
                 'period': rows('SELECT ' + TOTALS + ' FROM model_usage' + where, args)[0],
                 'models': rows('SELECT model,' + TOTALS + ' FROM model_usage' + where + ' GROUP BY model ORDER BY total_tokens DESC,model', args),
                 'purposes': rows('SELECT purpose,' + TOTALS + ' FROM model_usage' + where + ' GROUP BY purpose ORDER BY total_tokens DESC,purpose', args)}
+        attempts = rows('SELECT model,purpose,status,input_tokens,output_tokens FROM model_usage' + where, args)
+    # Price each attempt separately: long-context rates depend on a request's
+    # input length, not the combined input of a model or reporting period.
+    from .model_catalog import catalog
+    from .budget_routing import estimate
+    price_report = {}
+    try:
+        price_report = catalog() if any(a['status'] == 'reported' for a in attempts) else {}
+        prices = {m['id']: m for m in price_report.get('models', [])}
+    except Exception:
+        prices = {}
+    def empty_cost():
+        return {'estimated_cost_usd': None, 'priced_requests': 0, 'unpriced_requests': 0}
+    costs, models, purposes = empty_cost(), {}, {}
+    for attempt in attempts:
+        incoming, outgoing = attempt['input_tokens'], attempt['output_tokens']
+        cost = (estimate(prices.get(attempt['model'], {}), incoming, outgoing)
+                if attempt['status'] == 'reported' and count(incoming) is not None
+                and count(outgoing) is not None else None)
+        for group in (costs, models.setdefault(attempt['model'], empty_cost()),
+                      purposes.setdefault(attempt['purpose'], empty_cost())):
+            if cost is None:
+                group['unpriced_requests'] += 1
+            else:
+                group['estimated_cost_usd'] = (group['estimated_cost_usd'] or 0) + cost
+                group['priced_requests'] += 1
+    if not attempts:
+        costs['estimated_cost_usd'] = 0
+    result['period'].update(costs)
+    for field, groups in (('model', models), ('purpose', purposes)):
+        for row in result['models' if field == 'model' else 'purposes']:
+            row.update(groups[row[field]])
+    result['cost_basis'] = 'current_gateway_rates'
+    result['cost_pricing_stale'] = bool(price_report.get('stale'))
+    return result

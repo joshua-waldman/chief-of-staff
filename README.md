@@ -630,6 +630,16 @@ that job's recorded usage and its delegated work. Tracking begins after updating
 and restarting COS; earlier history is not backfilled. Local totals cover this
 installation across saved key changes, and exclude other applications.
 
+COS also estimates USD cost for the selected period, each model and activity, and
+each job including delegated work. Estimates use recorded request tokens and the
+latest available gateway catalog rates; existing ledger entries can be priced too.
+Long-context pricing is applied per request, and output uses the higher of output,
+reasoning and thinking rates as a conservative estimate. Cached-token discounts
+are not assumed. These are estimates, not billed charges; historical estimates
+change if catalog rates change. Missing prices or incomplete usage are shown as
+unpriced requests and excluded, never treated as free. A failed catalog refresh
+can use saved rates with a visible stale-pricing notice in Connections.
+
 The ledger records each physical gateway attempt, including background classifiers,
 warm starts, model-routing decisions and connection tests. Retries are separate
 attempts. Missing usage, network timeouts, interrupted requests and ambiguous server

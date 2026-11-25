@@ -29,6 +29,22 @@ test('usage escapes remote and model values',()=>{
  assert.doesNotMatch(ctx.usageDetails(),/<img/);
  assert.match(ctx.usageRows([{model:'<script>bad</script>'}],'model'),/&lt;script&gt;/);
 });
+test('COS costs distinguish small estimates, partial coverage and unavailable pricing',()=>{
+ const ctx=context();
+ ctx.usageState={period:{requests:3,total_tokens:100,estimated_cost_usd:0.000125,unpriced_requests:1},
+  models:[{model:'example',estimated_cost_usd:0.000125,unpriced_requests:1}],cost_pricing_stale:true};
+ const html=ctx.usageDetails();
+ assert.match(html,/Estimated COS cost: <b>\$0.000125/);
+ assert.match(html,/1 request excluded/);
+ assert.match(html,/EST. COST \(USD\)/);
+ assert.match(html,/1 unpriced/);
+ assert.match(html,/last saved gateway rates/);
+ assert.match(html,/Estimates for earlier requests change when rates change/);
+ assert.match(ctx.usageOverview(),/Estimated COS cost/);
+ assert.match(ctx.jobUsageView(ctx.usageState.period),/\$0.000125/);
+ assert.match(ctx.usageRows([{model:'unknown',estimated_cost_usd:null}],'model'),/Unavailable/);
+ assert.equal(ctx.usageCostMoney(0),'$0.00');
+});
 test('period begins at local midnight and includes the requested number of days',()=>{
  const ctx=context(),start=new Date(ctx.usageStart('7')),now=new Date();
  assert.equal(start.getHours(),0);
