@@ -550,6 +550,7 @@ class Engine:
             if not self.store.write("UPDATE jobs SET status='running',updated=? WHERE id=? AND status='queued'",(now(),id)):
                 return
             claimed=True
+            self.store.event(id,'run_started','Worker started.')
             job=self.store.job(id)
             if settings().get('queue_paused',False):
                 self.yield_work(id,session(job))
@@ -599,6 +600,12 @@ class Engine:
                 current=self.store.job(id)
                 if current['status']!='running' or self.stop_event.is_set():
                     return
+                pending=self.store.rows("SELECT id,body FROM events WHERE job_id=? AND kind='direction_queued' AND id>? ORDER BY id",(id,s.get('direction_cursor',0)))
+                if pending:
+                    for item in pending:
+                        messages.append({'role':'user','content':'Owner direction: '+item['body']})
+                    s['direction_cursor']=pending[-1]['id']
+                    self.persist(id,s)
                 conversation_consumed(self.store,id)
                 step=current['step']
                 if 'source_handoff_started_models' in s and s.get('total_model_steps',0)-s['source_handoff_started_models']>=SOURCE_HANDOFF_MODEL_BUDGET:
@@ -713,6 +720,9 @@ class Engine:
                     messages.append({'role':'system','content':'The last model output was truncated; no action was executed. The response budget has been increased. Use one small complete perform call. Split large artifact scripts into small write_file/edit_file operations; do not resend the entire builder in one call.','_cos_memory':False})
                     self.store.event(id,'progress_recovery','Discarded incomplete model output without executing tools; increased the response budget and requested a smaller action.')
                     self.persist(id,s,step=step+1)
+                    continue
+                if self.store.one("SELECT 1 FROM events WHERE job_id=? AND kind='direction_queued' AND id>? LIMIT 1",(id,s.get('direction_cursor',0))):
+                    # The proposed action predates the owner's direction.
                     continue
                 calls=answer.get('tool_calls') or []
                 if calls:
@@ -924,6 +934,8 @@ class Engine:
                     self.add_result(messages,call['id'],result)
                     recovery.record(self.store,id,s,action,args,result,receipt_id=aid)
                     progress.observe(s,action,args,result)
+                    if not s.get('stalled_steps'):
+                        self.store.event(id,'progress_made',action)
                     s.pop('waiting_call',None)
                     s.pop('waiting_action',None)
                 except Exception as error:

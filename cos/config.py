@@ -16,6 +16,8 @@ DEFAULTS = {
     'approval_mode': 'auto_review',
     'conversation_settle_seconds': 15, 'conversation_max_wait_seconds': 60,
     'max_stalled_steps': 12,
+    'long_job_minutes': 30,
+    'stalled_job_minutes': 15,
     'capacity_recovery_seconds': 900,
     'model_parallel_requests': 1,
     # Conservative fallback, not a claim about the gateway's model capacity.

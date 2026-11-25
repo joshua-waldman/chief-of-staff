@@ -265,7 +265,13 @@ def jobs(compact:bool=False):
     from .message_triage import category
     from .job_names import add_display_names
     briefs={}
+    active={row['id']:row for row in store.rows("""SELECT e.job_id AS id,
+        MAX(CASE WHEN e.kind='run_started' THEN e.created END) AS run_started,
+        MAX(CASE WHEN e.kind='progress_made' THEN e.created END) AS last_progress
+        FROM events e JOIN jobs j ON j.id=e.job_id WHERE j.status='running'
+        AND e.kind IN ('run_started','progress_made') GROUP BY e.job_id""")}
     for job in rows:
+        job.update(active.get(job['id'],{}))
         brief=json.loads(job.pop('brief_body') or '{}')
         briefs[job['id']]=brief
         for field in ('time_sensitive','timing_reason','deadline_at'):
@@ -302,6 +308,8 @@ def job(id,compact:bool=False):
     from .model_routing import selection_detail
     result['model_selection']=selection_detail(store, id)
     from .message_triage import read_targets
+    result['directions']=store.rows("""SELECT e.body,e.id <= COALESCE(json_extract(j.messages,'$.direction_cursor'),0) AS applied
+        FROM events e JOIN jobs j ON j.id=e.job_id WHERE e.job_id=? AND e.kind='direction_queued' ORDER BY e.id""",(id,))
     result['read_targets']=read_targets(store,result)
     result['optional_read_warning']=store.one("SELECT json_extract(messages,'$.optional_read_warning') AS warning FROM jobs WHERE id=?",(id,))['warning'] or ''
     from .job_names import add_display_names
@@ -419,6 +427,19 @@ async def review_job(id,request:Request):
         body=payload
         return submit(engine,id,body.get('message',''),body.get('remember',False),body.get('guidance',''),body.get('applies_to',''),body.get('draft'),body.get('remember_target','general'),body.get('remember_sender'))
     return await run_in_threadpool(operation)
+
+@app.post('/api/jobs/{id}/direction')
+async def job_direction(id,request:Request):
+    body=await request.json()
+    message=body.get('message') if isinstance(body,dict) else None
+    if not isinstance(message,str) or not 1<=len(message.strip())<=8000:
+        raise HTTPException(400,'Enter direction of up to 8000 characters.')
+    accepted=store.write("""INSERT INTO events(job_id,kind,body,created)
+        SELECT id,'direction_queued',?,? FROM jobs WHERE id=? AND status IN ('running','waiting_children')""",
+        (message.strip(),now(),id))
+    if not accepted:
+        raise HTTPException(409,'This job is no longer running or waiting for delegated work.')
+    return {'ok':True}
 
 @app.post('/api/jobs/{id}/retry-capacity')
 def retry_capacity(id):
