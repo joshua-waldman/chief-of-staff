@@ -35,8 +35,8 @@ shortcut installer instead.
 
 The default source is the private repository
 `https://github.com/joshua-waldman/chief-of-staff.git`, pinned to the stable release
-`v1.3.1` for new installations. Do not download the moving `main` branch by default.
-Release notes and assets: https://github.com/joshua-waldman/chief-of-staff/releases/tag/v1.3.1.
+`v1.3.2` for new installations. Do not download the moving `main` branch by default.
+Release notes and assets: https://github.com/joshua-waldman/chief-of-staff/releases/tag/v1.3.2.
 Accept an organization-approved
 mirror, repository URL or revision supplied by the user; do not assume every hub
 user has access to the author's repository. Installing this skill from a skill hub
@@ -52,7 +52,7 @@ the default source and a new destination:
 
 ```powershell
 $cosRepository = 'https://github.com/joshua-waldman/chief-of-staff.git'
-$cosRelease = 'v1.3.1'
+$cosRelease = 'v1.3.2'
 $cosInstallDirectory = Join-Path $env:LOCALAPPDATA 'AMD-ChiefOfStaff\App'
 git clone --branch $cosRelease --depth 1 -- $cosRepository $cosInstallDirectory
 if ($LASTEXITCODE -ne 0) { throw 'COS release clone failed; inspect the error before continuing.' }
@@ -60,19 +60,19 @@ git -C $cosInstallDirectory describe --tags --exact-match
 if ($LASTEXITCODE -ne 0) { throw 'COS release tag could not be verified.' }
 ```
 
-Confirm the reported tag is `v1.3.1`, or the user's explicitly selected revision,
+Confirm the reported tag is `v1.3.2`, or the user's explicitly selected revision,
 before running setup. A detached checkout at the release tag is expected.
 Substitute the user's selected source, revision and destination when different. If clone
 fails, inspect the error and retained destination before retrying. Do not erase an
 existing folder, reset another checkout or repeatedly retry a permission failure.
 
 If Git is unavailable or a ZIP is preferred, use the repository provider's
-authenticated release download for **chief-of-staff-v1.3.1-windows-source.zip**
-on the release page above, or its **Source code (zip)** for `v1.3.1`. Do not use
+authenticated release download for **chief-of-staff-v1.3.2-windows-source.zip**
+on the release page above, or its **Source code (zip)** for `v1.3.2`. Do not use
 the repository's main-branch **Download ZIP**. With authenticated GitHub CLI:
 
 ```powershell
-gh release download v1.3.1 --repo joshua-waldman/chief-of-staff --pattern chief-of-staff-v1.3.1-windows-source.zip --pattern SHA256SUMS.txt --dir <new-download-folder>
+gh release download v1.3.2 --repo joshua-waldman/chief-of-staff --pattern chief-of-staff-v1.3.2-windows-source.zip --pattern SHA256SUMS.txt --dir <new-download-folder>
 ```
 
 For the named release asset, compare `Get-FileHash -Algorithm SHA256` with its
