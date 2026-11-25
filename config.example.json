@@ -21,10 +21,8 @@
       "worker",
       "director"
     ],
-    "router_model": "Microsoft-Decision-1.1",
-    "min_confidence": 0.7,
-    "profiles": {},
+    "min_confidence": 0.85,
     "budget_aware": true,
-    "budget_profiles": {}
+    "selector_model": ""
   }
 }

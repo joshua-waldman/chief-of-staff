@@ -24,21 +24,35 @@ def model(id, mode='chat', **caps):
 def routed(tmp_path, monkeypatch):
     settings = copy.deepcopy(config.DEFAULTS)
     settings['models'] = {'chief': 'work', 'director': 'work', 'worker': 'work', 'triage': 'fast'}
-    settings['model_routing'].update(enabled=True, router_model='decision',
+    settings['model_routing'].update(enabled=True, router_model='decision', selector_model='advisor',
         profiles={'fast': 'fast', 'balanced': 'work', 'reasoning': 'strong', 'coding': 'code', 'vision': 'vision'})
     models = [model('work'), model('fast'), model('strong'), model('code'),
-              model('vision', vision=True), model('decision', 'decision'), model('audio', 'realtime')]
+              model('vision', vision=True), model('decision', 'decision'), model('audio', 'realtime'), model('advisor')]
     monkeypatch.setattr(provider, 'settings', lambda: settings)
     monkeypatch.setattr(provider, 'gateway_key', lambda: 'synthetic-key')
     monkeypatch.setattr(model_catalog, 'catalog', lambda **kw: {'models': models, 'error': ''})
     monkeypatch.setattr(model_catalog, 'snapshot', lambda *args: models)
     gateway = provider.Gateway(Store(tmp_path/'routing.db'))
     calls = []
-    decisions = {'choice': 'coding', 'probabilities': {'coding': .98}}
+    decisions = {'choice': 'code', 'confidence': .99}
     def post(url, **kw):
         calls.append((url, kw))
-        if url.endswith('/systemone'):
-            return Response({'answers': {'profile': decisions}, 'usage': {'input_tokens': 42}})
+        from cos.model_suitability import SYSTEM
+        if (kw['json'].get('messages') or [{}])[0].get('content') == SYSTEM:
+            candidates = json.loads(kw['json']['messages'][-1]['content'])['candidates']
+            proposals = []
+            for item in candidates:
+                override = decisions.get('candidates', {}).get(item['id'])
+                if override is None:
+                    override = {'choice': 'suitable' if item['id'] == decisions.get('choice') else 'uncertain',
+                                'confidence': decisions.get('confidence', .99)}
+                if override.get('choice') == 'suitable':
+                    proposals.append({'model':item['id'], 'suitability':override.get('confidence'),
+                                      'strengths':'Good task fit', 'limitations':'Assessment uncertainty'})
+            if 'raw_proposals' in decisions:
+                proposals = decisions['raw_proposals']
+            return Response({'choices':[{'message':{'role':'assistant','content':json.dumps({'candidates':proposals})}}],
+                             'usage':{'input_tokens':42}})
         return Response({'choices': [{'message': {'role': 'assistant', 'content': 'OK'}}]})
     monkeypatch.setattr(provider.httpx, 'post', post)
     return settings, models, gateway, calls, decisions
@@ -54,13 +68,13 @@ def test_manual_mode_and_excluded_roles_never_call_router(routed):
 
 
 def test_decision_routes_and_pins_across_gateway_instances_without_leaking_state(routed):
-    settings, _, gateway, calls, _ = routed
+    settings, _, gateway, calls, decision = routed
     history = [{'role': 'user', 'content': 'Implement a parser'}]
     answer, meta = gateway.complete(history)
     assert meta['model'] == 'code'
-    assert meta['routing']['router_usage'] == {'input_tokens': 42}
-    assert calls[0][0].endswith('/systemone')
-    assert calls[0][1]['timeout'] == 10
+    assert meta['routing']['router_usage']['input_tokens'] == 42
+    assert calls[0][1]['json']['model'] == 'advisor'
+    assert calls[0][1]['timeout'] == 40
     history += [answer]
     answer2, meta2 = provider.Gateway(gateway.capacity.store).complete(history)
     assert len(calls) == 3
@@ -69,17 +83,18 @@ def test_decision_routes_and_pins_across_gateway_instances_without_leaking_state
     assert 'Retained' in meta2['routing']['reason']
     wire = calls[-1][1]['json']['messages']
     assert not any(k.startswith('_') for m in wire for k in m)
-    settings['model_routing']['profiles']['coding'] = 'strong'
+    settings['model_routing']['min_confidence'] = .995
+    decision.update(choice='strong', confidence=.999)
     _, meta3 = gateway.complete(history + [answer2])
     assert meta3['model'] == 'strong'
     assert len(calls) == 5
 
 
-def test_new_user_request_allows_a_new_profile(routed):
+def test_new_user_request_allows_a_new_model(routed):
     _, _, gateway, calls, decision = routed
     history = [{'role': 'user', 'content': 'Implement a parser'}]
     answer, _ = gateway.complete(history)
-    decision.update(choice='fast', probabilities={'fast': .99})
+    decision.update(choice='fast', confidence=.99)
     _, meta = gateway.complete(history + [answer, {'role': 'user', 'content': 'Now summarize the result'}])
     assert len(calls) == 4 and meta['model'] == 'fast'
 
@@ -105,7 +120,7 @@ def test_router_failures_do_not_block_assigned_model(routed, monkeypatch, failur
     if failure == 'catalog':
         monkeypatch.setattr(model_catalog, 'catalog', lambda: {'models': [], 'error': 'offline'})
     elif failure == 'cooldown':
-        gateway.capacity.store.set_state('capacity:decision', {'paused': True})
+        gateway.capacity.store.set_state('capacity:advisor', {'paused': True})
     else:
         def fail(*args, **kw):
             if failure == 'access':
@@ -113,7 +128,12 @@ def test_router_failures_do_not_block_assigned_model(routed, monkeypatch, failur
             if failure == 'invalid-json':
                 raise ValueError('bad response')
             raise RuntimeError('offline')
-        monkeypatch.setattr(gateway, 'decide', fail)
+        original = gateway._complete
+        def complete(*args, **kwargs):
+            if kwargs.get('role') == 'model_selector':
+                return fail(*args, **kwargs)
+            return original(*args, **kwargs)
+        monkeypatch.setattr(gateway, '_complete', complete)
     _, meta = gateway.complete([{'role': 'user', 'content': 'Task'}])
     assert meta['model'] == 'work' and meta['routing']['fallback']
     assert len(calls) == 1
@@ -121,40 +141,40 @@ def test_router_failures_do_not_block_assigned_model(routed, monkeypatch, failur
 
 def test_routing_filters_images_context_tools_capacity_and_nonchat(routed):
     settings, models, gateway, calls, decision = routed
-    decision.update(choice='vision', probabilities={'vision': .99})
+    decision.update(choice='vision', confidence=.99)
     history = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]}]
     _, meta = gateway.complete(history)
     assert meta['model'] == 'vision'
-    assert len(calls) == 1 and calls[0][0].endswith('/chat/completions')
-    assert meta['routing']['reason'] == 'Only eligible task model'
+    assert len(calls) == 2 and calls[-1][0].endswith('/chat/completions')
+    assert meta['routing']['eligible_models_count'] == 1
     calls.clear()
     settings['model_routing']['profiles']['balanced'] = 'audio'
     models[1]['context_length'] = 4096
     models[2]['capabilities']['tools'] = False
     gateway.capacity.store.set_state('capacity:code', {'paused': True})
-    decision.update(choice='vision', probabilities={'vision': .99})
+    decision.update(choice='vision', confidence=.99)
     _, meta = gateway.complete([{'role': 'user', 'content': 'x'*6000}], tools=[{'type': 'function', 'function': {'name': 'test'}}])
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert meta['model'] == 'vision'
 
 
-def test_actual_target_capacity_is_enforced_after_routing(routed, monkeypatch):
+def test_capacity_change_during_assessment_uses_safe_fallback(routed, monkeypatch):
     _, _, gateway, _, _ = routed
-    original = gateway.decide
-    def decide(*args, **kw):
+    original = gateway._complete
+    def complete(*args, **kw):
         result = original(*args, **kw)
-        gateway.capacity.store.set_state('capacity:code', {'paused': True})
+        if kw.get('role') == 'model_selector':
+            gateway.capacity.store.set_state('capacity:code', {'paused': True})
         return result
-    monkeypatch.setattr(gateway, 'decide', decide)
-    with pytest.raises(CapacityDelayed) as error:
-        gateway.complete([{'role': 'user', 'content': 'Task'}])
-    assert error.value.model == 'code'
+    monkeypatch.setattr(gateway, '_complete', complete)
+    _, meta = gateway.complete([{'role': 'user', 'content': 'Task'}])
+    assert meta['model'] == 'work' and meta['routing']['fallback']
 
 
-def test_context_budget_respects_smallest_routed_window_and_manual_assignment(routed):
+def test_small_catalog_models_do_not_shrink_context_budget(routed):
     settings, models, *_ = routed
     models[3]['context_length'] = 32768
-    assert model_routing.context_window(settings, 'worker') == 32768
+    assert model_routing.context_window(settings, 'worker') == 128000
     settings['model_routing']['enabled'] = False
     assert model_routing.context_window(settings, 'worker') == 128000
 

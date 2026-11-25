@@ -184,61 +184,67 @@ catalog cannot be loaded or an assignment is no longer listed. Catalog visibilit
 does not guarantee inference permission or tool compatibility.
 
 Automatic selection is **off by default**. Enable **Select and route models
-automatically**, choose the eligible roles, and select a decision model plus task
-models for fast work, general work, reasoning, coding and vision. Blank task
-assignments follow the indicated role assignment. The default decision model is
-`Microsoft-Decision-1.1`; other gateway models advertising decision support, such
-as `vLLM-SR-d3-27B`, can also be selected. COS calls the AMD `/systemone` endpoint
-with a bounded request excerpt and task features. Routing adds a decision-model
-request when a conversation needs a new selection.
+automatically**, choose eligible roles, and optionally select a **Model selection
+advisor**. COS considers **every eligible model in your gateway catalog**, including
+models you have never assigned to a role. The advisor defaults to the chief's
+assigned chat model and can be chosen independently (`model_routing.selector_model`).
+It only recommends a model; it does not execute the task or choose action approvals.
+Role assignments remain the manual choice and fallback when selection is uncertain
+or unavailable. Older `profiles`, `budget_profiles` and decision-only `router_model`
+settings are retained for compatibility but no longer constrain automatic routing.
 
-The router chooses only among the configured task models, filtered by gateway
-capabilities, known context/output limits and current cooldowns. A successful
-choice stays through tool turns while compatible; new user directions, changing
-routing settings or introducing requirements it cannot meet allow a new selection. Unavailable
-discovery, failed decisions, or confidence below the configured threshold use the
-assigned role model. Its normal access, capability and capacity checks still apply.
-Routing does not retry an executed action or alter approval policy.
+Candidates must support chat or Responses, images when present, tools when known,
+the current context and output allowance, and available capacity. The chat advisor
+compares task-specific strengths, weaknesses and reliability across the full pool,
+using its model knowledge, supplied capabilities, limits, cost estimates and optional
+gateway descriptions. It proposes the best fit and economical models that can still
+fully satisfy the task. The gateway currently supplies capabilities and prices,
+not comprehensive quality descriptions or benchmarks. The earlier decision-only
+classifier could not reliably judge newer catalog models without that information;
+selection now uses a chat advisor capable of reasoning about model suitability.
 
-Automatic routing also considers your connected personal TokenOps budget by
-default. At 25% or less remaining it considers alternatives with at least 20%
-estimated input/output savings; at 10% or less (including an exhausted budget)
-it also considers smaller savings of at least 5%. Candidates come from your
-configured role and task models, plus optional per-task lower-cost alternatives
-in **Connections → Automatic routing settings**. Manual model assignments and
-roles excluded from automatic selection keep their existing behavior. You can
-disable budget consideration independently with **Consider remaining TokenOps
-budget** (`model_routing.budget_aware`). Additional alternatives are stored in
-`model_routing.budget_profiles` using the same task-profile keys.
+Every proposed model must pass a suitability score of at least 0.85, or your
+configured minimum if higher. Scores are advisor assessments, not calibrated
+probabilities or empirical benchmark results. Unknown models may remain uncertain.
+Invented model IDs and incompatible proposals are rejected. The advisor has no
+action tools; its free-form strengths and limitations text is not copied to durable
+routing diagnostics, which could otherwise repeat private task material.
 
-The decision model evaluates task type and cheaper-model suitability in one
-bounded request. A substitution needs at least 85% suitability probability, or
-your configured minimum confidence if higher. Ambiguous task classification may
-use an independent review of the *same assigned-role baseline*, limited to
-plausible profiles; it never substitutes an unrelated profile's quality baseline.
-Demanding work keeps its stronger model whenever adequacy is uncertain. Image
-requests keep normal selection because their costs are not comparable from text
-token estimates. Cheaper models must still fit the existing context, output,
-tool and capacity requirements; they do not force extra context compaction.
+Large catalogs are evaluated in batches bounded by the advisor context window;
+every eligible model is presented, with no configured-model shortlist. The advisor
+proposes up to eight best-fit and economical models per batch. Normal routing
+chooses the qualified model with the highest suitability score, using price for
+ties. Routing can add one or more advisor calls for a new selection; calls go through
+the ordinary adapter, capacity checks and usage ledger without recursively routing
+the advisor itself.
 
-Budget tiers and gateway price changes invalidate retained routing choices.
-Unknown/malformed prices, missing/expired TokenOps connections, failed reads,
-stale/incomplete source flags, reports from a different month, reports fetched
-over 15 minutes ago or source data over 24 hours old use normal routing. Refreshes
-run in the background and share the UI's TokenOps cache, so inference never waits
-on the budget API. Pricing estimates use uncached input and the requested output
-allowance, with published long-context and reasoning rates where present. They
-are comparative estimates, not a spending reservation or enforcement of a hard
-cap; TokenOps can report charges after other tools have already spent them.
-Job details and model diagnostics explain the last selected model, budget tier
-and any estimated saving. Restart COS and refresh the browser after updating.
+With **Consider remaining TokenOps budget**, at 25% or less remaining COS prefers
+the cheapest qualified option with at least 20% estimated savings against the normal
+best-fit choice. At 10% or less, including an exhausted budget, it also considers
+savings of at least 5%. Budget pressure never lowers the quality threshold. Missing
+prices are not treated as free. Images use task fitness without a text-only price
+comparison because image charges are not fully represented by that estimate.
 
-Model events and diagnostic traces include the selected model, routing reason,
-profile, confidence and decision usage when applicable. Context budgeting uses
-the smallest configured candidate window and retains the conservative configured
-limit unless explicitly adjusted; it does not assume every model supports a large
-context. Provider-specific reasoning state is replayed only to its originating
-model.
+Compatible successful choices stay through tool turns. New owner requests, settings,
+catalog capability or price changes, budget tier changes and long-context price
+thresholds trigger reassessment. Small unrelated catalog models do not force extra
+compaction: preparation retains the safe assigned-fallback context budget, then
+routing filters against actual input and output requirements. Provider-specific
+reasoning state stays with its originating model. Manual selections, excluded roles
+and action approval requirements retain their existing behavior. Definite model
+rejections (HTTP 403, 404, 410 or 426) are skipped for one hour, scoped to the saved
+API key and this installation. Automatic execution can reassess once, then use
+the assigned role fallback; rejected models are never retried in that sequence.
+Manual selections are not changed. Authentication failures, invalid requests,
+server errors and timeouts do not trigger cross-model replay. Each physical
+attempt, including rejections, remains visible in usage accounting.
+
+Missing or stale TokenOps reports use normal routing. Budget refreshes share the
+UI cache and run in the background. Comparative costs include the requested output
+allowance and long-context and reasoning rates where supplied; they are estimates,
+not reservations or hard budget enforcement. Job details show the selected model,
+reason, eligible and qualified model counts, advisor suitability, budget tier and
+estimated savings. Restart COS and refresh the browser after updating.
 
 Data defaults to `data/` beside the source. To use another local folder, set `COS_DATA_DIR` in the server's environment before launching. Keep that folder private and outside any source repository. Generated local skills currently remain under the application's `data/skills/` even when the runtime data directory is overridden.
 

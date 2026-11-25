@@ -2,6 +2,7 @@ import json
 import time
 import threading
 import re
+import hashlib
 from contextlib import contextmanager
 import httpx
 from .trace import model_call, context, CURRENT
@@ -10,6 +11,10 @@ from .config import settings, gateway_key, DEFAULTS
 from .capacity import Capacity, CapacityDelayed
 
 class NotConfigured(Exception):
+    pass
+
+class ModelUnavailable(NotConfigured):
+    """A definite rejection of this model, before any usable model response."""
     pass
 
 class ContextWindowExceeded(RuntimeError):
@@ -66,15 +71,54 @@ class Gateway:
         self._credentials(config)
         from .model_routing import select
         with context(model_role=role, model_purpose=self.purpose):
-            model, routing = select(self,config,messages,role,tools,max_tokens)
-            with self._capacity_gate(model,config):
-                answer, metadata = self._complete(messages,role,tools,timeout=timeout,attempts=attempts,
-                                                   max_tokens=max_tokens,config=config,model=model)
+            last_rejection = None
+            for selection_attempt in range(3):
+                if selection_attempt < 2:
+                    model, routing = select(self,config,messages,role,tools,max_tokens)
+                else:
+                    model = config['models'][role]
+                    if model in self.unavailable_models(config):
+                        raise last_rejection
+                    routing = {'mode':'automatic', 'fallback':True, 'role':role,
+                               'reason':'Assigned role fallback after rejected catalog models'}
+                try:
+                    with self._capacity_gate(model,config):
+                        answer, metadata = self._complete(messages,role,tools,timeout=timeout,attempts=attempts,
+                                                           max_tokens=max_tokens,config=config,model=model)
+                    break
+                except ModelUnavailable as error:
+                    if routing['mode'] != 'automatic' or routing.get('fallback'):
+                        raise
+                    last_rejection = error
         answer['_cos_model'] = model
         metadata['routing'] = routing
         if routing['mode'] == 'automatic':
             answer['_cos_route'] = {**{k:v for k,v in routing.items() if k!='router_usage'}, 'model': model}
         return answer, metadata
+
+    def _availability_key(self, config):
+        scope = hashlib.sha256((config['gateway_url'] + '\0' + self._credentials(config)).encode()).hexdigest()
+        return 'model_unavailable:' + scope
+
+    def unavailable_models(self, config):
+        value = self.capacity.store.state(self._availability_key(config), {})
+        if not isinstance(value, dict):
+            return set()
+        return {model for model, until in value.items()
+                if type(until) in (int, float) and until > time.time()}
+
+    def _mark_unavailable(self, model, config):
+        try:
+            with self.capacity.store.lock:
+                key = self._availability_key(config)
+                value = self.capacity.store.state(key, {})
+                value = {m: t for m, t in value.items() if type(t) in (int, float) and t > time.time()} if isinstance(value, dict) else {}
+                value[model] = time.time() + 3600
+                self.capacity.store.set_state(key, value)
+                return True
+        except Exception:
+            # Cache failure cannot turn a definite gateway rejection into a retry.
+            return False
 
     @staticmethod
     def _credentials(config):
@@ -211,7 +255,13 @@ class Gateway:
                 if response.status_code in {502,503,504} and attempt < attempts-1:
                     time.sleep(min(8,2**attempt))
                     continue
-                if response.status_code in {401,403}:
+                if response.status_code in {403,404,410,426}:
+                    marked = self._mark_unavailable(model, s)
+                    # An earlier timeout/5xx in this same physical retry series
+                    # is ambiguous; do not initiate an additional model replay.
+                    error = ModelUnavailable if marked and attempt == 0 else NotConfigured
+                    raise error('AMD gateway rejected this model (HTTP '+str(response.status_code)+'). Verify model availability and access in Connections.')
+                if response.status_code == 401:
                     raise NotConfigured('AMD gateway rejected authentication or model access. Verify the key and allowed model names in Connections.')
                 if response.status_code >= 300:
                     try:
