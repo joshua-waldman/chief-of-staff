@@ -46,6 +46,12 @@ def preview(box, reference):
     return match[1]
 
 
+def table_rows(body):
+    match=re.search(r'```cos-table\n(.*?)\n```',body,re.S)
+    assert match,body
+    return json.loads(match[1])
+
+
 @pytest.mark.parametrize('text', ['what needs my attention?', 'needs attention', 'what’s ready for review?', "what's ready for review?", 'inbox'])
 def test_prompts_reply_directly_without_jobs_or_models(inbox, text):
     assert request(inbox, text)
@@ -84,7 +90,33 @@ def test_lists_include_children_questions_approvals_capacity_monitor_and_results
         assert label(status) in body
     assert child['id'] in body and '!cos show monitor' in body
     request(inbox, 'reviews')
-    assert 'result:'+rid in inbox.replies[-1] and 'Launch plan' in inbox.replies[-1]
+    review_row=table_rows(inbox.replies[-1])[0]
+    assert review_row['command']=='!cos show result:'+rid
+    assert review_row['job']=='Launch plan'
+    assert review_row['context']=='# Launch plan The full generated plan.'
+    assert review_row['status']=='Ready for review'
+    assert 'Open the saved result' in review_row['next_step']
+    request(inbox,'attention')
+    attention_rows=table_rows(inbox.replies[-1])
+    assert all(set(row)=={'job','context','status','next_step','command','updated'} for row in attention_rows)
+    assert any(row['status']=='Your input needed' and 'Which launch date?' in row['next_step'] for row in attention_rows)
+    request(inbox,'attention 6')
+    attention_rows+=table_rows(inbox.replies[-1])
+    assert any(row['status']=='Needs attention' and row['command']=='!cos show monitor' for row in attention_rows)
+
+
+def test_attention_table_pages_only_at_row_boundaries(inbox):
+    for index in range(8):
+        identity=job(inbox,'waiting_input')
+        inbox.store.update(identity,title=f'Launch readiness {index}',question='Choose the review date.')
+    request(inbox,'attention')
+    first=table_rows(inbox.replies[-1])
+    assert len(first)==6
+    assert '`!cos attention 6`' in inbox.replies[-1]
+    request(inbox,'attention 6')
+    second=table_rows(inbox.replies[-1])
+    assert len(second)==2
+    assert {row['job'] for row in first}.isdisjoint({row['job'] for row in second})
 
 
 def test_monitor_routes_once_and_does_not_reingest_replies(inbox):
