@@ -234,37 +234,86 @@ class TeamsInbox:
         rows = []
         prefix=settings()['command_prefix']
         if category == 'reviews':
-            rows = ['**'+r['review_title']+'**\n'+r['summary'][:180]+f'\n`{prefix} show result:'+r['id']+'`'
+            from .job_names import ellipsize
+            rows = [{'job':ellipsize(r['review_title'],120),
+                     'context':ellipsize(r['summary'],160),
+                     'status':'Ready for review',
+                     'next_step':'Open the saved result to review it; marking reviewed does not send content or complete commitments.',
+                     'command':prefix+' show result:'+r['id'],
+                     'updated':self._list_timestamp(r.get('completed'))}
                     for r in self.store.pending_results()]
             heading = 'Ready for review'
         else:
             heading = 'Needs attention'
             jobs = self.store.rows('SELECT id,parent_id,title,org,project,status,question FROM jobs WHERE status IN (?,?,?,?,?) ORDER BY updated DESC,id', ATTENTION)
             from .job_names import add_display_names
-            from .task_status import title,label
+            from .task_status import title,label,timestamp
             add_display_names(self.store,jobs)
-            rows.extend('**'+title(j)+'**\n'+label(j['status'])+
-                        ('\n'+j['question'][:200] if j['question'] else '')+
-                        f'\n`{prefix} show job:'+j['id']+'`' for j in jobs)
+            from .job_names import ellipsize
+            for j in jobs:
+                saved=self.store.one('SELECT body FROM job_briefs WHERE job_id=?',(j['id'],))
+                brief=json.loads(saved['body']) if saved else {}
+                context=next((' '.join(str(brief.get(key) or '').split()) for key in
+                              ('context','requested_action','email_excerpt') if brief.get(key)), '')
+                context=context or ' · '.join(value for value in (j.get('org'),j.get('project')) if value)
+                rows.append({'job':title(j),
+                             'context':ellipsize(context or 'Task requiring owner attention',160),
+                             'status':label(j['status']),
+                             'next_step':j['question'] or 'Open the task to provide the missing information or inspect its current state.',
+                             'command':prefix+' show job:'+j['id'],
+                             'updated':timestamp(j.get('updated'))})
             commitments = Commitments(self.store).search(limit=100)
             # The register includes all active proposals and accepted obligations.
             for start in range(0, commitments['total'], 100):
                 page = commitments if start == 0 else Commitments(self.store).search(offset=start, limit=100)
-                rows.extend('**'+r['deliverable']+'**\n'+r['status'].capitalize()+
-                            (' · '+r['deadline_text'] if r['deadline_text'] else '')+
-                            f'\n`{prefix} show commitment:'+r['id']+'`' for r in page['items'])
+                from .job_names import ellipsize
+                rows.extend({'job':ellipsize(r['deliverable'],120),
+                             'context':ellipsize(r.get('scope') or 'Commitment',160),
+                             'status':r['status'].capitalize()+(' · '+r['deadline_text'] if r['deadline_text'] else ''),
+                             'next_step':self._commitment_next_step(r),
+                             'command':prefix+' show commitment:'+r['id'],
+                             'updated':self._list_timestamp(r.get('updated') or r.get('created'))}
+                            for r in page['items'])
             monitor = self.store.state('monitor_status', {})
             if settings()['monitor_enabled'] and (monitor.get('attention_required') or monitor.get('state') == 'needs_attention'):
-                rows.append('**Monitoring needs attention**\n'+str(monitor.get('error', 'Open for source errors and access limits.'))+
-                            f'\n`{prefix} show monitor`')
+                rows.append({'job':'Monitoring needs attention',
+                             'context':'Mail and Teams source monitoring',
+                             'status':'Needs attention',
+                             'next_step':str(monitor.get('error', 'Open the monitor details to inspect source errors and access limits.')),
+                             'command':prefix+' show monitor',
+                             'updated':self._list_timestamp(monitor.get('last_attempt') or monitor.get('started'))})
         selected = rows[offset:offset+LIST_SIZE]
-        text = '## '+heading+f'\n\n**{len(rows):,} item(s)**\n\n'+'\n\n'.join(selected)
-        if not selected:
-            text += 'No items on this page.'
-        if offset+LIST_SIZE < len(rows):
-            text += f'\n\n**More items**\n`{prefix} {category} {offset+LIST_SIZE}`'
-        text += '\n\nOpen an item with its command above.'
+        from .teams_formatting import status_table,render,MAX_HTML_BYTES
+        from .job_names import ellipsize
+        for row in selected:
+            row['job']=ellipsize(row['job'],120)
+            row['context']=ellipsize(row['context'],160)
+            row['next_step']=ellipsize(row['next_step'],220)
+        text = '## '+heading+f'\n\n**{len(rows):,} item(s)**\n\n'
+        table_rows=[]
+        for row in selected:
+            candidate=table_rows+[row]
+            body=text+status_table(candidate)
+            if len(body)>PAGE_SIZE or len(render('COS inbox\n\n'+body).encode('utf-8'))>MAX_HTML_BYTES:
+                if not table_rows:
+                    raise ValueError('This inbox row is too large. Open its item directly for details.')
+                break
+            table_rows=candidate
+        text+=status_table(table_rows) if table_rows else 'No items on this page.'
+        if offset+len(table_rows) < len(rows):
+            text += f'\n\n**More items**\n`{prefix} {category} {offset+len(table_rows)}`'
+        text += '\n\nOpen an item with its command in the Next Steps column.'
         return text
+
+    @staticmethod
+    def _commitment_next_step(item):
+        return {'proposed':'Review and accept or dismiss this proposed commitment.',
+                'open':'Confirm completion or dismiss this open commitment.'}.get(item['status'],'Open the commitment details for its current next step.')
+
+    @staticmethod
+    def _list_timestamp(value):
+        from .task_status import timestamp
+        return timestamp(value)
 
     def snapshot(self, kind, identity):
         if kind == 'job':
