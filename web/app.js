@@ -78,7 +78,21 @@ function timingCell(item){
  const reason=timing?timing.reason:b.timing_reason||'Timing assessment is pending. This does not mean the item is routine.';
  return '<span class="timing-badge '+(timing?'timing-'+timing.level:'timing-neutral')+'">'+esc(label)+'</span><div class="small timing-reason">'+esc(reason)+'</div>';
 }
-function table(list){return list.length?'<div class="table-wrap"><table><thead><tr><th>REQUEST</th><th>ORGANIZATION</th><th>STATUS</th><th>TIMING</th><th>UPDATED</th></tr></thead><tbody>'+list.map(j=>'<tr class="'+timingClass(j)+'" data-job="'+j.id+'" tabindex="0"><td><div class="job-title">'+esc(j.display_name||j.title)+'</div>'+(j.triage_category?'<div class="tag">'+esc(triageLabel(j.triage_category))+'</div>':'')+(j.triage_summary?'<details class="small"><summary>View summary</summary>'+esc(j.triage_summary)+'</details>':'')+'<div class="small">'+esc(j.project||'Workspace')+(j.parent_id?' · Sub-agent':'')+'</div></td><td>'+esc(j.org)+'</td><td>'+badge(j.status)+'</td><td class="timing-cell">'+timingCell(j)+'</td><td>'+date(j.updated)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="panel empty"><div class="empty-symbol">◇</div><h3>No requests here yet</h3><p>Give your Chief of Staff a request to start moving work forward.</p></div>'}
+function runningProgress(j){
+ if(j.status!=='running'||!j.run_started)return '';
+ const minutes=t=>Math.max(0,Math.floor((Date.now()-Date.parse(t))/60000));
+ const elapsed=minutes(j.run_started),idle=Math.min(elapsed,minutes(j.last_progress||j.run_started));
+ const limits=state.settings||{};
+ const label=idle>=(limits.stalled_job_minutes||15)?'Possibly stalled':elapsed>=(limits.long_job_minutes||30)?'Long-running':'Active';
+ return '<div class="small">'+label+' &middot; '+elapsed+' min this run &middot; '+idle+' min since progress or start</div>';
+}
+function steeringView(j){
+ const active=['running','waiting_children'].includes(j.status);
+ const history=(j.directions||[]).map(d=>'<p><b>'+(d.applied?'Applied':['completed','cancelled','failed'].includes(j.status)?'Ended before delivery':'Queued')+'</b> &middot; '+esc(d.body)+'</p>').join('');
+ if(!active&&!history)return '';
+ return '<section class="panel"><h3>Owner direction</h3>'+history+(active?'<form id="direction-form"><label for="direction-text">Direction for the next agent step</label><textarea id="direction-text" required maxlength="8000"></textarea><p class="small">Current tool calls and delegated jobs can finish first.</p>'+btn('Send direction','type="submit"')+'</form>':'')+'</section>';
+}
+function table(list){return list.length?'<div class="table-wrap"><table><thead><tr><th>REQUEST</th><th>ORGANIZATION</th><th>STATUS</th><th>TIMING</th><th>UPDATED</th></tr></thead><tbody>'+list.map(j=>'<tr class="'+timingClass(j)+'" data-job="'+j.id+'" tabindex="0"><td><div class="job-title">'+esc(j.display_name||j.title)+'</div>'+(j.triage_category?'<div class="tag">'+esc(triageLabel(j.triage_category))+'</div>':'')+(j.triage_summary?'<details class="small"><summary>View summary</summary>'+esc(j.triage_summary)+'</details>':'')+'<div class="small">'+esc(j.project||'Workspace')+(j.parent_id?' · Sub-agent':'')+'</div></td><td>'+esc(j.org)+'</td><td>'+badge(j.status)+runningProgress(j)+'</td><td class="timing-cell">'+timingCell(j)+'</td><td>'+date(j.updated)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="panel empty"><div class="empty-symbol">◇</div><h3>No requests here yet</h3><p>Give your Chief of Staff a request to start moving work forward.</p></div>'}
 function monitoringAlert(){
  if(!state.monitor_attention)return '';
  const m=state.monitor||{}, sources=m.sources||{};
@@ -386,7 +400,7 @@ async function openJob(id,{background=false}={}){
  j.approvals.filter(a=>a.status==='pending').map(a=>{const args=JSON.parse(a.args);return '<section class="approval"><h3>'+esc(a.tool==='delegate'?'Start delegated work':({calendar_rsvp:'Respond to calendar invitation',delete_email:'Delete email',mark_email_read:'Mark email as read',mark_teams_read:'Mark Teams chat as read',create_feature_branch:'Create feature branch',repository_publish:'Publish Stash change'}[a.tool]||a.tool)+' · '+a.risk+' risk')+'</h3><p class="small">'+esc(a.reason)+'</p>'+(['send_email','reply_email','send_teams'].includes(a.tool)?readable('To',args.to||args.chat_id||'Original thread')+(args.cc?readable('Cc',args.cc):'')+(args.bcc?readable('Bcc',args.bcc):'')+readable('Subject',args.subject||b.email_subject):a.tool==='delegate'?'<p>This is a legacy delegation proposal. Preparation no longer needs approval; external changes retain their separate approvals.</p>'+args.tasks.map(t=>'<article class="panel">'+readable('Organization',t.org)+readable('Project',t.project)+readable('Task scope and expected result',t.request)+'</article>').join(''):actionPreview(a.tool,args))+''+
  (approvalMessageView(a)+'<div class="row">'+btn('Approve exact action','data-approve="'+a.id+'"')+btn('Reject & revise','data-reject="'+a.id+'"','secondary')+'</div>')+'</section>'}).join('')+
  (j.result&&!j.result_review?'<section class="panel"><h3>Result</h3><p class="result">'+esc(j.result)+'</p></section>':'')+
- jobFilesView(j.files)+
+ steeringView(j)+jobFilesView(j.files)+
  (j.children.length?'<h3>Delegated work</h3>'+j.children.map(c=>'<div class="child" data-child="'+c.id+'">'+badge(c.status)+' '+esc(c.org)+' · '+esc(c.display_name||c.title)+'</div>').join(''):'')+
  '<p><a class="file-link" href="/api/jobs/'+j.id+'/diagnostics" download>Download diagnostics & provenance</a></p><details id="activity-details"><summary>Full activity timeline ('+(j.event_count??j.events.filter(e=>e.kind!=="model").length)+' events)</summary><div class="section-title"><h3>Activity timeline</h3>'+btn('Refresh','id="refresh-job"','link-btn')+'</div>'+((j.event_count||0)>j.events.length?btn('Load older activity','id="older-activity"','secondary'):'')+'<div class="timeline">'+j.events.filter(e=>e.kind!=='model').map(e=>'<div class="event"><div class="event-head">'+esc(e.kind.toUpperCase())+'<time>'+date(e.created)+'</time></div><div id="event-body-'+e.id+'" class="event-body">'+esc(e.body)+'</div></div>').join('')+'</div></details>'+
  (!['completed','cancelled'].includes(j.status)?btn('Cancel job and sub-agents','id="cancel-job"','danger'):'');
@@ -404,6 +418,11 @@ async function openJob(id,{background=false}={}){
  if($('#answer-form'))$('#answer-form').onsubmit=handle(async e=>{e.preventDefault();await api('jobs/'+id+'/answer',{answer:$('#answer').value});toast('Response received');await Promise.all([openJob(id),refresh(true)])});
  document.querySelectorAll('[data-child]').forEach(b=>b.onclick=handle(()=>openJob(b.dataset.child)));
  document.querySelectorAll('[data-approve],[data-reject]').forEach(b=>b.onclick=handle(async()=>{b.disabled=true;try{const aid=b.dataset.approve||b.dataset.reject,body=$('#body-'+aid),approval=j.approvals.find(a=>a.id===aid);await api('approvals/'+aid,{approved:!!b.dataset.approve,...(b.dataset.approve&&body?approvalEdits(approval,body.value):{})});toast(b.dataset.approve?'Approval recorded. The action will finish in the background.':'Action rejected; COS will revise it.');await Promise.all([openJob(id),refresh(true)])}finally{b.disabled=false}}));
+ if($('#direction-form'))$('#direction-form').onsubmit=handle(async e=>{
+  e.preventDefault();
+  const button=e.currentTarget.querySelector('button');button.disabled=true;
+  try{await api('jobs/'+id+'/direction',{message:$('#direction-text').value});$('#direction-text').value='';toast('Direction queued');await openJob(id)}finally{button.disabled=false}
+ });
  bindReview(id);
  bindJobRename(j);
  if($('#reopen-result-review'))$('#reopen-result-review').onclick=handle(async()=>{

@@ -488,3 +488,23 @@ def test_disconnect_before_routing_does_not_call_model(env,monkeypatch):
         assert not env.rows('SELECT * FROM approvals')
     finally:
         engine.stop()
+
+def test_direction_during_model_call_supersedes_proposed_action(env,monkeypatch):
+    monkeypatch.setitem(config.DEFAULTS,'queue_paused',False)
+    job=env.create_job('Prepare a report','Technology')
+    class Provider:
+        calls=0
+        def complete(self,messages,**kwargs):
+            self.calls+=1
+            if self.calls==1:
+                env.event(job['id'],'direction_queued','Use the shorter scope')
+                env.event(job['id'],'direction_queued','Return a summary')
+                return perform('write_file',{'path':'obsolete.txt','content':'obsolete'}),{}
+            return perform('finish',{'summary':'Revised summary'}),{}
+    engine=Engine(env,Provider())
+    engine.run(job['id'])
+    saved=env.job(job['id'])
+    assert saved['status']=='completed'
+    directions=[m['content'] for m in session(saved)['messages'] if str(m.get('content','')).startswith('Owner direction:')]
+    assert directions==['Owner direction: Use the shorter scope','Owner direction: Return a summary']
+    assert not env.one("SELECT id FROM approvals WHERE job_id=? AND tool='write_file'",(job['id'],))
