@@ -21,12 +21,12 @@ Requirements:
 Clone into a local folder. Keep the SQLite database on one machine; do not run two installations against a shared or synchronized data directory.
 
 ```powershell
-git clone --branch v1.2.1 --depth 1 https://github.com/joshua-waldman/chief-of-staff.git chief-of-staff
+git clone --branch v1.3.0 --depth 1 https://github.com/joshua-waldman/chief-of-staff.git chief-of-staff
 Set-Location chief-of-staff
 python scripts/install_hooks.py
 ```
 
-The stable version for new installations is [v1.2.1](https://github.com/joshua-waldman/chief-of-staff/releases/tag/v1.2.1). Download `chief-of-staff-v1.2.1-windows-source.zip` from that release if you prefer ZIP setup; it contains application source and setup scripts, and requires Python and dependency installation. Verify the download against the attached `SHA256SUMS.txt`. Use the main branch for development.
+The stable version for new installations is [v1.3.0](https://github.com/joshua-waldman/chief-of-staff/releases/tag/v1.3.0). Download `chief-of-staff-v1.3.0-windows-source.zip` from that release if you prefer ZIP setup; it contains application source and setup scripts, and requires Python and dependency installation. Verify the download against the attached `SHA256SUMS.txt`. Use the main branch for development.
 
 The repository is [joshua-waldman/chief-of-staff](https://github.com/joshua-waldman/chief-of-staff). You need access to this private repository before cloning or downloading release assets. A release clone starts detached at the tag. ZIP downloads do not have Git history or hooks; use a clone for development.
 
