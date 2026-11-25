@@ -54,25 +54,26 @@ test('refresh updates options without losing unsaved selections or rebuilding se
  assert.match(ctx.nodes['#model-catalog-status'].textContent,/3 gateway models/);
 });
 
-test('routing form persists selected roles, decision model and task overrides',()=>{
+test('routing form persists controls without constraining model candidates',()=>{
  const ctx=context();
- for(const [id,value] of Object.entries({'routing-router':'Decision','routing-confidence':'.85',
+ for(const [id,value] of Object.entries({'routing-selector':'DeepSeek','routing-confidence':'.85',
   'routing-fast':'DeepSeek','routing-coding':''}))ctx.nodes['#'+id]={value};
  ctx.nodes['#routing-enabled']={checked:true};
  ctx.document.querySelectorAll=selector=>selector==='.routing-role:checked'?[{value:'worker'}]:[];
  const result=JSON.parse(JSON.stringify(ctx.modelRoutingForm()));
- assert.deepEqual(result,{enabled:true,roles:['worker'],router_model:'Decision',min_confidence:.85,profiles:{fast:'DeepSeek'},budget_aware:true,budget_profiles:{}});
+ assert.deepEqual(result,{enabled:true,roles:['worker'],selector_model:'DeepSeek',min_confidence:.85,budget_aware:true});
 });
 
-test('budget routing settings keep optional economy models separate from task baselines',()=>{
+test('automatic routing advertises the full catalog and removes task restrictions',()=>{
  const ctx=context();
  ctx.state.settings.model_routing={enabled:true,budget_aware:true,roles:['worker'],profiles:{},budget_profiles:{coding:'DeepSeek'},router_model:'Decision',min_confidence:.7};
  assert.match(ctx.modelRoutingView(),/Consider remaining TokenOps budget/);
- assert.match(ctx.modelRoutingView(),/routing-budget-coding/);
- for(const [id,value] of Object.entries({'routing-router':'Decision','routing-confidence':'.85','routing-fast':'DeepSeek','routing-coding':'','routing-budget-fast':'','routing-budget-coding':'DeepSeek'}))ctx.nodes['#'+id]={value};
+ assert.match(ctx.modelRoutingView(),/all eligible gateway models/);
+ assert.doesNotMatch(ctx.modelRoutingView(),/id="routing-coding"|id="routing-budget-coding"/);
+ for(const [id,value] of Object.entries({'routing-selector':'DeepSeek','routing-confidence':'.85','routing-fast':'DeepSeek','routing-coding':'','routing-budget-fast':'','routing-budget-coding':'DeepSeek'}))ctx.nodes['#'+id]={value};
  ctx.nodes['#routing-enabled']={checked:true};ctx.nodes['#routing-budget-aware']={checked:false};
  const result=JSON.parse(JSON.stringify(ctx.modelRoutingForm()));
  assert.equal(result.budget_aware,false);
- assert.deepEqual(result.budget_profiles,{coding:'DeepSeek'});
- assert.deepEqual(result.profiles,{fast:'DeepSeek'});
+ assert.equal(result.budget_profiles,undefined);
+ assert.equal(result.profiles,undefined);
 });

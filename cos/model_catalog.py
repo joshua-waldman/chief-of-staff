@@ -26,6 +26,14 @@ def normalize(item):
               'owned_by': item.get('owned_by', ''),
               'capabilities': {k: v for k, v in (item.get('capabilities') or {}).items()
                                if isinstance(v, bool)}}
+    # Optional public model guidance only; deployment keys and account usage
+    # remain excluded. Most gateway models currently omit these descriptions.
+    for name in ('description', 'strengths', 'limitations'):
+        value = item.get(name)
+        if isinstance(value, str):
+            result[name] = value[:600]
+        elif name != 'description' and isinstance(value, list):
+            result[name] = [v[:150] for v in value[:4] if isinstance(v, str)]
     for name in ('context_length', 'max_output_tokens'):
         value = item.get(name)
         if type(value) is int and value > 0:
